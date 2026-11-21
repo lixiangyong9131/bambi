@@ -124,15 +124,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        if (stoppedAt > 0L) {
-            val away = SystemClock.elapsedRealtime() - stoppedAt
-            // Tras mucho rato fuera el Inicio está caducado: la intro sale siempre y lo recarga con sus carátulas.
-            // Con "Intro siempre" sale además cada vez que se vuelve (salvo vueltas de un instante).
-            val reload = away >= RELOAD_AFTER_MS
-            if (reload || (settings.introAlwaysEnabled && away >= ALWAYS_MIN_AWAY_MS)) {
-                resumeIntro.value = ResumeIntro(reload = reload, at = SystemClock.elapsedRealtime())
-            }
-        }
+        // Modified build: intro disabled entirely.
+        stoppedAt = 0L
         watchNext.onForeground()
         trakt.syncActive()
         updates.check(manual = false)

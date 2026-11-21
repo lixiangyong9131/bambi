@@ -34,18 +34,22 @@ class CmsStreams @Inject constructor(
 
     suspend fun find(item: CatalogItem): List<StreamSource> {
         val title = clean(item.title)
+        android.util.Log.i("CmsStream", "find(title=${item.title}, clean=$title)")
         if (title.isBlank()) return emptyList()
         // Try the fast source first, then backup.
         for (base in listOf(API, BACKUP_API)) {
             val sources = searchAndBuild(base, title)
+            android.util.Log.i("CmsStream", "$base -> ${sources.size} sources")
             if (sources.isNotEmpty()) return sources
         }
+        android.util.Log.w("CmsStream", "NO direct url found for $title")
         return emptyList()
     }
 
     private fun searchAndBuild(base: String, title: String): List<StreamSource> {
         val searchUrl = "$base?ac=vod&wd=" + URLEncoder.encode(title, "UTF-8")
         val rows = parseList(get(searchUrl)) ?: return emptyList()
+        android.util.Log.i("CmsStream", "search title=" + title + " -> " + rows.size + " rows")
         if (rows.isEmpty()) return emptyList()
         // Prefer an exact/near title match, else first row.
         val cand = rows.firstOrNull { row ->
@@ -58,6 +62,7 @@ class CmsStreams @Inject constructor(
         val detailRows = parseList(get(detailUrl)) ?: listOf(cand)
         val v = detailRows.firstOrNull() ?: cand
         val url = pickPlayUrl(v) ?: return emptyList()
+        android.util.Log.i("CmsStream", "picked url: ${url.take(100)}")
         val name = str(v, "vod_name").ifBlank { title }
         return listOf(
             StreamSource(

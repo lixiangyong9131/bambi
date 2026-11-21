@@ -166,6 +166,7 @@ class DoubanCatalogApi @Inject constructor(
         title = cleanTitle(title),
         overview = "",
         poster_path = cover,
+        backdrop_path = cover,
         release_date = null,
         vote_average = rate.toDoubleOrNull() ?: 0.0,
     )
@@ -175,6 +176,7 @@ class DoubanCatalogApi @Inject constructor(
         name = cleanTitle(title),
         overview = "",
         poster_path = cover,
+        backdrop_path = cover,
         vote_average = rate.toDoubleOrNull() ?: 0.0,
     )
 
@@ -185,6 +187,7 @@ class DoubanCatalogApi @Inject constructor(
         name = if (mediaType == "tv") cleanTitle(title) else null,
         overview = "",
         poster_path = cover,
+        backdrop_path = cover,
         vote_average = rate.toDoubleOrNull() ?: 0.0,
     )
 
