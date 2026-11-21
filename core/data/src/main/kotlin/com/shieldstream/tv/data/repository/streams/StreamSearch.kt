@@ -40,6 +40,7 @@ internal class StreamSearch(
     private val settings: SettingsRepository,
     private val texts: Texts,
     private val key: () -> String,
+    private val cms: CmsStreams? = null,
 ) {
     private val titles = ReleaseTitles(tmdb, key)
     private val indexers = TorrentIndexers(torrentio, texts)
@@ -49,6 +50,13 @@ internal class StreamSearch(
     private val castellano = CastellanoSearch(torrentio, indexers, titles, texts, ::canPickFile)
 
     fun streams(item: CatalogItem, episode: Episode?): Flow<StreamResults> = channelFlow {
+        // Direct CMS m3u8 source: title-based lookup, no IMDb / debrid needed. Try first so
+        // Douban catalog items (which have no IMDb id) are always playable.
+        val cmsSources = if (cms != null) runCatching { cms.find(item) }.getOrDefault(emptyList()) else emptyList()
+        if (cmsSources.isNotEmpty()) {
+            send(StreamResults(cmsSources))
+            return@channelFlow
+        }
         val aioConfigured = !store.getSecret(TokenStore.keyNameFor(ApiService.AIOSTREAMS)).isNullOrBlank()
         val enabled = settings.sourceProviders.first()
         // Los buscadores propios (castellano, The Pirate Bay, Knaben, Nyaa) dan torrents sueltos: se resuelven con el

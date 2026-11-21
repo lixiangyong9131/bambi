@@ -48,6 +48,10 @@ abstract class DataModule {
 
     @Binds
     @Singleton
+    abstract fun bindTmdbApi(impl: com.shieldstream.tv.data.repository.DoubanCatalogApi): com.shieldstream.tv.network.api.TmdbApi
+
+    @Binds
+    @Singleton
     abstract fun bindAllDebridAuthRepository(impl: AllDebridAuthRepositoryImpl): AllDebridAuthRepository
 
     @Binds

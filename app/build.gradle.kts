@@ -27,7 +27,7 @@ val traktRedirectUri: String = localProps.getProperty("traktRedirectUri")?.trim(
 
 android {
     namespace = "com.shieldstream.tv"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.shieldstream.tv"

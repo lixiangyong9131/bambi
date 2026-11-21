@@ -11,10 +11,16 @@ import com.shieldstream.tv.network.dto.TmdbTvDto
 internal object TmdbImages {
     private const val ROOT = "https://image.tmdb.org/t/p"
 
-    fun poster(path: String) = "$ROOT/w342$path"
-    fun backdrop(path: String) = "$ROOT/w1280$path"
-    fun still(path: String) = "$ROOT/w300$path"
-    fun profile(path: String) = "$ROOT/w185$path"
+    // Direct sources (Douban) provide full URLs; pass them through. Upgrade Douban's
+    // small poster (s_ratio_poster) to the large variant (l_ratio_poster).
+    private fun full(path: String): String? = if (path.startsWith("http"))
+        path.replace("s_ratio_poster", "l_ratio_poster")
+    else null
+
+    fun poster(path: String) = full(path) ?: "$ROOT/w342$path"
+    fun backdrop(path: String) = full(path) ?: "$ROOT/w1280$path"
+    fun still(path: String) = full(path) ?: "$ROOT/w300$path"
+    fun profile(path: String) = full(path) ?: "$ROOT/w185$path"
 
     fun logo(images: TmdbImagesDto?, languageCode: String): String? {
         val best = images?.logos.orEmpty()

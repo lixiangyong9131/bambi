@@ -61,6 +61,7 @@ class CatalogRepositoryImpl @Inject constructor(
     private val texts: Texts,
     /** Copia en disco del último Inicio (null en tests). */
     private val diskCache: HomeDiskCache? = null,
+    private val cmsStreams: com.shieldstream.tv.data.repository.streams.CmsStreams? = null,
 ) : CatalogRepository {
 
     private val kids: Boolean get() = profiles.active.value.kids
@@ -164,9 +165,11 @@ class CatalogRepositoryImpl @Inject constructor(
     override suspend fun getCategoryRows(category: Category, filter: HomeFilter): List<CatalogRow> =
         if (kids && category !in Category.KIDS_SAFE) emptyList() else extras.categoryRows(category, filter)
 
-    private val key: String get() = store.tmdbKey.orEmpty()
+    // Catalog is backed by Douban (key-less); keep a non-blank placeholder so the
+    // legacy "TMDB key missing" guard never blocks home content.
+    private val key: String get() = store.tmdbKey?.takeIf { it.isNotBlank() } ?: "douban"
 
-    private val streamSearch = StreamSearch(tmdb, torrentio, store, settings, texts) { key }
+    private val streamSearch = StreamSearch(tmdb, torrentio, store, settings, texts, { key }, cmsStreams)
 
     private class RowSpec(
         val id: String,
@@ -200,8 +203,9 @@ class CatalogRepositoryImpl @Inject constructor(
                             .distinctBy { it.type to it.id }
                             .filter { it.posterUrl != null }
                         val limited = if (spec.style == RowStyle.TOP10) items.take(10) else items
+                        android.util.Log.i("DoubanHome", "row ${spec.id}: ${items.size} items (raw) -> ${limited.size}")
                         CatalogRow(spec.id, spec.title, limited, spec.style)
-                    }.getOrNull()
+                    }.onFailure { android.util.Log.e("DoubanHome", "row ${spec.id} FAILED: ${it.javaClass.simpleName}: ${it.message}", it) }.getOrNull()
                 }
             }
             .awaitAll()

@@ -26,6 +26,7 @@ object ApiConfig {
     const val REAL_DEBRID_BASE_URL = "https://api.real-debrid.com/"
     const val TORRENTIO_BASE_URL = "https://torrentio.strem.fun/"
     const val TMDB_BASE_URL = "https://api.themoviedb.org/"
+    const val DOUBAN_BASE_URL = "https://movie.douban.com/"
 }
 
 @Module
@@ -75,15 +76,19 @@ object NetworkModule {
 
     @Provides
     @Singleton
-    fun provideTmdbApi(client: OkHttpClient, json: Json): TmdbApi {
-        val tmdbClient = client.newBuilder()
+    fun provideDoubanApi(client: OkHttpClient, json: Json): com.shieldstream.tv.network.api.DoubanApi {
+        // Douban blocks requests without a browser UA + Referer (HTTP 418).
+        val doubanClient = client.newBuilder()
             .addInterceptor { chain ->
-                val request = chain.request()
-                val url = request.url.newBuilder().addQueryParameter("language", Lang.current.tmdb).build()
-                chain.proceed(request.newBuilder().url(url).build())
+                val request = chain.request().newBuilder()
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                    .header("Referer", "https://movie.douban.com/")
+                    .build()
+                chain.proceed(request)
             }
             .build()
-        return buildRetrofit(ApiConfig.TMDB_BASE_URL, tmdbClient, json).create(TmdbApi::class.java)
+        return buildRetrofit(ApiConfig.DOUBAN_BASE_URL, doubanClient, json)
+            .create(com.shieldstream.tv.network.api.DoubanApi::class.java)
     }
 
     private fun buildRetrofit(baseUrl: String, client: OkHttpClient, json: Json): Retrofit =
