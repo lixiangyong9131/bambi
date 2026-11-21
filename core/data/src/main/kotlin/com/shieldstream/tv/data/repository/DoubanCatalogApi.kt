@@ -18,6 +18,9 @@ class DoubanCatalogApi @Inject constructor(
     private val api: DoubanApi,
 ) : TmdbApi {
 
+    /** Douban id -> cover URL, filled by list mapping so details/featured can reuse it. */
+    private val coverCache = java.util.concurrent.ConcurrentHashMap<Int, String>()
+
     override suspend fun trendingAll(key: String, page: Int): TmdbPaginated<TmdbSearchResultDto> = withContext(Dispatchers.IO) { moviesAll(page) }
 
     override suspend fun trendingAllWeek(key: String, page: Int): TmdbPaginated<TmdbSearchResultDto> = withContext(Dispatchers.IO) { moviesAll(page) }
@@ -128,7 +131,8 @@ class DoubanCatalogApi @Inject constructor(
             id = id,
             title = cleanTitle(s.title),
             overview = s.shortComment?.content.orEmpty(),
-            poster_path = null,
+            poster_path = coverCache[id],
+            backdrop_path = coverCache[id],
             release_date = s.releaseYear.ifBlank { null },
             vote_average = (s.rate.toDoubleOrNull() ?: 0.0),
             genres = s.types.map { TmdbGenreDto(name = it) },
@@ -142,7 +146,8 @@ class DoubanCatalogApi @Inject constructor(
             id = id,
             name = cleanTitle(s.title),
             overview = s.shortComment?.content.orEmpty(),
-            poster_path = null,
+            poster_path = coverCache[id],
+            backdrop_path = coverCache[id],
             first_air_date = s.releaseYear.ifBlank { null },
             vote_average = (s.rate.toDoubleOrNull() ?: 0.0),
             genres = s.types.map { TmdbGenreDto(name = it) },
@@ -162,7 +167,7 @@ class DoubanCatalogApi @Inject constructor(
     private fun cleanTitle(t: String) = t.replace(Regex("\\s*\\((?:19|20)\\d{2}\\)\\s*"), "").trim()
 
     private fun DoubanSubjectDto.toMovieDto() = TmdbMovieDto(
-        id = id.toIntOrNull() ?: id.hashCode(),
+        id = (id.toIntOrNull() ?: id.hashCode()).also { coverCache[it] = cover },
         title = cleanTitle(title),
         overview = "",
         poster_path = cover,
@@ -172,7 +177,7 @@ class DoubanCatalogApi @Inject constructor(
     )
 
     private fun DoubanSubjectDto.toTvDto() = TmdbTvDto(
-        id = id.toIntOrNull() ?: id.hashCode(),
+        id = (id.toIntOrNull() ?: id.hashCode()).also { coverCache[it] = cover },
         name = cleanTitle(title),
         overview = "",
         poster_path = cover,
@@ -181,7 +186,7 @@ class DoubanCatalogApi @Inject constructor(
     )
 
     private fun DoubanSubjectDto.toSearchDto(mediaType: String) = TmdbSearchResultDto(
-        id = id.toIntOrNull() ?: id.hashCode(),
+        id = (id.toIntOrNull() ?: id.hashCode()).also { coverCache[it] = cover },
         media_type = mediaType,
         title = if (mediaType == "movie") cleanTitle(title) else null,
         name = if (mediaType == "tv") cleanTitle(title) else null,

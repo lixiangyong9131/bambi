@@ -33,6 +33,7 @@ android {
 }
 
 dependencies {
+    implementation(libs.media3.exoplayer.hls) // HLS m3u8 direct streams from CMS source
     implementation(project(":core:model"))
     implementation(project(":core:strings"))
     implementation(project(":core:domain"))

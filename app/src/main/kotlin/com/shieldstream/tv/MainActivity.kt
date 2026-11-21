@@ -70,7 +70,8 @@ class MainActivity : ComponentActivity() {
             StartupTrace.mark("primera composición")
             val activeProfile by profiles.active.collectAsState()
             LaunchedEffect(activeProfile.theme) { AppColors.applyTheme(activeProfile.theme) }
-            val lightweightUi by settings.lightweightUi.collectAsState(initial = settings.lightweightUiEnabled)
+            // Modified build: force full UI so the focus-following Hero backdrop always renders.
+            val lightweightUi = false
             val softBackdrops by settings.softBackdrops.collectAsState(initial = settings.softBackdropsEnabled)
             val highResBackdrops by settings.highResBackdrops.collectAsState(initial = settings.highResBackdropsEnabled)
             CompositionLocalProvider(

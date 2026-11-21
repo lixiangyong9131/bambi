@@ -2,7 +2,7 @@
 <resources>
     <string name="player_sync_subtitles">Sync subtitles</string>
     <string name="player_0_1_s_1_s_ok_auto">◀ ▶  ±0.1 s     ▼ ▲  ±1 s     OK  auto-sync     Back  close</string>
-    <string name="player_next_episode">Next episode</string>
+    <string name="player_next_episode">下一集</string>
     <string name="player_pause">Pause</string>
     <string name="player_play">Play</string>
     <string name="player_ok_jump_here_back_return">OK jump here · Back return</string>
@@ -14,8 +14,8 @@
     <string name="player_back_to_return_to_audio_subtitles">Back to return to Audio &amp; subtitles</string>
     <string name="player_back_to_return_to_the_movie">Back to return to the movie</string>
     <string name="player_no_audio_tracks">No audio tracks</string>
-    <string name="player_subtitles">Subtitles</string>
-    <string name="player_language">Language</string>
+    <string name="player_subtitles">字幕</string>
+    <string name="player_language">语言</string>
     <string name="player_external_subtitles">External subtitles</string>
     <string name="player_downloading_and_loading_into_the_video">Downloading and loading into the video…</string>
     <string name="player_sdh">SDH</string>
@@ -23,7 +23,7 @@
     <string name="player_external_subtitles_6520c3">External subtitles ›</string>
     <string name="player_search_opensubtitles_podnapisi_and_subdl">Search OpenSubtitles, Podnapisi and SubDL</string>
     <string name="player_this_file_has_no_english_subtitles_search">This file has no English subtitles: search for them here</string>
-    <string name="player_off">Off</string>
+    <string name="player_off">关</string>
     <string name="player_forced"> (forced)</string>
     <string name="player_external"> · external</string>
     <string name="player_stereo">stereo</string>
@@ -34,7 +34,7 @@
     <string name="player_23_976_25_fps"> · 23.976 → 25 fps</string>
     <string name="player_this_file_has_no_subtitles_to_use">This file has no subtitles to use as reference: manual adjustment</string>
     <string name="player_no_reliable_offset_found_adjust_it_manually">No reliable offset found: adjust it manually</string>
-    <string name="player_preparing">Preparing…</string>
+    <string name="player_preparing">准备中…</string>
     <string name="player_no_source_selected">No source selected</string>
     <string name="player_no_other_working_spanish_source_back_to">No other working Spanish source: back to the previous one</string>
     <string name="player_none_of_the_sources_tried_is_cached">None of the sources tried is cached on </string>
@@ -57,7 +57,7 @@
     <string name="player_couldn_t_sync_the_subtitles_automatically_audio">Couldn\'t sync the subtitles automatically: Audio &amp; subtitles › Sync</string>
     <string name="player_subtitles_checked_already_in_sync">Subtitles checked: already in sync</string>
     <string name="player_skip_recap">Skip recap</string>
-    <string name="player_skip_intro">Skip intro</string>
+    <string name="player_skip_intro">跳过片头</string>
     <string name="player_no_sources_with_verified_spanish_audio_available">No sources with verified Spanish audio available for this profile</string>
     <string name="player_this_source_has_no_spanish_audio">This source has no Spanish audio</string>
     <string name="player_no_spanish_audio_trying_another_source">No Spanish audio: trying another source</string>
@@ -84,10 +84,10 @@
     <string name="player_track_number">Track %1$d</string>
     <string name="player_subtitle_number">Subtitle %1$d</string>
     <string name="player_playback">Playback</string>
-    <string name="player_speed">Speed</string>
+    <string name="player_speed">倍速</string>
     <string name="player_speed_passthrough_note">Dolby/DTS audio switches to stereo</string>
-    <string name="player_sleep_timer">Sleep timer</string>
-    <string name="player_sleep_timer_off">Off</string>
+    <string name="player_sleep_timer">睡眠定时</string>
+    <string name="player_sleep_timer_off">关</string>
     <string name="player_sleep_timer_end_of_episode">At the end of the episode</string>
     <string name="player_sleep_timer_minutes">Pauses in %1$d min</string>
     <string name="player_sleep_timer_paused">Sleep timer: playback paused</string>
