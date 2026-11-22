@@ -17,10 +17,18 @@ import javax.inject.Singleton
 class DoubanCatalogApi @Inject constructor(
     private val api: DoubanApi,
     private val cms: com.shieldstream.tv.data.repository.streams.CmsStreams,
+    @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context,
 ) : TmdbApi {
 
     /** Douban id -> cover URL, filled by list mapping so details/featured can reuse it. */
     private val coverCache = java.util.concurrent.ConcurrentHashMap<Int, String>()
+    /** Persistent id->cover so cold-start Continue Watching has art even if suggest is rate-limited. */
+    private val coverPrefs = appContext.getSharedPreferences("douban_covers", android.content.Context.MODE_PRIVATE)
+    private fun rememberCover(id: Int, url: String) {
+        if (url.isBlank()) return
+        coverCache[id] = url
+        coverPrefs.edit().putString(id.toString(), url).apply()
+    }
     /** Douban id -> title, so tvSeason() can look up the CMS episodes by title. */
     private val titleOf = java.util.concurrent.ConcurrentHashMap<Int, String>()
 
@@ -195,12 +203,13 @@ class DoubanCatalogApi @Inject constructor(
         val a = safeAbstract(id.toString()) ?: return TmdbMovieDetailDto(id = id)
         val s = a.subject ?: return TmdbMovieDetailDto(id = id)
         val year = s.releaseYear.take(4).toIntOrNull()
+        val cover = coverFor(id, s.title)
         return TmdbMovieDetailDto(
             id = id,
             title = cleanTitle(s.title),
             overview = s.shortComment?.content.orEmpty(),
-            poster_path = coverCache[id],
-            backdrop_path = coverCache[id],
+            poster_path = cover,
+            backdrop_path = cover,
             release_date = s.releaseYear.ifBlank { null },
             vote_average = (s.rate.toDoubleOrNull() ?: 0.0),
             genres = s.types.map { TmdbGenreDto(name = it) },
@@ -219,12 +228,13 @@ class DoubanCatalogApi @Inject constructor(
                 season_number = 1, name = "第1季", episode_count = episodeCount,
             ),
         ) else emptyList()
+        val cover = coverFor(id, s.title)
         return TmdbTvDetailDto(
             id = id,
             name = cleanTitle(s.title),
             overview = s.shortComment?.content.orEmpty(),
-            poster_path = coverCache[id],
-            backdrop_path = coverCache[id],
+            poster_path = cover,
+            backdrop_path = cover,
             first_air_date = s.releaseYear.ifBlank { null },
             vote_average = (s.rate.toDoubleOrNull() ?: 0.0),
             genres = s.types.map { TmdbGenreDto(name = it) },
@@ -239,6 +249,23 @@ class DoubanCatalogApi @Inject constructor(
         api.subjects(type = type, tag = tag, pageStart = (page - 1) * 20).subjects
     }.getOrDefault(emptyList())
 
+    /** Modified build: fill the cover from Douban suggest when the list cache is empty
+     * (e.g. Continue Watching rebuilds items by id on a cold start). */
+    private suspend fun coverFor(id: Int, title: String): String? {
+        coverCache[id]?.let { return it }
+        coverPrefs.getString(id.toString(), null)?.let { coverCache[id] = it; return it }
+        // Titles may carry an English original suffix ("肖申克的救赎 The Shawshank Redemption")
+        // which Douban suggest does not index - strip it so the Chinese title matches.
+        var q = cleanTitle(title)
+        if (q.any { it.code > 0x2E80 }) {
+            q = q.replace(Regex(" *[A-Za-z][A-Za-z0-9 '’.,!?-]*$"), "").trim()
+        }
+        val img = runCatching { api.suggest(q).firstOrNull()?.img }
+            .getOrDefault(null)
+        if (!img.isNullOrBlank()) rememberCover(id, img)
+        return img
+    }
+
     private suspend fun safeAbstract(id: String) = runCatching {
         api.abstract("https://movie.douban.com/j/subject_abstract?subject_id=$id")
     }.getOrNull()
@@ -246,7 +273,7 @@ class DoubanCatalogApi @Inject constructor(
     private fun cleanTitle(t: String) = t.replace(Regex("\\s*\\((?:19|20)\\d{2}\\)\\s*"), "").trim()
 
     private fun DoubanSubjectDto.toMovieDto() = TmdbMovieDto(
-        id = (id.toIntOrNull() ?: id.hashCode()).also { coverCache[it] = cover },
+        id = (id.toIntOrNull() ?: id.hashCode()).also { rememberCover(it, cover) },
         title = cleanTitle(title),
         overview = "",
         poster_path = cover,
@@ -256,7 +283,7 @@ class DoubanCatalogApi @Inject constructor(
     )
 
     private fun DoubanSubjectDto.toTvDto() = TmdbTvDto(
-        id = (id.toIntOrNull() ?: id.hashCode()).also { coverCache[it] = cover },
+        id = (id.toIntOrNull() ?: id.hashCode()).also { rememberCover(it, cover) },
         name = cleanTitle(title),
         overview = "",
         poster_path = cover,
@@ -265,7 +292,7 @@ class DoubanCatalogApi @Inject constructor(
     )
 
     private fun DoubanSubjectDto.toSearchDto(mediaType: String) = TmdbSearchResultDto(
-        id = (id.toIntOrNull() ?: id.hashCode()).also { coverCache[it] = cover },
+        id = (id.toIntOrNull() ?: id.hashCode()).also { rememberCover(it, cover) },
         media_type = mediaType,
         title = if (mediaType == "movie") cleanTitle(title) else null,
         name = if (mediaType == "tv") cleanTitle(title) else null,

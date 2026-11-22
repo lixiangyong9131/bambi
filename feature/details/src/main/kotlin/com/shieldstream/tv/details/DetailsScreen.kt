@@ -172,9 +172,11 @@ private fun DetailsContent(
     }
     var actionsOpen by remember { mutableStateOf(false) }
     var ratingTarget by remember { mutableStateOf<TraktRatingTarget?>(null) }
+    var skipSettingsOpen by remember { mutableStateOf(false) }
     var episodeMenu by remember { mutableStateOf<Episode?>(null) }
     BackHandler(enabled = actionsOpen || episodeMenu != null || !panelOpen) {
         when {
+            skipSettingsOpen -> skipSettingsOpen = false
             ratingTarget != null -> ratingTarget = null
             episodeMenu != null -> episodeMenu = null
             else -> when (detailsBackAction(actionsOpen, panelOpen)) {
@@ -200,28 +202,30 @@ private fun DetailsContent(
     val item = state.details.item
 
     Box(Modifier.fillMaxSize().onBackKey(enabled = panelOpen && !actionsOpen) { panelOpen = false }) {
-        // Modified build: a single full-bleed image, no separate blurred layer/seam.
+        // Modified build: keep the hero image and the info block flowing over it, but limit
+        // the image to the top area so a portrait poster is not stretched to fill the whole TV screen.
         AsyncImage(
             model = item.backdropUrl ?: item.posterUrl,
             contentDescription = null,
             contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(460.dp),
         )
+        // A soft vertical fade extends the artwork into the info area instead of a hard seam.
         Box(
-            Modifier.fillMaxSize().background(
-                Brush.horizontalGradient(
-                    0f to Color.Black,
-                    0.28f to Color.Black.copy(alpha = 0.92f),
-                    0.48f to Color.Black.copy(alpha = 0.35f),
-                    0.72f to Color.Transparent,
+            Modifier
+                .fillMaxWidth()
+                .height(560.dp)
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        0.45f to Color.Black.copy(alpha = 0.35f),
+                        1f to Color.Black,
+                    ),
                 ),
-            ),
         )
-        Box(
-            Modifier.fillMaxSize().background(
-                Brush.verticalGradient(0.40f to Color.Transparent, 1f to Color.Black),
-            ),
-        )
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)))
 
         val pageScroll = rememberScrollState()
         val pageScope = rememberCoroutineScope()
@@ -334,6 +338,13 @@ private fun DetailsContent(
         if (actionsOpen) {
             val target = ratingTarget
             when {
+                skipSettingsOpen -> SkipSettingsDialog(
+                    enabled = skipCfg.enabled,
+                    introSec = skipCfg.introSec,
+                    outroSec = skipCfg.outroSec,
+                    onConfig = viewModel::saveSkipConfig,
+                    onDismiss = { skipSettingsOpen = false },
+                )
                 target != null -> RatingPickerDialog(
                     state = state,
                     target = target,
@@ -348,6 +359,7 @@ private fun DetailsContent(
                     skipIntroSec = skipCfg.introSec,
                     skipOutroSec = skipCfg.outroSec,
                     onSkipConfig = viewModel::saveSkipConfig,
+                    onOpenSkipSettings = { skipSettingsOpen = true },
                     onToggleSeasonWatched = {
                         viewModel.toggleSeasonWatched()
                         actionsOpen = false

@@ -77,27 +77,20 @@ internal fun DetailsActions(
     skipIntroSec: Int,
     skipOutroSec: Int,
     onSkipConfig: (Boolean, Int, Int) -> Unit,
+    onOpenSkipSettings: () -> Unit,
     downloads: List<Download>,
     onDownload: (List<Episode>, DownloadQuality) -> Unit,
     onDownloadAction: (Download) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var downloadMenu by remember { mutableStateOf(false) }
-    var skipMenu by remember { mutableStateOf(false) }
     MoreSidePanel(
         title = state.details.item.title,
         subtitle = state.selectedEpisode?.takeIf { state.isSeries }?.let { "${it.localizedCode()} · ${it.title}" },
-        onBack = { if (downloadMenu) downloadMenu = false else if (skipMenu) skipMenu = false else onDismiss() },
+        onBack = { if (downloadMenu) downloadMenu = false else onDismiss() },
     ) {
         if (downloadMenu) {
             DownloadOptions(state = state, downloads = downloads, onDownload = onDownload)
-            return@MoreSidePanel
-        }
-        if (skipMenu) {
-            SkipSettingsPanel(
-                enabled = skipEnabled, introSec = skipIntroSec, outroSec = skipOutroSec,
-                onConfig = onSkipConfig,
-            )
             return@MoreSidePanel
         }
         val requester = remember { FocusRequester() }
@@ -174,7 +167,7 @@ internal fun DetailsActions(
                 icon = AppIcons.Bolt,
                 detail = if (skipEnabled) localizedStringResource(StringsR.string.details_skip_enable) else null,
                 highlighted = skipEnabled,
-                onClick = { skipMenu = true },
+                onClick = onOpenSkipSettings,
             )
         } else {
             val watched = state.mainProgress?.isWatched == true
@@ -383,7 +376,7 @@ private fun MoreSectionHeader(text: String) {
 }
 
 @Composable
-private fun MoreRow(
+internal fun MoreRow(
     text: String,
     icon: ImageVector?,
     onClick: () -> Unit,
@@ -497,51 +490,4 @@ internal fun EpisodeActions(
             ),
         ),
     )
-}
-
-/** Modified build: per-show intro/outro skip settings. Left/right on a row cycles the seconds. */
-@Composable
-private fun SkipSettingsPanel(
-    enabled: Boolean,
-    introSec: Int,
-    outroSec: Int,
-    onConfig: (Boolean, Int, Int) -> Unit,
-) {
-    val steps = listOf(0, 30, 60, 90, 120, 150, 180)
-    fun shift(current: Int, delta: Int): Int {
-        val idx = steps.indexOf(current).let { if (it < 0) 0 else it }
-        return steps[(idx + delta).coerceIn(0, steps.lastIndex)]
-    }
-    MoreSidePanel(
-        title = localizedStringResource(StringsR.string.details_skip_settings),
-        subtitle = localizedStringResource(StringsR.string.details_skip_hint),
-        onBack = {},
-    ) {
-        val requester = remember { FocusRequester() }
-        LaunchedEffect(Unit) { requester.requestFocusWithRetry() }
-        MoreRow(
-            text = localizedStringResource(StringsR.string.details_skip_enable),
-            icon = if (enabled) AppIcons.Check else LineIcons.Eye,
-            highlighted = enabled,
-            detail = if (enabled) "ON" else "OFF",
-            onClick = { onConfig(!enabled, introSec, outroSec) },
-            modifier = Modifier.focusRequester(requester),
-        )
-        MoreRow(
-            text = localizedStringResource(StringsR.string.details_skip_intro),
-            icon = AppIcons.Bolt,
-            detail = if (introSec == 0) localizedStringResource(StringsR.string.details_skip_off)
-                     else localizedStringResource(StringsR.string.details_skip_seconds, introSec),
-            onClick = { onConfig(enabled, shift(introSec, 1), outroSec) },
-            onShift = { d -> onConfig(enabled, shift(introSec, d), outroSec) },
-        )
-        MoreRow(
-            text = localizedStringResource(StringsR.string.details_skip_outro),
-            icon = AppIcons.Bolt,
-            detail = if (outroSec == 0) localizedStringResource(StringsR.string.details_skip_off)
-                     else localizedStringResource(StringsR.string.details_skip_seconds, outroSec),
-            onClick = { onConfig(enabled, introSec, shift(outroSec, 1)) },
-            onShift = { d -> onConfig(enabled, introSec, shift(outroSec, d)) },
-        )
-    }
 }
