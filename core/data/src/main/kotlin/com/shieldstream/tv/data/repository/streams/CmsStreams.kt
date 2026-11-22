@@ -28,8 +28,20 @@ class CmsStreams @Inject constructor(
     private val json: Json,
 ) {
     companion object {
-        private const val API = "http://ffzy5.tv/api.php/provide/vod"
-        private const val BACKUP_API = "https://taopianapi.com/cjapi/mc/vod/json.html"
+        // Modified build: Moontv CMS sources. User-preferred order first.
+        private const val DYTT = "http://caiji.dyttzyapi.com/api.php/provide/vod"       // 电影天堂资源
+        private const val BFZY = "https://bfzyapi.com/api.php/provide/vod"               // 暴风资源
+        private const val API = "http://ffzy5.tv/api.php/provide/vod"                     // 非凡影视
+        private const val TAOPIAN = "https://taopianapi.com/cjapi/mc/vod/json.html"       // 淘片
+        private val SOURCES = listOf(DYTT, BFZY, API, TAOPIAN)
+        // Search stays on the fast source (ffzy) so typing results are instant.
+        private val SEARCH_SOURCES = listOf(API, TAOPIAN)
+        // Short timeout so an unreachable source is skipped fast instead of hanging playback.
+        private val cmsClient: OkHttpClient = OkHttpClient.Builder()
+            .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
     }
 
     /** Titles that exist in the CMS catalog (has playable resources). Used for search. */
@@ -37,7 +49,7 @@ class CmsStreams @Inject constructor(
 
     suspend fun searchTitles(query: String): List<Hit> {
         if (query.isBlank()) return emptyList()
-        for (base in listOf(API, BACKUP_API)) {
+        for (base in SEARCH_SOURCES) {
             val rows = parseList(get("$base?ac=vod&wd=" + URLEncoder.encode(query, "UTF-8"))) ?: continue
             if (rows.isEmpty()) continue
             val hits = rows.map { r ->
@@ -58,7 +70,7 @@ class CmsStreams @Inject constructor(
         android.util.Log.i("CmsStream", "find(title=${item.title}, clean=$title)")
         if (title.isBlank()) return emptyList()
         // Try the fast source first, then backup.
-        for (base in listOf(API, BACKUP_API)) {
+        for (base in SOURCES) {
             val sources = searchAndBuild(base, title)
             android.util.Log.i("CmsStream", "$base -> ${sources.size} sources")
             if (sources.isNotEmpty()) return sources
@@ -131,7 +143,7 @@ class CmsStreams @Inject constructor(
 
     private fun get(url: String): String? = runCatching {
         val req = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
-        client.newCall(req).execute().use { resp ->
+        cmsClient.newCall(req).execute().use { resp ->
             if (!resp.isSuccessful) return null
             resp.body?.string()
         }
