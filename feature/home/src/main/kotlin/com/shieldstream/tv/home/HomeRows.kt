@@ -5,6 +5,7 @@ import com.shieldstream.tv.strings.R as StringsR
 import com.shieldstream.tv.strings.localizedStringResource
 import com.shieldstream.tv.model.Lang
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -86,6 +87,7 @@ internal fun RowsBrowser(
     onRemoveUpNext: ((CatalogItem, Episode) -> Unit)? = null,
     onBack: () -> Unit,
     header: String? = null,
+    topBar: @Composable (androidx.compose.ui.Modifier) -> Unit = {},
 ) {
     val savedFocus = rememberSaveable { mutableStateOf(firstKey(rows.first())) }
     fun validKey(key: String) = if (findByKey(rows, key) != null) key else firstKey(rows.first())
@@ -132,11 +134,13 @@ internal fun RowsBrowser(
     ) {
         if (!LocalLightweightUi.current) HeroBackdrop(hero)
         Column(Modifier.fillMaxSize()) {
+            // Modified build: top navigation is always visible (no separate banner page).
+            topBar(Modifier)
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .height(236.dp)
-                    .padding(start = ContentStart, top = 24.dp, end = 320.dp),
+                    .height(172.dp)
+                    .padding(start = ContentStart, top = 8.dp, end = 320.dp),
                 verticalArrangement = Arrangement.Bottom,
             ) {
                 header?.let {
@@ -184,6 +188,19 @@ internal fun RowsBrowser(
                 }
             }
         }
+        // Modified build: bottom fade so the next row's full-size cards peek from behind,
+        // instead of shrinking cards into a separate preview strip.
+        Box(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(150.dp)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.Transparent, Color.Black),
+                    ),
+                ),
+        )
         continueMenu?.let { menu ->
             ContinueActions(
                 item = menu.item,

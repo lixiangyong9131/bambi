@@ -163,7 +163,7 @@ private fun HomeContent(
     onTopBarFocusConsumed: () -> Unit,
 ) {
     // Como en Bambi: el Inicio arranca en la portada (destacados + categorías); ▼ baja a las filas.
-    var inRows by rememberSaveable { mutableStateOf(false) }
+    var inRows by rememberSaveable { mutableStateOf(true) }
     var topFocus by rememberSaveable { mutableStateOf(TopFocus.HERO) }
     val saveable = rememberSaveableStateHolder()
     // Swapping the rows view and the billboard disposes the focused item, and the new view only
@@ -186,7 +186,9 @@ private fun HomeContent(
             .focusProperties { canFocus = parkingFocus }
             .focusTarget(),
     ) {
-        if (inRows && rows.isNotEmpty()) saveable.SaveableStateProvider("rows") {
+        // Modified build: no banner page. Home always shows content rows with a focus-following
+        // hero backdrop and a bottom fade (full-size next row peeks from behind).
+        if (rows.isNotEmpty()) saveable.SaveableStateProvider("rows") {
             RowsBrowser(
                 rows = rows,
                 onItemClick = onItemClick,
@@ -197,54 +199,9 @@ private fun HomeContent(
                 onRemoveMyList = onRemoveMyList,
                 onMarkUpNextWatched = onMarkUpNextWatched,
                 onRemoveUpNext = onRemoveUpNext,
-                onExitTop = {
-                    topFocus = TopFocus.CHIPS
-                    switchView { inRows = false }
-                },
-                onBack = {
-                    topFocus = if (featured.isNotEmpty()) TopFocus.HERO else TopFocus.CHIPS
-                    switchView { inRows = false }
-                },
-            )
-        } else saveable.SaveableStateProvider("billboard") {
-            Billboard(
-                featured = featured,
-                // Modified build: first row peeks below the banner (continue watching / first category).
-                previewRow = rows.firstOrNull(),
-                categories = categories,
-                initialFocus = topFocus,
-                onFocusChange = { topFocus = it },
-                onItemClick = onItemClick,
-                onOpenCategory = onOpenCategory,
-                onSurprise = { surprisePick(rows, featured)?.let(onItemClick) },
-                onPlaySomething = {
-                    when (val pick = playSomethingPick(rows, featured)) {
-                        is PlaySomethingPick.UpNext -> onPlaySomething(
-                            pick.item,
-                            EpisodeTarget(pick.episode.season, pick.episode.number),
-                        )
-                        is PlaySomethingPick.NewEpisode -> onPlaySomething(
-                            pick.item,
-                            EpisodeTarget(pick.episode.season, pick.episode.number),
-                        )
-                        is PlaySomethingPick.Continue -> onPlaySomething(
-                            pick.item,
-                            pick.info.let { info ->
-                                val season = info.season
-                                val episode = info.episode
-                                if (season != null && episode != null) EpisodeTarget(season, episode) else null
-                            },
-                        )
-                        is PlaySomethingPick.Title -> onPlaySomething(pick.item, null)
-                        null -> Unit
-                    }
-                },
-                onEnterRows = { if (rows.isNotEmpty()) switchView { inRows = true } },
+                onExitTop = focusTopBar,
+                onBack = focusTopBar,
                 topBar = topBar,
-                topBarRequester = topBarRequester,
-                focusTopBar = focusTopBar,
-                preferTopBarFocus = preferTopBarFocus,
-                onTopBarFocusConsumed = onTopBarFocusConsumed,
             )
         }
     }
