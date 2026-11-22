@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -30,6 +32,7 @@ import com.shieldstream.tv.ui.component.TopBar
 import com.shieldstream.tv.ui.component.TopTab
 import com.shieldstream.tv.ui.component.downloadIndicatorState
 import com.shieldstream.tv.ui.component.onBackKey
+import com.shieldstream.tv.ui.component.requestFocusWithRetry
 
 @Composable
 fun MainScreen(
@@ -65,6 +68,15 @@ fun MainScreen(
     val episodeState by episodeCenter.uiState.collectAsState()
     LaunchedEffect(tab) { if (tab == TopTab.EPISODES) episodeCenter.activate() }
     val focusTopBar: () -> Unit = { runCatching { topBarRequester.requestFocus() } }
+    val scope = rememberCoroutineScope()
+    val onBackToTop: () -> Unit = {
+        if (immersive) { immersive = false }
+        // Retry focus after recomposition so the restored top bar can take focus.
+        scope.launch {
+            kotlinx.coroutines.delay(80)
+            runCatching { topBarRequester.requestFocusWithRetry() }
+        }
+    }
     val topBar: @Composable (Modifier) -> Unit = { modifier ->
         TopBar(
             selected = tab,
@@ -91,7 +103,7 @@ fun MainScreen(
     BackHandler(enabled = showExitConfirmation || immersive || shouldRequestExit(category != null, topBarFocused)) {
         when {
             showExitConfirmation -> showExitConfirmation = false
-            immersive -> { immersive = false; focusTopBar() }
+            immersive -> onBackToTop()
             else -> showExitConfirmation = !showExitConfirmation
         }
     }
@@ -134,6 +146,7 @@ fun MainScreen(
                     preferTopBarFocus = focusMenuAfterSwitch,
                     onTopBarFocusConsumed = { focusMenuAfterSwitch = false },
                     immersive = immersive,
+                    onBackToTop = onBackToTop,
                 )
             }
         }

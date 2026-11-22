@@ -118,7 +118,7 @@ interface SettingsRepository {
     suspend fun setDebridService(service: DebridService)
 
     companion object {
-        const val DEFAULT_HOME_ROW_ITEM_LIMIT = 30
+        const val DEFAULT_HOME_ROW_ITEM_LIMIT = 20
         const val MIN_HOME_ROW_ITEM_LIMIT = 10
         const val MAX_HOME_ROW_ITEM_LIMIT = 100
         const val HOME_ROW_ITEM_LIMIT_STEP = 10

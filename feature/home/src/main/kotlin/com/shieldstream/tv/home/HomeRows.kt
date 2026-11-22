@@ -88,6 +88,7 @@ internal fun RowsBrowser(
     onBack: () -> Unit,
     header: String? = null,
     topBar: @Composable (androidx.compose.ui.Modifier) -> Unit = {},
+    onBackToTop: () -> Unit = {},
 ) {
     val savedFocus = rememberSaveable { mutableStateOf(firstKey(rows.first())) }
     fun validKey(key: String) = if (findByKey(rows, key) != null) key else firstKey(rows.first())
@@ -123,7 +124,7 @@ internal fun RowsBrowser(
         Modifier
             .fillMaxSize()
             .background(RowBackground)
-            .onBackKey(enabled = true) { onBack() }
+            .onBackKey(enabled = true) { onBackToTop() }
             .onPreviewKeyEvent { e ->
                 val vertical = e.key == Key.DirectionDown || e.key == Key.DirectionUp
                 if (e.type != KeyEventType.KeyDown || !vertical || e.nativeKeyEvent.repeatCount == 0) return@onPreviewKeyEvent false

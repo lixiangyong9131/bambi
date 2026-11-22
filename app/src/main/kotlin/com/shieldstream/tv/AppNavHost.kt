@@ -95,7 +95,7 @@ fun AppNavHost(
     LaunchedEffect(coldIntro) {
         intro.setUiBusy(coldIntro)
         if (!coldIntro) {
-            kotlinx.coroutines.delay(ICON_WARM_DELAY_MS)
+            // Modified build: no 8s warm-up delay; preload icon bitmaps immediately in background.
             intro.warmAllProfileIcons()
         }
     }

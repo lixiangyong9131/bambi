@@ -83,17 +83,7 @@ fun TopBar(
             .fillMaxWidth()
             .height(64.dp),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.align(Alignment.CenterStart).padding(start = 32.dp),
-        ) {
-            // Modified build: black-cat logo replaces the Bambi cat + wordmark.
-            Image(
-                painter = painterResource(R.drawable.blackcat_logo),
-                contentDescription = null,
-                modifier = Modifier.size(40.dp),
-            )
-        }
+        // Modified build: no leading brand logo (cleaner top bar).
         Row(
             modifier = Modifier.align(Alignment.Center),
             horizontalArrangement = Arrangement.spacedBy(6.dp),

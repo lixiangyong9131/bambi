@@ -180,8 +180,8 @@ class CatalogRepositoryImpl @Inject constructor(
     )
 
     override suspend fun getHome(filter: HomeFilter, maxItems: Int): List<CatalogRow> {
-        // Las páginas que hacen falta para llenar cada fila con el máximo elegido en Ajustes (20 por página).
-        val pages = ((maxItems + TMDB_PAGE_SIZE - 1) / TMDB_PAGE_SIZE).coerceIn(1, MAX_HOME_PAGES)
+        // Modified build: always one page per row for a fast first load (extra pages are fetched on scroll).
+        val pages = 1
         return if (kids) cachedRows("home_kids_${filter.name}_p$pages") { loadHome(kidsRowsFor(filter, pages), pages) }
         else cachedRows("home_${filter.name}_p$pages") { loadHome(rowsFor(filter), pages) }
     }
