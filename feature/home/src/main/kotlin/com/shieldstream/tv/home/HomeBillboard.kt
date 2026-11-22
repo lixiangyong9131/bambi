@@ -49,7 +49,6 @@ import com.shieldstream.tv.model.Category
 import com.shieldstream.tv.model.FeaturedItem
 import com.shieldstream.tv.model.MediaType
 import com.shieldstream.tv.ui.component.onBackKey
-import com.shieldstream.tv.ui.component.SoftBackdropImage
 import com.shieldstream.tv.ui.component.requestFocusWithRetry
 import com.shieldstream.tv.ui.theme.LocalSoftBackdrops
 import com.shieldstream.tv.ui.theme.LocalHighResBackdrops
@@ -144,19 +143,11 @@ internal fun Billboard(
 /** Backdrop del título enfocado, arriba a la derecha, fundido a negro por la izquierda y por abajo. */
 @Composable
 internal fun HeroBackdrop(item: CatalogItem) {
+    // Modified build: a single full-bleed image. No separate blurred layer -> no visible seam,
+    // no edge re-loading when moving between cards (Coil serves the cached bitmap instantly).
+    val url = BackdropUrls.fullScreen(item.backdropUrl, lightweight = false, highRes = LocalHighResBackdrops.current)
     Box(Modifier.fillMaxSize()) {
-        val url = BackdropUrls.fullScreen(item.backdropUrl, lightweight = false, highRes = LocalHighResBackdrops.current)
-        // Modified build: Douban only supplies portrait posters. Stretching one across a 16:9 TV screen
-        // gets blurry, so use the small pre-blurred copy as the full-bleed background and show the
-        // sharp poster at a limited 16:9-ish crop on the right. Left stays dark for the text.
-        if (url != null) {
-            SoftBackdropImage(url = url, modifier = Modifier.fillMaxSize())
-        }
-        val sharpArea = Modifier
-            .align(Alignment.TopEnd)
-            .fillMaxHeight()
-            .fillMaxWidth(0.58f)
-        Crossfade(targetState = url, animationSpec = tween(450), label = "heroBackdrop", modifier = sharpArea) { u ->
+        Crossfade(targetState = url, animationSpec = tween(300), label = "heroBackdrop") { u ->
             if (u != null) {
                 AsyncImage(
                     model = u,
@@ -170,18 +161,14 @@ internal fun HeroBackdrop(item: CatalogItem) {
             Modifier.fillMaxSize().background(
                 Brush.horizontalGradient(
                     0f to Color.Black,
-                    0.28f to Color.Black.copy(alpha = 0.92f),
-                    0.48f to Color.Black.copy(alpha = 0.35f),
-                    0.72f to Color.Transparent,
+                    0.30f to Color.Black.copy(alpha = 0.80f),
+                    0.62f to Color.Transparent,
                 ),
             ),
         )
         Box(
             Modifier.fillMaxSize().background(
-                Brush.verticalGradient(
-                    0.5f to Color.Transparent,
-                    1f to Color.Black,
-                ),
+                Brush.verticalGradient(0.55f to Color.Transparent, 1f to Color.Black),
             ),
         )
     }

@@ -77,7 +77,6 @@ import com.shieldstream.tv.ui.component.ProvideMinimalScroll
 import com.shieldstream.tv.ui.component.TvButton
 import com.shieldstream.tv.ui.component.formatEpisodeDate
 import com.shieldstream.tv.ui.component.onBackKey
-import com.shieldstream.tv.ui.component.SoftBackdropImage
 
 internal val Green = Color(0xFF46D369)
 
@@ -200,16 +199,12 @@ private fun DetailsContent(
     val item = state.details.item
 
     Box(Modifier.fillMaxSize().onBackKey(enabled = panelOpen && !actionsOpen) { panelOpen = false }) {
-        // Modified build: theme-colour blurred backdrop + sharp poster on the right (no hard edge).
-        SoftBackdropImage(url = item.backdropUrl ?: item.posterUrl.orEmpty(), modifier = Modifier.fillMaxSize())
+        // Modified build: a single full-bleed image, no separate blurred layer/seam.
         AsyncImage(
             model = item.backdropUrl ?: item.posterUrl,
             contentDescription = null,
             contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .fillMaxHeight()
-                .fillMaxWidth(0.58f),
+            modifier = Modifier.fillMaxSize(),
         )
         Box(
             Modifier.fillMaxSize().background(
