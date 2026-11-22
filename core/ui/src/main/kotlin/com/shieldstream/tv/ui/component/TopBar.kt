@@ -87,17 +87,11 @@ fun TopBar(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.align(Alignment.CenterStart).padding(start = 32.dp),
         ) {
-            // Marca de Bambi: gatito + "BAMBI" (no enfocable). Las esquinas redondeadas ya vienen en el PNG.
+            // Modified build: black-cat logo replaces the Bambi cat + wordmark.
             Image(
-                painter = painterResource(R.drawable.bambi_logo),
-                contentDescription = "Bambi",
-                modifier = Modifier.size(40.dp),
-            )
-            Spacer(Modifier.width(12.dp))
-            Image(
-                painter = painterResource(R.drawable.bambi_wordmark),
+                painter = painterResource(R.drawable.blackcat_logo),
                 contentDescription = null,
-                modifier = Modifier.height(22.dp),
+                modifier = Modifier.size(40.dp),
             )
         }
         Row(

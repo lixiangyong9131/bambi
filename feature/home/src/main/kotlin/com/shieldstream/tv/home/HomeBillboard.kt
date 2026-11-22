@@ -36,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusTarget
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -103,8 +104,7 @@ internal fun Billboard(
                 modifier = Modifier
                     .weight(1f)
                     .focusRequester(heroRequester)
-                    // ▲ desde la portada → la pestaña activa del menú (no la más cercana).
-                    // ▼ → el botón de categoría recordado, no el "más cercano" geométricamente.
+                    // ▲ from the hero -> active top tab. ▼ -> invisible focus bridge into the content rows.
                     .focusProperties {
                         up = topBarRequester
                         down = chipsRequester
@@ -114,17 +114,15 @@ internal fun Billboard(
         } else {
             Spacer(Modifier.weight(1f))
         }
-        CategoryChips(
-            // Modified build: hide the second category chip row that duplicates the top tabs.
-            categories = emptyList(),
-            onOpen = onOpenCategory,
-            onSurprise = onSurprise,
-            onPlaySomething = onPlaySomething,
-            requester = chipsRequester,
-            upRequester = if (featured.isNotEmpty()) heroRequester else topBarRequester,
-            onFocused = { onFocusChange(TopFocus.CHIPS) },
-            onDown = onEnterRows,
-            modifier = Modifier.padding(bottom = 6.dp),
+        // Modified build: no category chips / play buttons. An invisible focusable bridge keeps
+        // DPAD_DOWN working from the hero into the content rows.
+        Spacer(
+            Modifier
+                .height(1.dp)
+                .focusRequester(chipsRequester)
+                .focusTarget()
+                .onFocusChanged { if (it.isFocused) onEnterRows() }
+                .focusProperties { up = if (featured.isNotEmpty()) heroRequester else topBarRequester },
         )
     }
 }
