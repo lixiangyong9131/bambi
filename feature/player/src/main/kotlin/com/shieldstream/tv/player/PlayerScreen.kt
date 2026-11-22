@@ -513,6 +513,14 @@ fun PlayerScreen(
                     onCycleVideoFit = viewModel::cycleVideoFit,
                     cardStyle = tracksPanelCard,
                     onCycleSpeed = viewModel::cyclePlaybackSpeed,
+                    onSetIntroPoint = { sec ->
+                        viewModel.setIntroPoint(sec)
+                        tracksOpen = false
+                    },
+                    onSetOutroPoint = { sec ->
+                        viewModel.setOutroPoint(sec)
+                        tracksOpen = false
+                    },
                     sleepTimer = sleepTimer,
                     sleepTimerRemainingMinutes = sleepTimerRemainingMinutes,
                     onCycleSleepTimer = viewModel::cycleSleepTimer,

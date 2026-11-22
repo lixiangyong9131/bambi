@@ -88,6 +88,8 @@ fun TracksPanel(
     onAudioSelected: (String?) -> Unit = {},
     onSubtitleSelected: (String?) -> Unit = {},
     onSubtitlesOff: () -> Unit = {},
+    onSetIntroPoint: (Int) -> Unit = {},
+    onSetOutroPoint: (Int) -> Unit = {},
 ) {
     val texts = rememberTexts()
     var tracks by remember(player) { mutableStateOf(player.currentTracks) }
@@ -199,6 +201,25 @@ fun TracksPanel(
                         },
                         selected = videoFit != com.shieldstream.tv.model.VideoFit.FIT,
                         onSelect = onCycleVideoFit,
+                    ),
+                    // Modified build: mark the current playback position as intro end / outro start.
+                    TrackOption(
+                        key = "p_intro_point",
+                        title = texts.get(StringsR.string.player_set_intro_point),
+                        detail = "",
+                        selected = false,
+                        onSelect = { onSetIntroPoint((player.currentPosition / 1000).toInt()) },
+                    ),
+                    TrackOption(
+                        key = "p_outro_point",
+                        title = texts.get(StringsR.string.player_set_outro_point),
+                        detail = "",
+                        selected = false,
+                        onSelect = {
+                            val remain = ((player.duration - player.currentPosition) / 1000).toInt()
+                                .coerceAtLeast(0)
+                            onSetOutroPoint(remain)
+                        },
                     ),
                 )
             }

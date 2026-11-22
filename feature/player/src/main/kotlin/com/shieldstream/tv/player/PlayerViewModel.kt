@@ -253,6 +253,28 @@ class PlayerViewModel @Inject constructor(
         playFrom(0)
     }
 
+    /** Modified build: mark current position as intro end / outro start, persisted in seconds. */
+    fun setIntroPoint(seconds: Int) {
+        val m = mediaSnapshot ?: return
+        val key = com.shieldstream.tv.domain.ManualSkipRepository.keyFor(m.title, m.type.name)
+        val c = manualSkip.get(key)
+        val updated = c.copy(enabled = true, introSec = seconds)
+        manualSkip.save(key, updated)
+        manualSkipConfig = updated
+        segments = if (seconds > 0) segments.copy(intro = com.shieldstream.tv.domain.TimeRange(0, seconds * 1000L)) else segments.copy(intro = null)
+        _notice.value = texts.get(StringsR.string.player_intro_point_set, seconds)
+    }
+
+    fun setOutroPoint(seconds: Int) {
+        val m = mediaSnapshot ?: return
+        val key = com.shieldstream.tv.domain.ManualSkipRepository.keyFor(m.title, m.type.name)
+        val c = manualSkip.get(key)
+        val updated = c.copy(enabled = true, outroSec = seconds)
+        manualSkip.save(key, updated)
+        manualSkipConfig = updated
+        _notice.value = texts.get(StringsR.string.player_outro_point_set, seconds)
+    }
+
     private fun loadSegments() {
         val m = mediaSnapshot ?: return
         viewModelScope.launch {

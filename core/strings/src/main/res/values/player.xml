@@ -102,4 +102,9 @@
     <string name="player_video_fit_original">原始（带黑边）</string>
     <string name="player_video_fit_zoom">缩放 · 无黑边，裁切两侧</string>
     <string name="player_video_fit_stretch">拉伸 · 无黑边，画面变形</string>
+
+    <string name="player_set_intro_point">设当前位置为片头结束</string>
+    <string name="player_set_outro_point">设当前位置为片尾开始</string>
+    <string name="player_intro_point_set">片头已设为 %1 秒</string>
+    <string name="player_outro_point_set">片尾已设为末尾 %1 秒</string>
 </resources>
