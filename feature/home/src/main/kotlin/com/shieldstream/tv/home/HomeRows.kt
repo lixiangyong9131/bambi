@@ -89,6 +89,7 @@ internal fun RowsBrowser(
     header: String? = null,
     topBar: @Composable (androidx.compose.ui.Modifier) -> Unit = {},
     onBackToTop: () -> Unit = {},
+    onEnterImmersive: () -> Unit = {},
 ) {
     val savedFocus = rememberSaveable { mutableStateOf(firstKey(rows.first())) }
     fun validKey(key: String) = if (findByKey(rows, key) != null) key else firstKey(rows.first())
@@ -167,6 +168,7 @@ internal fun RowsBrowser(
                                 savedFocus.value = keyOf(row, virtual)
                                 // Modified build: update the full-screen hero immediately on focus.
                                 hero = row.items.getOrNull(virtual % row.items.size) ?: hero
+                                onEnterImmersive()
                             },
                             onItemClick = onItemClick,
                             onNewEpisodeClick = onNewEpisodeClick,

@@ -234,7 +234,7 @@ private fun TracksView(audio: List<TrackOption>, text: List<TrackOption>, playba
             .padding(horizontal = 20.dp, vertical = 22.dp),
     ) {
         OptionColumn(
-            title = "Audio",
+            title = localizedStringResource(StringsR.string.player_audio),
             options = audio,
             emptyText = localizedStringResource(StringsR.string.player_no_audio_tracks),
             onClick = { it.onSelect() },

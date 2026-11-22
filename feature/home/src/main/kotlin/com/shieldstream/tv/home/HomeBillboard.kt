@@ -145,36 +145,41 @@ internal fun Billboard(
 @Composable
 internal fun HeroBackdrop(item: CatalogItem) {
     Box(Modifier.fillMaxSize()) {
-        // Modified build: full-screen backdrop that follows the focused card on every row.
-        val area = Modifier.fillMaxSize()
         val url = BackdropUrls.fullScreen(item.backdropUrl, lightweight = false, highRes = LocalHighResBackdrops.current)
-        Crossfade(targetState = url, animationSpec = tween(450), label = "heroBackdrop", modifier = area) { u ->
+        // Modified build: Douban only supplies portrait posters. Stretching one across a 16:9 TV screen
+        // gets blurry, so use the small pre-blurred copy as the full-bleed background and show the
+        // sharp poster at a limited 16:9-ish crop on the right. Left stays dark for the text.
+        if (url != null) {
+            SoftBackdropImage(url = url, modifier = Modifier.fillMaxSize())
+        }
+        val sharpArea = Modifier
+            .align(Alignment.TopEnd)
+            .fillMaxHeight()
+            .fillMaxWidth(0.58f)
+        Crossfade(targetState = url, animationSpec = tween(450), label = "heroBackdrop", modifier = sharpArea) { u ->
             if (u != null) {
-                if (LocalSoftBackdrops.current) {
-                    SoftBackdropImage(url = u, modifier = Modifier.fillMaxSize())
-                } else {
-                    AsyncImage(
-                        model = u,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                }
+                AsyncImage(
+                    model = u,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
         }
         Box(
-            area.background(
+            Modifier.fillMaxSize().background(
                 Brush.horizontalGradient(
                     0f to Color.Black,
-                    0.30f to Color.Black.copy(alpha = 0.55f),
-                    0.65f to Color.Transparent,
+                    0.28f to Color.Black.copy(alpha = 0.92f),
+                    0.48f to Color.Black.copy(alpha = 0.35f),
+                    0.72f to Color.Transparent,
                 ),
             ),
         )
         Box(
-            area.background(
+            Modifier.fillMaxSize().background(
                 Brush.verticalGradient(
-                    0.45f to Color.Transparent,
+                    0.5f to Color.Transparent,
                     1f to Color.Black,
                 ),
             ),

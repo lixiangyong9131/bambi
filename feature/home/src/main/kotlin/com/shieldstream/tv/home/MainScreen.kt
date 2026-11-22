@@ -53,6 +53,9 @@ fun MainScreen(
     var category by rememberSaveable { mutableStateOf<Category?>(null) }
     // Modified build: immersive browsing - top bar hides after a tab is chosen, Back restores it.
     var immersive by rememberSaveable { mutableStateOf(false) }
+    // Ignore the automatic initial card focus; only real DPAD navigation arms immersive mode.
+    var immersiveArmed by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { kotlinx.coroutines.delay(900); immersiveArmed = true }
     var focusMenuAfterSwitch by remember { mutableStateOf(false) }
     var topBarFocused by remember { mutableStateOf(false) }
     var showExitConfirmation by remember { mutableStateOf(false) }
@@ -77,6 +80,7 @@ fun MainScreen(
             runCatching { topBarRequester.requestFocusWithRetry() }
         }
     }
+    val onEnterImmersive: () -> Unit = { if (immersiveArmed) immersive = true }
     val topBar: @Composable (Modifier) -> Unit = { modifier ->
         TopBar(
             selected = tab,
@@ -147,6 +151,7 @@ fun MainScreen(
                     onTopBarFocusConsumed = { focusMenuAfterSwitch = false },
                     immersive = immersive,
                     onBackToTop = onBackToTop,
+                    onEnterImmersive = onEnterImmersive,
                 )
             }
         }
