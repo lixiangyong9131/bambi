@@ -1,5 +1,6 @@
 package com.shieldstream.tv.details
 
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.SharingStarted
 import com.shieldstream.tv.strings.R as StringsR
@@ -59,6 +60,7 @@ class DetailsViewModel @Inject constructor(
     private val downloads: com.shieldstream.tv.domain.DownloadsRepository,
     private val planner: DownloadPlanner,
     private val debridCache: com.shieldstream.tv.domain.DebridCacheRepository,
+    private val manualSkip: com.shieldstream.tv.domain.ManualSkipRepository,
 ) : ViewModel() {
 
     /** Descargas (para enseñar el estado en la ficha y reproducir lo descargado). */
@@ -71,6 +73,23 @@ class DetailsViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow<DetailsUiState>(DetailsUiState.Loading)
     val uiState: StateFlow<DetailsUiState> = _uiState.asStateFlow()
+
+    /** Modified build: per-show intro/outro skip config, refreshed when the item or settings change. */
+    val skipConfig: StateFlow<com.shieldstream.tv.domain.ManualSkipRepository.Config> =
+        kotlinx.coroutines.flow.combine(_uiState, manualSkip.changes) { ui, _ ->
+            val item = (ui as? DetailsUiState.Content)?.details?.item
+            if (item != null) manualSkip.get(
+                com.shieldstream.tv.domain.ManualSkipRepository.keyFor(item.title, item.type.name)
+            ) else com.shieldstream.tv.domain.ManualSkipRepository.Config()
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, com.shieldstream.tv.domain.ManualSkipRepository.Config())
+
+    fun saveSkipConfig(enabled: Boolean, introSec: Int, outroSec: Int) {
+        val item = (_uiState.value as? DetailsUiState.Content)?.details?.item ?: return
+        manualSkip.save(
+            com.shieldstream.tv.domain.ManualSkipRepository.keyFor(item.title, item.type.name),
+            com.shieldstream.tv.domain.ManualSkipRepository.Config(enabled, introSec, outroSec),
+        )
+    }
 
     private val _events = MutableSharedFlow<DetailsEvent>(extraBufferCapacity = 1)
     val events = _events.asSharedFlow()

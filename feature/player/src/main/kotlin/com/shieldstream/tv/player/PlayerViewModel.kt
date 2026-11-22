@@ -92,6 +92,7 @@ class PlayerViewModel @Inject constructor(
     private val subtitles: SubtitleRepository,
     private val trakt: TraktRepository,
     private val skipSegmentsRepository: SkipSegmentsRepository,
+    private val manualSkip: com.shieldstream.tv.domain.ManualSkipRepository,
     private val trackMemory: TrackMemoryRepository,
     private val texts: Texts,
 ) : ViewModel() {
@@ -124,6 +125,8 @@ class PlayerViewModel @Inject constructor(
     private val progressKey: String? = playbackSnapshot?.progressKey
 
     private var segments: SkipSegments = SkipSegments.NONE
+    private var manualSkipConfig: com.shieldstream.tv.domain.ManualSkipRepository.Config =
+        com.shieldstream.tv.domain.ManualSkipRepository.Config()
     private var segmentsJob: Job? = null
     private val autoSkipped = mutableSetOf<String>()
     private var prefetched = false
@@ -252,11 +255,17 @@ class PlayerViewModel @Inject constructor(
 
     private fun loadSegments() {
         val m = mediaSnapshot ?: return
-        val imdb = m.imdbId ?: return
-        val season = m.season ?: return
-        val episode = m.episode ?: return
         viewModelScope.launch {
-            segments = skipSegmentsRepository.episode(imdb, season, episode)
+            val auto = if (m.imdbId != null && m.season != null && m.episode != null) {
+                skipSegmentsRepository.episode(m.imdbId!!, m.season!!, m.episode!!)
+            } else SkipSegments.NONE
+            manualSkipConfig = manualSkip.get(
+                com.shieldstream.tv.domain.ManualSkipRepository.keyFor(m.title, m.type.name),
+            )
+            // Modified build: manual intro length applies even without IMDb / chapter data.
+            segments = if (manualSkipConfig.active && manualSkipConfig.introSec > 0) {
+                auto.copy(intro = com.shieldstream.tv.domain.TimeRange(0, manualSkipConfig.introSec * 1000L))
+            } else auto
             autoSkipped.clear()
         }
     }
@@ -435,13 +444,23 @@ class PlayerViewModel @Inject constructor(
                 val duration = p.duration
                 val position = p.currentPosition
                 if (duration <= 0) continue
-                updateSkipPrompt(position)
+                updateSkipPrompt(position, duration)
                 updateNextUp(position, duration)
             }
         }
     }
 
-    private fun updateSkipPrompt(position: Long) {
+    private fun updateSkipPrompt(position: Long, duration: Long = 0L) {
+        // Modified build: manual outro skip (per-show outro length) - jump to the very end when
+        // playback enters the outro zone, which triggers the "next episode" prompt.
+        if (manualSkipConfig.active && manualSkipConfig.outroSec > 0 && duration > 0) {
+            val outroStart = duration - manualSkipConfig.outroSec * 1000L
+            if (pos_in_outro(position, outroStart, duration) && "outro" !in autoSkipped) {
+                autoSkipped += "outro"
+                _player.value?.seekTo(duration - 1_000L)
+                return
+            }
+        }
         val recap = segments.recap
         val intro = segments.intro
         if (autoSkipIntro.value) {
@@ -466,6 +485,9 @@ class PlayerViewModel @Inject constructor(
         }
         if (prompt != _skipPrompt.value) _skipPrompt.value = prompt
     }
+
+    private fun pos_in_outro(position: Long, outroStart: Long, duration: Long): Boolean =
+        position >= outroStart && position < duration - 500L
 
     private fun updateNextUp(position: Long, duration: Long) {
         val next = nextSnapshot

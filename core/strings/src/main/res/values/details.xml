@@ -93,4 +93,12 @@
     <string name="details_more_series">剧集</string>
     <string name="details_plays_on_play">▶ 按播放键即播放</string>
     <string name="details_picked_source_failed">That source doesn\'t work: %1$s Pick another one.</string>
+
+    <string name="details_skip_settings">片头片尾设置</string>
+    <string name="details_skip_enable">自动跳过片头片尾</string>
+    <string name="details_skip_intro">片头时长</string>
+    <string name="details_skip_outro">片尾时长</string>
+    <string name="details_skip_seconds">%1 秒</string>
+    <string name="details_skip_off">关闭</string>
+    <string name="details_skip_hint">设置后每集自动跳过片头和片尾</string>
 </resources>

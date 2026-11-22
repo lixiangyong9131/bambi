@@ -154,6 +154,7 @@ private fun DetailsContent(
     val context = androidx.compose.ui.platform.LocalContext.current
     val downloadList by viewModel.downloadList.collectAsStateWithLifecycle()
     val plannerProgress by viewModel.plannerProgress.collectAsStateWithLifecycle()
+    val skipCfg by viewModel.skipConfig.collectAsStateWithLifecycle()
     // El episodio sobre el que se estaba (enfocado), no solo el último abierto: "Más" actúa sobre ese.
     var focusedEpisode by remember { mutableStateOf<Episode?>(null) }
     val menuState = remember(state, focusedEpisode) {
@@ -343,6 +344,10 @@ private fun DetailsContent(
                 )
                 else -> DetailsActions(
                     state = menuState,
+                    skipEnabled = skipCfg.enabled,
+                    skipIntroSec = skipCfg.introSec,
+                    skipOutroSec = skipCfg.outroSec,
+                    onSkipConfig = viewModel::saveSkipConfig,
                     onToggleSeasonWatched = {
                         viewModel.toggleSeasonWatched()
                         actionsOpen = false

@@ -120,6 +120,10 @@ abstract class DataModule {
 
     @Binds
     @Singleton
+    abstract fun bindManualSkipRepository(impl: com.shieldstream.tv.data.repository.ManualSkipRepositoryImpl): com.shieldstream.tv.domain.ManualSkipRepository
+
+    @Binds
+    @Singleton
     abstract fun bindMyListRepository(impl: MyListRepositoryImpl): MyListRepository
 
     @Binds
