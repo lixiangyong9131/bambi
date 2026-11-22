@@ -38,6 +38,7 @@ class App : Application(), ImageLoaderFactory, Configuration.Provider {
     lateinit var watchNext: WatchNextManager
 
 
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
 

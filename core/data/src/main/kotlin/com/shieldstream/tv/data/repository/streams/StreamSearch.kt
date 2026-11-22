@@ -52,7 +52,7 @@ internal class StreamSearch(
     fun streams(item: CatalogItem, episode: Episode?): Flow<StreamResults> = channelFlow {
         // Direct CMS m3u8 source: title-based lookup, no IMDb / debrid needed. Try first so
         // Douban catalog items (which have no IMDb id) are always playable.
-        val cmsSources = if (cms != null) runCatching { cms.find(item) }.getOrDefault(emptyList()) else emptyList()
+        val cmsSources = if (cms != null) runCatching { cms.find(item, episode) }.getOrDefault(emptyList()) else emptyList()
         if (cmsSources.isNotEmpty()) {
             send(StreamResults(cmsSources))
             return@channelFlow

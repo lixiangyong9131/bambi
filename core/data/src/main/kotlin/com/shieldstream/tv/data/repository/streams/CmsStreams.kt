@@ -80,13 +80,52 @@ class CmsStreams @Inject constructor(
         return emptyList()
     }
 
-    suspend fun find(item: CatalogItem): List<StreamSource> {
+    /** A CMS episode: number, title and its direct m3u8 URL. */
+    data class EpisodeInfo(val number: Int, val title: String, val url: String)
+
+    /** Fetch the full episode list of a TV show from the CMS detail (第01集$url#第02集$url...). */
+    suspend fun getEpisodes(title: String): List<EpisodeInfo> {
+        val t = clean(title)
+        if (t.isBlank()) return emptyList()
+        for (base in SEARCH_SOURCES) {
+            val rows = parseList(get("$base?ac=vod&wd=" + URLEncoder.encode(t, "UTF-8"))) ?: continue
+            val cand = rows.firstOrNull { row ->
+                val n = clean(str(row, "vod_name"))
+                n == t || n.contains(t.take(6), true) || t.contains(n.take(6), true)
+            } ?: rows.firstOrNull() ?: continue
+            val vid = str(cand, "vod_id")
+            val detailRows = parseList(get("$base?ac=detail&ids=" + URLEncoder.encode(vid, "UTF-8"))) ?: continue
+            val v = detailRows.firstOrNull() ?: continue
+            val play = str(v, "vod_play_url")
+            if (play.isBlank()) continue
+            val eps = mutableListOf<EpisodeInfo>()
+            // Only accept direct .m3u8/.mp4 links; the feifan group uses /share/ landing pages.
+            for (group in play.split("\$\$\$")) {
+                val groupEps = mutableListOf<EpisodeInfo>()
+                for (ep in group.split("#")) {
+                    val idx = ep.lastIndexOf('$')
+                    if (idx <= 0) continue
+                    val label = ep.substring(0, idx).trim()
+                    val url = ep.substring(idx + 1).trim()
+                    if (!url.startsWith("http")) continue
+                    if (!url.contains(".m3u8") && !url.contains(".mp4")) continue
+                    val num = Regex("\\d+").find(label)?.value?.toIntOrNull() ?: (groupEps.size + 1)
+                    if (groupEps.none { it.number == num }) groupEps += EpisodeInfo(num, label, url)
+                }
+                if (groupEps.isNotEmpty()) { eps.addAll(groupEps); break }
+            }
+            if (eps.isNotEmpty()) return eps.sortedBy { it.number }
+        }
+        return emptyList()
+    }
+
+    suspend fun find(item: CatalogItem, episode: com.shieldstream.tv.model.Episode? = null): List<StreamSource> {
         val title = clean(item.title)
         android.util.Log.i("CmsStream", "find(title=${item.title}, clean=$title)")
         if (title.isBlank()) return emptyList()
         // Try the fast source first, then backup.
         for (base in SOURCES) {
-            val sources = searchAndBuild(base, title)
+            val sources = searchAndBuild(base, title, episode)
             android.util.Log.i("CmsStream", "$base -> ${sources.size} sources")
             if (sources.isNotEmpty()) return sources
         }
@@ -94,7 +133,7 @@ class CmsStreams @Inject constructor(
         return emptyList()
     }
 
-    private fun searchAndBuild(base: String, title: String): List<StreamSource> {
+    private fun searchAndBuild(base: String, title: String, episode: com.shieldstream.tv.model.Episode?): List<StreamSource> {
         val searchUrl = "$base?ac=vod&wd=" + URLEncoder.encode(title, "UTF-8")
         val body = get(searchUrl)
         android.util.Log.i("CmsStream", "search url=" + searchUrl + " body=" + body?.take(120))
@@ -111,8 +150,8 @@ class CmsStreams @Inject constructor(
         val detailUrl = "$base?ac=detail&ids=" + URLEncoder.encode(vid, "UTF-8")
         val detailRows = parseList(get(detailUrl)) ?: listOf(cand)
         val v = detailRows.firstOrNull() ?: cand
-        val url = pickPlayUrl(v) ?: return emptyList()
-        android.util.Log.i("CmsStream", "picked url: ${url.take(100)}")
+        val url = pickPlayUrl(v, episode?.number) ?: return emptyList()
+        android.util.Log.i("CmsStream", "picked url (ep=${episode?.number}): ${url.take(100)}")
         val name = str(v, "vod_name").ifBlank { title }
         return listOf(
             StreamSource(
@@ -137,7 +176,7 @@ class CmsStreams @Inject constructor(
     }
 
     /** CMS V10: vod_play_from and vod_play_url are '$$$' separated groups. Pick a direct http m3u8/mp4. */
-    private fun pickPlayUrl(v: JsonObject): String? {
+    private fun pickPlayUrl(v: JsonObject, episodeNumber: Int? = null): String? {
         val from = str(v, "vod_play_from")
         val play = str(v, "vod_play_url")
         if (play.isBlank()) return null
@@ -146,11 +185,21 @@ class CmsStreams @Inject constructor(
         for (i in groups.indices) {
             val label = names.getOrNull(i).orEmpty()
             if (label.contains("share", true) || label.equals("feifan", true)) continue
-            for (ep in groups[i].split("#")) {
+            val entries = groups[i].split("#").mapNotNull { ep ->
                 val idx = ep.lastIndexOf('$')
-                val u = (if (idx >= 0 && idx < ep.length - 1) ep.substring(idx + 1) else ep).trim()
-                if (u.startsWith("http") && (u.contains(".m3u8") || u.contains(".mp4"))) return u
+                if (idx < 0) null else {
+                    val name = ep.substring(0, idx).trim()
+                    val u = ep.substring(idx + 1).trim()
+                    if (u.startsWith("http") && (u.contains(".m3u8") || u.contains(".mp4"))) name to u else null
+                }
             }
+            // Modified build: pick the URL for the selected episode (第NN集), not always the first.
+            if (episodeNumber != null) {
+                entries.firstOrNull { (name, _) ->
+                    Regex("\\d+").find(name)?.value?.toIntOrNull() == episodeNumber
+                }?.second?.let { return it }
+            }
+            entries.firstOrNull()?.second?.let { return it }
         }
         // Fallback: any http url
         for (ep in play.split("#", "\$\$\$")) {

@@ -21,6 +21,8 @@ class DoubanCatalogApi @Inject constructor(
 
     /** Douban id -> cover URL, filled by list mapping so details/featured can reuse it. */
     private val coverCache = java.util.concurrent.ConcurrentHashMap<Int, String>()
+    /** Douban id -> title, so tvSeason() can look up the CMS episodes by title. */
+    private val titleOf = java.util.concurrent.ConcurrentHashMap<Int, String>()
 
     override suspend fun trendingAll(key: String, page: Int): TmdbPaginated<TmdbSearchResultDto> = withContext(Dispatchers.IO) { moviesAll(page) }
 
@@ -61,7 +63,22 @@ class DoubanCatalogApi @Inject constructor(
 
     override suspend fun tvDetails(id: Int, key: String, append: String, imageLanguages: String, videoLanguages: String): TmdbTvDetailDto = withContext(Dispatchers.IO) { tvDetail(id) }
 
-    override suspend fun tvSeason(id: Int, season: Int, key: String): TmdbSeasonDto = withContext(Dispatchers.IO) { TmdbSeasonDto() }
+    override suspend fun tvSeason(id: Int, season: Int, key: String): TmdbSeasonDto = withContext(Dispatchers.IO) {
+        // Modified build: episodes come from the CMS (Douban has none). Use the title cached by details.
+        val title = titleOf[id] ?: return@withContext TmdbSeasonDto()
+        val eps = runCatching { cms.getEpisodes(title) }.getOrDefault(emptyList())
+        TmdbSeasonDto(
+            season_number = season,
+            episodes = eps.map { e ->
+                com.shieldstream.tv.network.dto.TmdbEpisodeDto(
+                    episode_number = e.number,
+                    season_number = season,
+                    name = e.title,
+                    overview = "",
+                )
+            },
+        )
+    }
 
     override suspend fun collection(id: Int, key: String): TmdbCollectionDto = withContext(Dispatchers.IO) { TmdbCollectionDto() }
 
@@ -193,6 +210,15 @@ class DoubanCatalogApi @Inject constructor(
     private suspend fun tvDetail(id: Int): TmdbTvDetailDto {
         val a = safeAbstract(id.toString()) ?: return TmdbTvDetailDto(id = id)
         val s = a.subject ?: return TmdbTvDetailDto(id = id)
+        titleOf[id] = cleanTitle(s.title)
+        // Modified build: Douban has no season data. Ask the CMS for the episode count so the
+        // details screen can show a season/episode picker for TV shows.
+        val episodeCount = runCatching { cms.getEpisodes(cleanTitle(s.title)).size }.getOrDefault(0)
+        val seasons = if (episodeCount > 0) listOf(
+            com.shieldstream.tv.network.dto.TmdbSeasonSummaryDto(
+                season_number = 1, name = "第1季", episode_count = episodeCount,
+            ),
+        ) else emptyList()
         return TmdbTvDetailDto(
             id = id,
             name = cleanTitle(s.title),
@@ -202,6 +228,8 @@ class DoubanCatalogApi @Inject constructor(
             first_air_date = s.releaseYear.ifBlank { null },
             vote_average = (s.rate.toDoubleOrNull() ?: 0.0),
             genres = s.types.map { TmdbGenreDto(name = it) },
+            seasons = seasons,
+            number_of_seasons = if (episodeCount > 0) 1 else 0,
         )
     }
 
