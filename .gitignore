@@ -39,3 +39,8 @@ Thumbs.db
 # Marca de compilación pública (APK sin claves para GitHub)
 .public_build
 _opus_trash/
+
+# Debug screenshots generated during adb testing (never commit)
+/*.png
+/截图*.png
+/translate_*.py
