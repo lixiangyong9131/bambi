@@ -16,6 +16,7 @@ import javax.inject.Singleton
 @Singleton
 class DoubanCatalogApi @Inject constructor(
     private val api: DoubanApi,
+    private val cms: com.shieldstream.tv.data.repository.streams.CmsStreams,
 ) : TmdbApi {
 
     /** Douban id -> cover URL, filled by list mapping so details/featured can reuse it. */
@@ -123,22 +124,54 @@ class DoubanCatalogApi @Inject constructor(
 
     private suspend fun searchDouban(query: String): TmdbSearchResponse {
         if (query.isBlank()) return TmdbSearchResponse()
+        // Search via the CMS (Moontv/Feifei) catalog: only titles that actually have playable
+        // resources are returned. Douban suggest supplies the poster + a detail-compatible id.
+        val hits = runCatching { cms.searchTitles(query) }.getOrDefault(emptyList())
+        android.util.Log.i("DoubanHome", "CMS search '$query' -> ${hits.size} hits")
         val suggestions = runCatching { api.suggest(query) }.getOrDefault(emptyList())
-        val results = suggestions.mapNotNull { sug ->
+
+        fun matches(cmsTitle: String, doubanTitle: String): Boolean {
+            val a = cleanTitle(cmsTitle).replace(" ", "")
+            val b = cleanTitle(doubanTitle).replace(" ", "")
+            if (a.length < 3 || b.length < 3) return false
+            val n = minOf(6, minOf(a.length, b.length))
+            return a.take(n).equals(b.take(n), ignoreCase = true) || a.contains(b) || b.contains(a)
+        }
+
+        val results = mutableListOf<TmdbSearchResultDto>()
+        // Prefer Douban suggestions that also exist in the CMS (correct id + poster + playable).
+        for (sug in suggestions) {
+            val sugTitle = sug.title
+            if (!hits.any { matches(it.title, sugTitle) }) continue
             val did = sug.id.ifBlank { sug.url.extractDoubanId() }
-            if (did.isBlank()) return@mapNotNull null
+            if (did.isBlank()) continue
             val isTv = sug.episode.isNotBlank()
-            TmdbSearchResultDto(
+            results += TmdbSearchResultDto(
                 id = did.toIntOrNull() ?: did.hashCode(),
                 media_type = if (isTv) "tv" else "movie",
-                title = if (!isTv) sug.title else null,
-                name = if (isTv) sug.title else null,
+                title = if (!isTv) sugTitle else null,
+                name = if (isTv) sugTitle else null,
                 overview = "",
                 poster_path = sug.img,
                 vote_average = 0.0,
             )
         }
-        return TmdbSearchResponse(results = results)
+        // CMS titles with no Douban suggestion: still show them (playable, no poster).
+        for (hit in hits) {
+            if (suggestions.any { matches(hit.title, it.title) }) continue
+            val isTv = hit.type.contains("剧")
+            results += TmdbSearchResultDto(
+                id = hit.id.toIntOrNull() ?: hit.title.hashCode(),
+                media_type = if (isTv) "tv" else "movie",
+                title = if (!isTv) hit.title else null,
+                name = if (isTv) hit.title else null,
+                overview = hit.remarks,
+                poster_path = null,
+                vote_average = 0.0,
+            )
+        }
+        android.util.Log.i("DoubanHome", "search results -> ${results.size}")
+        return TmdbSearchResponse(results = results.distinctBy { it.title ?: it.name })
     }
 
     private suspend fun movieDetail(id: Int): TmdbMovieDetailDto {

@@ -209,6 +209,8 @@ private fun HomeContent(
         } else saveable.SaveableStateProvider("billboard") {
             Billboard(
                 featured = featured,
+                // Modified build: first row peeks below the banner (continue watching / first category).
+                previewRow = rows.firstOrNull(),
                 categories = categories,
                 initialFocus = topFocus,
                 onFocusChange = { topFocus = it },

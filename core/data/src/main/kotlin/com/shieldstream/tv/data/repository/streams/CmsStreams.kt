@@ -32,6 +32,27 @@ class CmsStreams @Inject constructor(
         private const val BACKUP_API = "https://taopianapi.com/cjapi/mc/vod/json.html"
     }
 
+    /** Titles that exist in the CMS catalog (has playable resources). Used for search. */
+    data class Hit(val title: String, val id: String, val type: String, val remarks: String)
+
+    suspend fun searchTitles(query: String): List<Hit> {
+        if (query.isBlank()) return emptyList()
+        for (base in listOf(API, BACKUP_API)) {
+            val rows = parseList(get("$base?ac=vod&wd=" + URLEncoder.encode(query, "UTF-8"))) ?: continue
+            if (rows.isEmpty()) continue
+            val hits = rows.map { r ->
+                Hit(
+                    title = str(r, "vod_name"),
+                    id = str(r, "vod_id"),
+                    type = str(r, "type_name"),
+                    remarks = str(r, "vod_remarks"),
+                )
+            }.filter { it.title.isNotBlank() }
+            if (hits.isNotEmpty()) return hits
+        }
+        return emptyList()
+    }
+
     suspend fun find(item: CatalogItem): List<StreamSource> {
         val title = clean(item.title)
         android.util.Log.i("CmsStream", "find(title=${item.title}, clean=$title)")

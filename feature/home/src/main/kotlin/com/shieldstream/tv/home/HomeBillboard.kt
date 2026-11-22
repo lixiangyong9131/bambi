@@ -9,6 +9,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -61,6 +62,7 @@ import coil.compose.AsyncImage
 @Composable
 internal fun Billboard(
     featured: List<FeaturedItem>,
+    previewRow: com.shieldstream.tv.model.CatalogRow?,
     categories: List<Category>,
     initialFocus: TopFocus,
     onFocusChange: (TopFocus) -> Unit,
@@ -113,6 +115,14 @@ internal fun Billboard(
             )
         } else {
             Spacer(Modifier.weight(1f))
+        }
+        // Modified build: peek at the first content row so users see there is more below.
+        if (previewRow != null && previewRow.items.isNotEmpty()) {
+            PeekRow(
+                row = previewRow,
+                onClick = onEnterRows,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
         CategoryChips(
             // Modified build: hide the second category chip row that duplicates the top tabs.
@@ -240,6 +250,54 @@ internal fun ColumnScope.BillboardSkeleton() {
                     .height(40.dp)
                     .background(SkeletonColor, AppShapes.Pill),
             )
+        }
+    }
+}
+
+/**
+ * Modified build: a non-focusable preview strip pinned to the bottom of the billboard.
+ * Shows the first row's posters peeking from below so users know they can press DOWN.
+ */
+@Composable
+private fun PeekRow(
+    row: com.shieldstream.tv.model.CatalogRow,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier
+            .clickable(interactionSource = null, indication = null, onClick = onClick)
+            .padding(start = 40.dp, bottom = 4.dp),
+    ) {
+        Text(
+            text = row.title,
+            color = Color.White.copy(alpha = 0.85f),
+            style = MaterialTheme.typography.titleSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(bottom = 6.dp),
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(96.dp)
+                .graphicsLayer { clip = true },
+        ) {
+            row.items.take(10).forEach { item ->
+                val url = item.posterUrl
+                if (url != null) {
+                    AsyncImage(
+                        model = url,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .width(72.dp)
+                            .height(150.dp)
+                            .background(Color(0xFF1A1C27), AppShapes.Badge),
+                    )
+                }
+            }
         }
     }
 }
