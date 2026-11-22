@@ -51,6 +51,15 @@ class Media3Factory @Inject constructor(
     val dataSourceFactory: DataSource.Factory = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(mediaOkHttp)
         .setUserAgent("Mozilla/5.0 (SMART-TV; LINUX)")
 
+    /** Diagnostic: fetch the first bytes of a media URL (uses the same DoH resolver as playback). */
+    fun probeUrl(url: String): String = runCatching {
+        val req = okhttp3.Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
+        mediaOkHttp.newCall(req).execute().use { resp ->
+            val body = resp.body?.string().orEmpty()
+            "code=${resp.code} len=${body.length} head=" + body.take(60)
+        }
+    }.getOrElse { "FAILED: ${it.message}" }
+
     /**
      * [forcePcmAudio] desactiva el audio directo (Dolby/DTS por HDMI) para que ExoPlayer pueda
      * aplicar velocidad de reproducción. Se usa solo mientras la velocidad no es 1x.
