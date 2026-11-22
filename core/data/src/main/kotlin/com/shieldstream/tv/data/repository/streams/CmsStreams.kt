@@ -55,7 +55,7 @@ class CmsStreams @Inject constructor(
                 year = null, rating = 0f, genres = emptyList(),
             )
             val sources = runCatching { find(item) }.getOrDefault(emptyList())
-            android.util.Log.i("CmsStream", "SELFTEST sources=${sources.size} url=${sources.firstOrNull()?.directUrl?.take(80)}")
+            android.util.Log.i("CmsStream", "SELFTEST sources=${sources.size} url=${sources.firstOrNull()?.directUrl?.take(80)} spanish=${sources.firstOrNull()?.advertisesSpanishAudio} hash=${sources.firstOrNull()?.infoHash}")
         }
     }
 
@@ -118,7 +118,9 @@ class CmsStreams @Inject constructor(
             StreamSource(
                 id = "cms:$vid",
                 title = name,
-                infoHash = "",
+                // Modified build: unique infoHash so distinctBy() doesn't collapse CMS sources,
+                // and an "ES" language tag so the "Spanish only" source filter doesn't drop them.
+                infoHash = "cms-$vid",
                 fileIdx = null,
                 magnet = "",
                 quality = Quality.FHD_1080,
@@ -128,6 +130,7 @@ class CmsStreams @Inject constructor(
                 isCached = true,
                 directUrl = url,
                 fileName = name,
+                languages = listOf("ES"),
                 provider = "CMS",
             )
         )
