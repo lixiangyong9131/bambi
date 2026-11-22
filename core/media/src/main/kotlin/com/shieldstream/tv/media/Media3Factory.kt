@@ -40,7 +40,16 @@ import android.media.MediaCodecInfo.CodecProfileLevel as AndroidProfileLevel
 class Media3Factory @Inject constructor(
     @ApplicationContext private val context: Context,
 ) {
-    val dataSourceFactory: DataSource.Factory = DefaultDataSource.Factory(context)
+    // Modified build: route media requests through an OkHttp client using DoH, so m3u8/segment hosts
+    // resolve to real IPs despite the box's poisoned system DNS.
+    private val mediaOkHttp = okhttp3.OkHttpClient.Builder()
+        .dns(DohDns)
+        .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+        .followRedirects(true)
+        .build()
+    val dataSourceFactory: DataSource.Factory = androidx.media3.datasource.okhttp.OkHttpDataSource.Factory(mediaOkHttp)
+        .setUserAgent("Mozilla/5.0 (SMART-TV; LINUX)")
 
     /**
      * [forcePcmAudio] desactiva el audio directo (Dolby/DTS por HDMI) para que ExoPlayer pueda

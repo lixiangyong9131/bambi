@@ -28,6 +28,9 @@ dependencies {
 
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.common)
+    implementation(libs.media3.datasource.okhttp)
+    implementation(libs.okhttp)
+    implementation(libs.okhttp.dnsoverhttps)
     implementation(libs.media3.ffmpeg)
     implementation(libs.kotlinx.coroutines.android)
 

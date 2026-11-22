@@ -36,6 +36,8 @@ class CmsStreams @Inject constructor(
         private val SOURCES = listOf(DYTT, BFZY, API, TAOPIAN)
         // Search stays on the fast source (ffzy) so typing results are instant.
         private val SEARCH_SOURCES = listOf(API, TAOPIAN)
+        // DNS-over-HTTPS to bypass poisoned system DNS on the TV box.
+        private const val DOH = "https://dns.alidns.com/resolve"
         // Short timeout so an unreachable source is skipped fast instead of hanging playback.
         private val cmsClient: OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
@@ -43,6 +45,9 @@ class CmsStreams @Inject constructor(
             .writeTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
             .build()
     }
+
+    /** Cached real IPs resolved via DoH, to bypass the box's poisoned system DNS. */
+    private val dohCache = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
 
     /** Titles that exist in the CMS catalog (has playable resources). Used for search. */
     data class Hit(val title: String, val id: String, val type: String, val remarks: String)
@@ -141,12 +146,46 @@ class CmsStreams @Inject constructor(
         return null
     }
 
+    /** Resolve a host to real IPs through DoH (cached). Falls back to empty on any error. */
+    private fun resolveViaDoh(host: String): List<String> {
+        dohCache[host]?.let { if (it.isNotEmpty()) return it }
+        val body = runCatching {
+            val req = Request.Builder()
+                .url("$DOH?name=$host&type=A")
+                .header("User-Agent", "Mozilla/5.0")
+                .header("Accept", "application/dns-json")
+                .build()
+            cmsClient.newCall(req).execute().use { resp -> if (resp.isSuccessful) resp.body?.string() else null }
+        }.getOrNull() ?: return emptyList()
+        val ips = runCatching {
+            val arr = json.parseToJsonElement(body).jsonObject["Answer"]?.jsonArray ?: return emptyList()
+            arr.mapNotNull { it.jsonObject["data"]?.jsonPrimitive?.contentOrNull }
+                .filter { it.count { c -> c == '.' } == 3 && it.all { c -> c.isDigit() || c == '.' } && !it.startsWith("127.") }
+                .distinct()
+        }.getOrDefault(emptyList())
+        if (ips.isNotEmpty()) dohCache[host] = ips
+        return ips
+    }
+
     private fun get(url: String): String? = runCatching {
-        val req = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
-        cmsClient.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) return null
-            resp.body?.string()
+        val parsed = java.net.URL(url)
+        val host = parsed.host
+        // Try the real IPs from DoH first; the box's system DNS is poisoned.
+        val ips = resolveViaDoh(host)
+        val candidates = ips.map { url.replace("://$host", "://$it", ignoreCase = true) }
+        // Fall back to the original URL if DoH failed.
+        val urls = (candidates + url).distinct()
+        var last: String? = null
+        for (u in urls) {
+            val req = Request.Builder().url(u).header("User-Agent", "Mozilla/5.0").header("Host", host).build()
+            cmsClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) continue
+                val b = resp.body?.string()
+                if (!b.isNullOrBlank()) return b
+                last = b
+            }
         }
+        last
     }.getOrNull()
 
     private fun parseList(body: String?): List<JsonObject>? {
