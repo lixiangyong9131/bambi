@@ -130,7 +130,7 @@ internal fun RowsBrowser(
                 if (now - lastVerticalRepeat < com.shieldstream.tv.ui.component.VERTICAL_REPEAT_MS) true else { lastVerticalRepeat = now; false }
             },
     ) {
-        // Modified build: no full-screen hero backdrop; content rows are shown directly.
+        if (!LocalLightweightUi.current) HeroBackdrop(hero)
         Column(Modifier.fillMaxSize()) {
             Column(
                 Modifier

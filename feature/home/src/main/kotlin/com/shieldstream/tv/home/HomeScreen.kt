@@ -162,9 +162,9 @@ private fun HomeContent(
     preferTopBarFocus: Boolean,
     onTopBarFocusConsumed: () -> Unit,
 ) {
-    // Modified build: Home opens directly on the content rows (no billboard banner page).
-    var inRows by rememberSaveable { mutableStateOf(true) }
-    var topFocus by rememberSaveable { mutableStateOf(TopFocus.CHIPS) }
+    // Como en Bambi: el Inicio arranca en la portada (destacados + categorías); ▼ baja a las filas.
+    var inRows by rememberSaveable { mutableStateOf(false) }
+    var topFocus by rememberSaveable { mutableStateOf(TopFocus.HERO) }
     val saveable = rememberSaveableStateHolder()
     // Swapping the rows view and the billboard disposes the focused item, and the new view only
     // requests focus a frame later. Park focus on this holder meanwhile; otherwise it falls to the
@@ -186,8 +186,7 @@ private fun HomeContent(
             .focusProperties { canFocus = parkingFocus }
             .focusTarget(),
     ) {
-        // Modified build: Home always shows the content rows; the billboard/banner page is removed.
-        saveable.SaveableStateProvider("rows") {
+        if (inRows && rows.isNotEmpty()) saveable.SaveableStateProvider("rows") {
             RowsBrowser(
                 rows = rows,
                 onItemClick = onItemClick,
@@ -198,10 +197,53 @@ private fun HomeContent(
                 onRemoveMyList = onRemoveMyList,
                 onMarkUpNextWatched = onMarkUpNextWatched,
                 onRemoveUpNext = onRemoveUpNext,
-                onExitTop = { topFocus = TopFocus.CHIPS },
-                onBack = { topFocus = TopFocus.CHIPS },
+                onExitTop = {
+                    topFocus = TopFocus.CHIPS
+                    switchView { inRows = false }
+                },
+                onBack = {
+                    topFocus = if (featured.isNotEmpty()) TopFocus.HERO else TopFocus.CHIPS
+                    switchView { inRows = false }
+                },
+            )
+        } else saveable.SaveableStateProvider("billboard") {
+            Billboard(
+                featured = featured,
+                categories = categories,
+                initialFocus = topFocus,
+                onFocusChange = { topFocus = it },
+                onItemClick = onItemClick,
+                onOpenCategory = onOpenCategory,
+                onSurprise = { surprisePick(rows, featured)?.let(onItemClick) },
+                onPlaySomething = {
+                    when (val pick = playSomethingPick(rows, featured)) {
+                        is PlaySomethingPick.UpNext -> onPlaySomething(
+                            pick.item,
+                            EpisodeTarget(pick.episode.season, pick.episode.number),
+                        )
+                        is PlaySomethingPick.NewEpisode -> onPlaySomething(
+                            pick.item,
+                            EpisodeTarget(pick.episode.season, pick.episode.number),
+                        )
+                        is PlaySomethingPick.Continue -> onPlaySomething(
+                            pick.item,
+                            pick.info.let { info ->
+                                val season = info.season
+                                val episode = info.episode
+                                if (season != null && episode != null) EpisodeTarget(season, episode) else null
+                            },
+                        )
+                        is PlaySomethingPick.Title -> onPlaySomething(pick.item, null)
+                        null -> Unit
+                    }
+                },
+                onEnterRows = { if (rows.isNotEmpty()) switchView { inRows = true } },
+                topBar = topBar,
+                topBarRequester = topBarRequester,
+                focusTopBar = focusTopBar,
+                preferTopBarFocus = preferTopBarFocus,
+                onTopBarFocusConsumed = onTopBarFocusConsumed,
             )
         }
-
     }
 }
