@@ -11,15 +11,16 @@ import coil.request.ImageRequest
 import coil.size.Size
 import coil.transform.Transformation
 
-/** Decode size for softened backdrops. A quarter of TMDB's w1280, so decoding can subsample exactly. */
-private const val SoftWidth = 320
-private const val SoftHeight = 180
+/** Modified build: higher decode size + stronger blur so the softened backdrop blends with the
+ * sharp foreground (theme-colour extension) instead of showing blocky low-res banding. */
+private const val SoftWidth = 960
+private const val SoftHeight = 540
 
 /**
  * Box-blur radius in decoded pixels (three passes). 4 was too soft on the Nokia; 3 keeps shapes
  * readable while still quieting detail behind the rows.
  */
-private const val SoftRadius = 3
+private const val SoftRadius = 12
 
 /**
  * Full-screen backdrop that is blurred once while loading, Muzei-style. The blur runs on Coil's

@@ -77,6 +77,7 @@ import com.shieldstream.tv.ui.component.ProvideMinimalScroll
 import com.shieldstream.tv.ui.component.TvButton
 import com.shieldstream.tv.ui.component.formatEpisodeDate
 import com.shieldstream.tv.ui.component.onBackKey
+import com.shieldstream.tv.ui.component.SoftBackdropImage
 
 internal val Green = Color(0xFF46D369)
 
@@ -199,18 +200,24 @@ private fun DetailsContent(
     val item = state.details.item
 
     Box(Modifier.fillMaxSize().onBackKey(enabled = panelOpen && !actionsOpen) { panelOpen = false }) {
+        // Modified build: theme-colour blurred backdrop + sharp poster on the right (no hard edge).
+        SoftBackdropImage(url = item.backdropUrl ?: item.posterUrl.orEmpty(), modifier = Modifier.fillMaxSize())
         AsyncImage(
             model = item.backdropUrl ?: item.posterUrl,
             contentDescription = null,
             contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .fillMaxHeight()
+                .fillMaxWidth(0.58f),
         )
         Box(
             Modifier.fillMaxSize().background(
                 Brush.horizontalGradient(
                     0f to Color.Black,
-                    0.40f to Color.Black.copy(alpha = 0.85f),
-                    0.75f to Color.Transparent,
+                    0.28f to Color.Black.copy(alpha = 0.92f),
+                    0.48f to Color.Black.copy(alpha = 0.35f),
+                    0.72f to Color.Transparent,
                 ),
             ),
         )
