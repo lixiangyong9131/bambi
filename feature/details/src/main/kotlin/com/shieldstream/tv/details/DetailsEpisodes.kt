@@ -18,7 +18,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -171,11 +174,16 @@ internal fun SeasonsAndEpisodes(
             EpisodesState.Loading -> Text(localizedStringResource(StringsR.string.details_loading_episodes), color = Grey, modifier = Modifier.padding(start = 56.dp))
             is EpisodesState.Error -> Text(eps.message, color = Grey, modifier = Modifier.padding(start = 56.dp))
             is EpisodesState.Ready -> ProvidePivotScroll(leading = 56.dp) {
-                LazyRow(
+                // Modified build: wrap into a grid so long episode lists fold left-to-right
+                // (1 2 3 4 5 ...) instead of overflowing a single row.
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(8),
                     contentPadding = PaddingValues(horizontal = 56.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    modifier = Modifier.height(360.dp),
                 ) {
-                    items(eps.episodes, key = { "${it.season}_${it.number}" }) { ep ->
+                    gridItems(eps.episodes, key = { "${it.season}_${it.number}" }) { ep ->
                         EpisodeCard(
                             episode = ep,
                             progress = state.progressOf(ep),
