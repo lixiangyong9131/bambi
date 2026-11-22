@@ -23,7 +23,12 @@ class DoubanCatalogApi @Inject constructor(
 
     override suspend fun trendingAll(key: String, page: Int): TmdbPaginated<TmdbSearchResultDto> = withContext(Dispatchers.IO) { moviesAll(page) }
 
-    override suspend fun trendingAllWeek(key: String, page: Int): TmdbPaginated<TmdbSearchResultDto> = withContext(Dispatchers.IO) { moviesAll(page) }
+    override suspend fun trendingAllWeek(key: String, page: Int): TmdbPaginated<TmdbSearchResultDto> = withContext(Dispatchers.IO) {
+        // Mixed movie + TV so the TV tab's featured/billboard is not empty.
+        val movies = moviesAll(page).results
+        val shows = safeSubjects("tv", "热门", page).map { it.toSearchDto("tv") }
+        TmdbPaginated(page = page, results = (movies + shows).distinctBy { it.media_type + it.id })
+    }
 
     override suspend fun discoverMovieQuery(key: String, params: Map<String, String>): TmdbPaginated<TmdbMovieDto> = withContext(Dispatchers.IO) { moviesByTag(params["with_genres"].orEmpty().ifBlank { "热门" }, 1) }
 
@@ -47,7 +52,7 @@ class DoubanCatalogApi @Inject constructor(
 
     override suspend fun discoverMovies(key: String, genres: String, sortBy: String, minVotes: Int, page: Int): TmdbPaginated<TmdbMovieDto> = withContext(Dispatchers.IO) { moviesByTag(genreToTag(genres), page) }
 
-    override suspend fun discoverTv(key: String, genres: String, sortBy: String, minVotes: Int, page: Int): TmdbPaginated<TmdbTvDto> = withContext(Dispatchers.IO) { tvByTag(genreToTag(genres), page) }
+    override suspend fun discoverTv(key: String, genres: String, sortBy: String, minVotes: Int, page: Int): TmdbPaginated<TmdbTvDto> = withContext(Dispatchers.IO) { tvByTag(genreToTvTag(genres), page) }
 
     override suspend fun search(key: String, query: String): TmdbSearchResponse = withContext(Dispatchers.IO) { searchDouban(query) }
 
@@ -79,6 +84,19 @@ class DoubanCatalogApi @Inject constructor(
             "878" -> "科幻片"
             "80" -> "犯罪片"
             "99" -> "悬疑片"
+            else -> "热门"
+        }
+    }
+
+    /** TV genre ids -> Douban TV tags (电影 tag 用在 tv 上会返回空). */
+    private fun genreToTvTag(genres: String): String {
+        val id = genres.split(",").firstOrNull()?.trim().orEmpty()
+        return when (id) {
+            "18", "80" -> "国产剧"     // 剧情/犯罪
+            "10765", "10759" -> "美剧" // 科幻/动作冒险
+            "35" -> "韩剧"            // 喜剧
+            "16" -> "日剧"            // 动画
+            "99" -> "国产剧"
             else -> "热门"
         }
     }

@@ -105,7 +105,8 @@ fun TopBar(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TopTab.entries.forEach { tab ->
+            // Modified build: hide the empty "Episodes" (tracked-show updates) tab.
+            TopTab.entries.filter { it != TopTab.EPISODES }.forEach { tab ->
                 TopBarItem(
                     icon = if (tab == TopTab.SEARCH) AppIcons.Search else null,
                     label = if (tab == TopTab.SEARCH) null else localizedStringResource(tab.labelResource),

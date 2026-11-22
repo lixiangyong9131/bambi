@@ -115,7 +115,8 @@ internal fun Billboard(
             Spacer(Modifier.weight(1f))
         }
         CategoryChips(
-            categories = categories,
+            // Modified build: hide the second category chip row that duplicates the top tabs.
+            categories = emptyList(),
             onOpen = onOpenCategory,
             onSurprise = onSurprise,
             onPlaySomething = onPlaySomething,
