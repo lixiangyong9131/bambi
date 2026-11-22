@@ -234,93 +234,50 @@ private fun EpisodeCard(
     var focused by remember { mutableStateOf(false) }
     LaunchedEffect(focused) { if (focused) onFocused() }
     val scale by animateFloatAsState(if (focused) 1.06f else 1f, label = "episodeScale")
-    val shape = RoundedCornerShape(6.dp)
-    Column(
+    val shape = RoundedCornerShape(8.dp)
+    val watched = progress?.isWatched == true
+    Box(
         Modifier
-            .width(200.dp)
+            .width(120.dp)
             .zIndex(if (focused) 1f else 0f)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            },
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(shape)
+            .background(if (selected || focused) Color(0xFF2E2E34) else Color(0xFF1C1C20))
+            .then(if (focused) Modifier.border(2.dp, Color.White, shape) else Modifier)
+            .padding(vertical = 20.dp, horizontal = 12.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .then(if (enabled) Modifier.tvClickable(onLongClick = onLongClick, onClick = onClick) else Modifier.tvClickable(enabled = false) {}),
+        contentAlignment = Alignment.Center,
     ) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
-                .clip(shape)
-                .background(Color(0xFF232327))
-                .then(if (focused) Modifier.border(2.dp, Color.White, shape) else Modifier)
-                .onFocusChanged { focused = it.isFocused }
-                .then(if (enabled) Modifier.tvClickable(onLongClick = onLongClick, onClick = onClick) else Modifier.tvClickable(enabled = false) {}),
-        ) {
-            if (episode.stillUrl != null) {
-                AsyncImage(
-                    model = episode.stillUrl,
-                    contentDescription = episode.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = "${episode.number}",
+                color = if (watched) Green else if (selected || focused) Color.White else Color.White.copy(alpha = 0.85f),
+                style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+            )
+            Spacer(Modifier.height(4.dp))
+            if (watched) {
+                Text(
+                    text = "✓ 已看",
+                    color = Green,
+                    style = MaterialTheme.typography.labelSmall,
                 )
-            }
-            if (progress?.isWatched == true) {
-                Box(
-                    Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(8.dp)
-                        .size(26.dp)
-                        .clip(RoundedCornerShape(13.dp))
-                        .background(Color.Black.copy(alpha = 0.75f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("✓", color = Green, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold))
-                }
             } else if (progress != null && progress.fraction > 0.01f) {
                 WatchBar(
                     fraction = progress.fraction,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp),
+                )
+            } else {
+                Text(
+                    text = "第${episode.number}集",
+                    color = Grey,
+                    style = MaterialTheme.typography.labelSmall,
                 )
             }
-            if (focused || loading) {
-                Box(
-                    Modifier.align(Alignment.Center).size(44.dp).clip(RoundedCornerShape(22.dp))
-                        .background(Color.Black.copy(alpha = 0.6f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (loading) {
-                        CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(24.dp))
-                    } else {
-                        Icon(AppIcons.Play, contentDescription = null, tint = Color.White)
-                    }
-                }
+            if (loading) {
+                Spacer(Modifier.height(6.dp))
+                CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
             }
-        }
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = "${episode.number}. ${episode.title}",
-            color = if (selected || focused) Color.White else Color.White.copy(alpha = 0.8f),
-            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        val today = remember { NewEpisodes.dateWindow(System.currentTimeMillis()).second }
-        val releaseDate = remember(episode.airDate, today, Lang.current) {
-            formatEpisodeDate(upcomingEpisodeDate(episode.airDate, today), includeYear = true)
-        }
-        val remainingMinutes = progress?.takeIf { it.isResumable }?.let { ((it.remainingMs + 59_999) / 60_000).toInt() }
-        val remainingLabel = remainingMinutes?.let {
-            localizedStringResource(StringsR.string.details_remaining, formatRuntime(it))
-        }
-        val metadata = remember(remainingLabel, episode.runtimeMinutes, releaseDate) {
-            listOfNotNull(
-                remainingLabel ?: episode.runtimeMinutes?.let { "$it min" },
-                releaseDate.ifBlank { null },
-            ).joinToString(" · ")
-        }
-        if (metadata.isNotEmpty()) {
-            Text(metadata, color = Grey, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
