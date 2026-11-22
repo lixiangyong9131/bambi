@@ -304,31 +304,14 @@ fun Top10Card(
     onFocused: () -> Unit = {},
     newEpisodeCount: Int = 0,
 ) {
-    val numberWidth = if (rank >= 10) 104.dp else 70.dp
-    val posterHeight = PosterWidth * 1.5f
-    Box(modifier = Modifier.width(numberWidth + PosterWidth).height(posterHeight)) {
-        val numberStyle = TextStyle(
-            fontSize = 150.sp,
-            fontWeight = FontWeight.Black,
-            letterSpacing = (-12).sp,
-        )
-        // Relleno oscuro + contorno gris superpuestos.
-        Text(
-            text = rank.toString(),
-            style = numberStyle.copy(color = Color(0xFF0E0E10)),
-            modifier = Modifier.align(Alignment.BottomStart).offset(x = (-4).dp, y = 36.dp),
-        )
-        Text(
-            text = rank.toString(),
-            style = numberStyle.copy(color = Color(0xFF8C8C90), drawStyle = Stroke(width = 5f)),
-            modifier = Modifier.align(Alignment.BottomStart).offset(x = (-4).dp, y = 36.dp),
-        )
+    // Modified build: no big rank number - just the poster at normal size.
+    Box(modifier = modifier.width(PosterWidth).height(PosterWidth * 1.5f)) {
         PosterCard(
             item = item,
             onClick = onClick,
             onFocused = onFocused,
             newEpisodeCount = newEpisodeCount,
-            modifier = modifier.align(Alignment.BottomEnd),
+            modifier = Modifier.align(Alignment.BottomEnd),
         )
     }
 }

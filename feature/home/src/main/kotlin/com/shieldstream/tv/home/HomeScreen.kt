@@ -62,6 +62,7 @@ fun HomeScreen(
     focusTopBar: () -> Unit,
     preferTopBarFocus: Boolean,
     onTopBarFocusConsumed: () -> Unit,
+    immersive: Boolean = false,
     viewModel: HomeViewModel = hiltViewModel(key = "home_${filter.name}"),
 ) {
     LaunchedEffect(filter) { viewModel.load(filter) }
@@ -92,6 +93,7 @@ fun HomeScreen(
             HomeContent(
             rows = s.rows,
             featured = s.featured,
+            immersive = immersive,
             categories = remember(filter, hidden) {
                 when {
                     viewModel.kidsProfile -> Category.forFilter(filter).filter { it in Category.KIDS_SAFE }
@@ -161,6 +163,7 @@ private fun HomeContent(
     focusTopBar: () -> Unit,
     preferTopBarFocus: Boolean,
     onTopBarFocusConsumed: () -> Unit,
+    immersive: Boolean = false,
 ) {
     // Como en Bambi: el Inicio arranca en la portada (destacados + categorías); ▼ baja a las filas.
     var inRows by rememberSaveable { mutableStateOf(true) }
@@ -201,7 +204,7 @@ private fun HomeContent(
                 onRemoveUpNext = onRemoveUpNext,
                 onExitTop = focusTopBar,
                 onBack = focusTopBar,
-                topBar = topBar,
+                topBar = if (immersive) { _ -> } else topBar,
             )
         }
     }

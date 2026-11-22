@@ -48,6 +48,8 @@ fun MainScreen(
 ) {
     var tab by rememberSaveable { mutableStateOf(TopTab.HOME) }
     var category by rememberSaveable { mutableStateOf<Category?>(null) }
+    // Modified build: immersive browsing - top bar hides after a tab is chosen, Back restores it.
+    var immersive by rememberSaveable { mutableStateOf(false) }
     var focusMenuAfterSwitch by remember { mutableStateOf(false) }
     var topBarFocused by remember { mutableStateOf(false) }
     var showExitConfirmation by remember { mutableStateOf(false) }
@@ -70,6 +72,7 @@ fun MainScreen(
                 if (selected != tab) {
                     tab = selected
                     focusMenuAfterSwitch = selected != TopTab.SEARCH && selected != TopTab.MY_LIST && selected != TopTab.EPISODES
+                    immersive = true
                 }
             },
             onSettings = onOpenSettings,
@@ -85,8 +88,12 @@ fun MainScreen(
         )
     }
 
-    BackHandler(enabled = showExitConfirmation || shouldRequestExit(category != null, topBarFocused)) {
-        showExitConfirmation = !showExitConfirmation
+    BackHandler(enabled = showExitConfirmation || immersive || shouldRequestExit(category != null, topBarFocused)) {
+        when {
+            showExitConfirmation -> showExitConfirmation = false
+            immersive -> { immersive = false; focusTopBar() }
+            else -> showExitConfirmation = !showExitConfirmation
+        }
     }
 
     val saveable = rememberSaveableStateHolder()
@@ -126,6 +133,7 @@ fun MainScreen(
                     focusTopBar = focusTopBar,
                     preferTopBarFocus = focusMenuAfterSwitch,
                     onTopBarFocusConsumed = { focusMenuAfterSwitch = false },
+                    immersive = immersive,
                 )
             }
         }

@@ -101,8 +101,7 @@ internal fun RowsBrowser(
     var hero by remember { mutableStateOf(Snapshot.withoutReadObservation { findByKey(rows, restoreKey) ?: rows.first().items.first() }) }
     LaunchedEffect(rows) {
         snapshotFlow { savedFocus.value }.collectLatest { key ->
-            delay(300)
-            hero = findByKey(rows, validKey(key)) ?: rows.first().items.first()
+            hero = findByKey(rows, validKey(key)) ?: hero
         }
     }
 
@@ -163,7 +162,11 @@ internal fun RowsBrowser(
                             row = row,
                             focusKey = restoreKey,
                             restoreRequester = restoreRequester,
-                            onFocused = { virtual -> savedFocus.value = keyOf(row, virtual) },
+                            onFocused = { virtual ->
+                                savedFocus.value = keyOf(row, virtual)
+                                // Modified build: update the full-screen hero immediately on focus.
+                                hero = row.items.getOrNull(virtual % row.items.size) ?: hero
+                            },
                             onItemClick = onItemClick,
                             onNewEpisodeClick = onNewEpisodeClick,
                             onContinueClick = onContinueClick,

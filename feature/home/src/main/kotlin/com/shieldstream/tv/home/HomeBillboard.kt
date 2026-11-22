@@ -145,7 +145,8 @@ internal fun Billboard(
 @Composable
 internal fun HeroBackdrop(item: CatalogItem) {
     Box(Modifier.fillMaxSize()) {
-        val area = Modifier.align(Alignment.TopEnd).fillMaxWidth(0.74f).fillMaxHeight(0.70f)
+        // Modified build: full-screen backdrop that follows the focused card on every row.
+        val area = Modifier.fillMaxSize()
         val url = BackdropUrls.fullScreen(item.backdropUrl, lightweight = false, highRes = LocalHighResBackdrops.current)
         Crossfade(targetState = url, animationSpec = tween(450), label = "heroBackdrop", modifier = area) { u ->
             if (u != null) {
