@@ -119,9 +119,7 @@ fun TopBar(
             if (downloads != null) {
                 DownloadIndicator(state = downloads, onClick = onDownloads)
             }
-            if (profileInitial != null) {
-                ProfileButton(initial = profileInitial, avatar = profileAvatar, image = profileImage, onClick = onProfile)
-            }
+            // Modified build: hide the profile avatar ("M" next to Settings).
             TopBarItem(
                 icon = AppIcons.Settings,
                 label = null,
