@@ -182,9 +182,17 @@ class CmsStreams @Inject constructor(
     private fun str(v: JsonObject, key: String): String =
         v[key]?.jsonPrimitive?.contentOrNull ?: ""
 
-    private fun clean(t: String): String = t
-        .replace(Regex("[（(].*?[)）]"), "")
-        .replace(Regex("[:：].*$"), "")
-        .replace(Regex("\\s+"), "")
-        .trim()
+    private fun clean(t: String): String {
+        var v = t
+            .replace(Regex("[（(].*?[)）]"), "")
+            .replace(Regex("[:：].*$"), "")
+            .trim()
+        // Modified build: Douban titles carry the original English name; CMS sources index only the
+        // Chinese title. Keep the CJK part, drop the ASCII suffix.
+        if (v.any { it.code > 0x2E80 }) {
+            v = v.replace(Regex(" *[A-Za-z][A-Za-z0-9 '’.,!?-]*$"), "").trim()
+            v = v.filter { ch -> ch.code in 0x4E00..0x9FFF || ch.code in 0x3400..0x4DBF || ch.isDigit() }
+        }
+        return v.replace(" ", "").trim()
+    }
 }
