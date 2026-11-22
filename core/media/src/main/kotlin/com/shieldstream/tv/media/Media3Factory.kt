@@ -101,10 +101,14 @@ class Media3Factory @Inject constructor(
             .setPrioritizeTimeOverSizeThresholds(false)
             .build()
 
+        // Modified build: the 2-arg DefaultMediaSourceFactory ctor does NOT auto-register HLS.
+        // The Context ctor auto-detects HlsMediaSource from the classpath (hls dependency present).
+        val mediaSourceFactory = DefaultMediaSourceFactory(context)
+            .setDataSourceFactory(dataSourceFactory)
         return ExoPlayer.Builder(context, renderersFactory)
             .setTrackSelector(trackSelector)
             .setLoadControl(loadControl)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory, LenientExtractorsFactory()))
+            .setMediaSourceFactory(mediaSourceFactory)
             .build()
             .also { if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) it.addAnalyticsListener(EventLogger()) }
     }

@@ -37,11 +37,6 @@ class App : Application(), ImageLoaderFactory, Configuration.Provider {
     @Inject
     lateinit var watchNext: WatchNextManager
 
-    @Inject
-    lateinit var cmsStreams: com.shieldstream.tv.data.repository.streams.CmsStreams
-
-    @Inject
-    lateinit var media3Factory: com.shieldstream.tv.media.Media3Factory
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
@@ -69,15 +64,7 @@ class App : Application(), ImageLoaderFactory, Configuration.Provider {
                 EpisodeNotificationScheduler.sync(this@App, enabled)
             }
         }
-        // Modified build: diagnosis - verify CMS playback source reachability at startup.
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            runCatching { cmsStreams.selfTest() }
-                .onFailure { android.util.Log.w("CmsStream", "SELFTEST failed: ${it.message}") }
-            // Verify the player can actually fetch an m3u8 through its DoH-backed datasource.
-            kotlinx.coroutines.delay(1000)
-            val probe = media3Factory.probeUrl("https://vip.ffzy-play7.com/20221112/3323_ae6adba8/index.m3u8")
-            android.util.Log.i("CmsStream", "SELFTEST player m3u8 $probe")
-        }
+
     }
 
     override fun newImageLoader(): ImageLoader = imageLoader.get()
