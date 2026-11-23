@@ -11,7 +11,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -548,7 +547,6 @@ private fun InfoBlock(
                     .clip(RoundedCornerShape(4.dp))
                     .background(if (synopsisFocused) Color.White else Color.White.copy(alpha = 0.12f))
                     .onFocusChanged { synopsisFocused = it.isFocused }
-                    .focusable(enabled = interactive)
                     .tvClickable(enabled = interactive) { expanded = !expanded }
                     .padding(horizontal = 10.dp, vertical = 4.dp),
             )

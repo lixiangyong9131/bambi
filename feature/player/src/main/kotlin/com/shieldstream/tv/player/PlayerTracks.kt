@@ -173,6 +173,32 @@ fun TracksPanel(
             }
             val playback = remember(playbackSpeed, sleepTimer, sleepTimerRemainingMinutes, videoFit, skipEnabled, introSec, outroSec) {
                 listOf(
+                    // Modified build: skip controls first in the playback column.
+                    TrackOption(
+                        key = "p_skip_toggle",
+                        title = texts.get(StringsR.string.details_skip_enable),
+                        detail = if (skipEnabled) "ON" else "OFF",
+                        selected = skipEnabled,
+                        onSelect = onToggleSkip,
+                    ),
+                    TrackOption(
+                        key = "p_intro_point",
+                        title = texts.get(StringsR.string.player_skip_intro_short),
+                        detail = if (introSec > 0) formatSkipTime(introSec) else "",
+                        selected = introSec > 0,
+                        onSelect = { onSetIntroPoint((player.currentPosition / 1000).toInt()) },
+                    ),
+                    TrackOption(
+                        key = "p_outro_point",
+                        title = texts.get(StringsR.string.player_skip_outro_short),
+                        detail = if (outroSec > 0) "-" + formatSkipTime(outroSec) else "",
+                        selected = outroSec > 0,
+                        onSelect = {
+                            val remain = ((player.duration - player.currentPosition) / 1000).toInt()
+                                .coerceAtLeast(0)
+                            onSetOutroPoint(remain)
+                        },
+                    ),
                     TrackOption(
                         key = "p_speed",
                         title = texts.get(StringsR.string.player_speed),
@@ -205,32 +231,6 @@ fun TracksPanel(
                         },
                         selected = videoFit != com.shieldstream.tv.model.VideoFit.FIT,
                         onSelect = onCycleVideoFit,
-                    ),
-                    // Modified build: auto-skip toggle + compact intro/outro rows showing set seconds.
-                    TrackOption(
-                        key = "p_skip_toggle",
-                        title = texts.get(StringsR.string.details_skip_enable),
-                        detail = if (skipEnabled) "ON" else "OFF",
-                        selected = skipEnabled,
-                        onSelect = onToggleSkip,
-                    ),
-                    TrackOption(
-                        key = "p_intro_point",
-                        title = texts.get(StringsR.string.player_skip_intro_short),
-                        detail = if (introSec > 0) formatSkipTime(introSec) else "",
-                        selected = introSec > 0,
-                        onSelect = { onSetIntroPoint((player.currentPosition / 1000).toInt()) },
-                    ),
-                    TrackOption(
-                        key = "p_outro_point",
-                        title = texts.get(StringsR.string.player_skip_outro_short),
-                        detail = if (outroSec > 0) "-" + formatSkipTime(outroSec) else "",
-                        selected = outroSec > 0,
-                        onSelect = {
-                            val remain = ((player.duration - player.currentPosition) / 1000).toInt()
-                                .coerceAtLeast(0)
-                            onSetOutroPoint(remain)
-                        },
                     ),
                 )
             }
@@ -271,7 +271,7 @@ private fun TracksView(audio: List<TrackOption>, text: List<TrackOption>, playba
             options = playback,
             emptyText = "",
             onClick = { it.onSelect() },
-            focusIndex = -1,
+            focusIndex = 0,
             focusRequester = initialFocus,
             modifier = Modifier.width(PlaybackColumnWidth),
         )
