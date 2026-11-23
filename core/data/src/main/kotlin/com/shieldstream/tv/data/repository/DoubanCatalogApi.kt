@@ -166,7 +166,11 @@ class DoubanCatalogApi @Inject constructor(
         fun matches(cmsTitle: String, doubanTitle: String): Boolean {
             val a = cleanTitle(cmsTitle).replace(" ", "")
             val b = cleanTitle(doubanTitle).replace(" ", "")
-            if (a.length < 3 || b.length < 3) return false
+            if (a.isBlank() || b.isBlank()) return false
+            if (a.equals(b, ignoreCase = true)) return true
+            // Modified build: short CJK titles (e.g. 谷雨) must still match exactly - the old
+            // length<3 guard dropped every 2-character Chinese title from suggestions.
+            if (a.length < 2 || b.length < 2) return false
             val n = minOf(6, minOf(a.length, b.length))
             return a.take(n).equals(b.take(n), ignoreCase = true) || a.contains(b) || b.contains(a)
         }

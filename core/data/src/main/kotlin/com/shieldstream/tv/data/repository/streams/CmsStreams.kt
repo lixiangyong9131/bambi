@@ -4,6 +4,9 @@ import com.shieldstream.tv.model.CatalogItem
 import com.shieldstream.tv.model.HdrType
 import com.shieldstream.tv.model.Quality
 import com.shieldstream.tv.model.StreamSource
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
@@ -41,16 +44,15 @@ class CmsStreams @Inject constructor(
         private const val JISU = "https://www.jisuzy.com/api.php/provide/vod"             // 速播资源(备域名)
         private const val HONGNIU = "https://www.hongniuzy2.com/api.php/provide/vod"      // 红牛资源
         // Pair = display name to base URL. Ordered by reliability/speed; verified sources first.
+        // Modified build: only keep the sites verified to return real m3u8 for multiple titles.
+        // Dead/slow sites (魔都/电影天堂/暴风/淘片) never yielded resources and their 6s timeouts
+        // were the main reason source lookup felt slow on "continue playing".
         private val SOURCES = listOf(
             "如意资源" to RYI,
             "非凡影视" to API,
             "速播资源" to JISU,
             "红牛资源" to HONGNIU,
             "iQIYI" to IQIYI,
-            "魔都资源" to MODU,
-            "电影天堂" to DYTT,
-            "暴风资源" to BFZY,
-            "淘片" to TAOPIAN,
         )
         // Search stays on the fast source (ffzy) so typing results are instant.
         private val SEARCH_SOURCES = listOf(API, TAOPIAN)
@@ -164,19 +166,26 @@ class CmsStreams @Inject constructor(
         val title = clean(item.title)
         android.util.Log.i("CmsStream", "find(title=${item.title}, clean=$title)")
         if (title.isBlank()) return emptyList()
-        // Modified build: collect a playable line from EVERY reachable CMS site so the source
-        // panel offers multiple alternatives instead of only the first site's single line.
+        // Modified build: query all CMS sites CONCURRENTLY. The old serial loop could take
+        // 9x the timeout (~18s) before the first source was ready, making "continue playing"
+        // feel stuck. Parallel cuts it to roughly the slowest single site.
+        val results = withContext(Dispatchers.IO) {
+            SOURCES.map { (label, base) ->
+                async {
+                    val sources = runCatching { searchAndBuild(base, title, episode, label) }
+                        .getOrDefault(emptyList())
+                    android.util.Log.i("CmsStream", "$label -> ${sources.size} sources")
+                    sources
+                }
+            }.map { it.await() }
+        }
         val all = mutableListOf<StreamSource>()
         val seenUrls = HashSet<String>()
-        for ((label, base) in SOURCES) {
-            val sources = searchAndBuild(base, title, episode, label)
-            if (sources.isNotEmpty()) {
-                for (src in sources) {
-                    val key = src.directUrl.orEmpty()
-                    if (key.isNotBlank() && seenUrls.add(key)) all += src
-                }
+        for (sources in results) {
+            for (src in sources) {
+                val key = src.directUrl.orEmpty()
+                if (key.isNotBlank() && seenUrls.add(key)) all += src
             }
-            android.util.Log.i("CmsStream", "$label -> ${sources.size} sources")
         }
         android.util.Log.i("CmsStream", "total ${all.size} CMS lines for $title")
         return all
