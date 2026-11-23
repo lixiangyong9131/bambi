@@ -240,6 +240,7 @@ private fun DetailsContent(
                 interactive = !panelOpen && !actionsOpen && episodeMenu == null,
                 playRequester = playRequester,
                 onPlay = { viewModel.play() },
+                onPlaySource = { source -> viewModel.playSource(source) },
                 onPlayFromStart = { viewModel.play(fromStart = true) },
                 onOpenSources = {
                     viewModel.ensureSources()
@@ -436,6 +437,7 @@ private fun InfoBlock(
     onOpenSources: () -> Unit,
     onOpenActions: () -> Unit,
     onTrailer: (() -> Unit)?,
+    onPlaySource: (com.shieldstream.tv.model.StreamSource) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val item = details.item
@@ -602,6 +604,34 @@ private fun InfoBlock(
                 )
             }
         }
+        // Modified build: probed sources shown right under the play buttons, one card per
+        // completed probe. Click a card to play that source directly.
+        val probedSources = (state.sources as? SourcesState.Ready)?.sources.orEmpty()
+            .filter { state.sourceProbes.containsKey(it.id) }
+        if (probedSources.isNotEmpty()) {
+            Spacer(Modifier.height(14.dp))
+            Text(
+                text = "已检测片源 · 点击直接播放" + if (!state.probingDone) " · 检测中…" else "",
+                color = Grey,
+                style = MaterialTheme.typography.labelMedium,
+            )
+            Spacer(Modifier.height(8.dp))
+            androidx.compose.foundation.lazy.LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                items(probedSources.size) { i ->
+                    val src = probedSources[i]
+                    val probe = state.sourceProbes[src.id]
+                    ProbeCard(
+                        label = src.title,
+                        detail = probe?.summary.orEmpty(),
+                        ok = probe?.ok == true,
+                        onClick = { onPlaySource(src) },
+                    )
+                }
+            }
+        }
         state.mainProgress?.takeIf { it.isResumable }?.let { p ->
             Spacer(Modifier.height(14.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -670,6 +700,41 @@ private fun Badge(text: String) {
             .border(1.dp, Color.White.copy(alpha = 0.6f), RoundedCornerShape(3.dp))
             .padding(horizontal = 6.dp, vertical = 1.dp),
     )
+}
+
+@Composable
+private fun ProbeCard(
+    label: String,
+    detail: String,
+    ok: Boolean,
+    onClick: () -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    Column(
+        modifier = Modifier
+            .width(190.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (focused) Color.White.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.08f))
+            .onFocusChanged { focused = it.isFocused }
+            .tvClickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text = label,
+            color = Color.White,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = detail,
+            color = if (ok) Color(0xFF7EC8E3) else Color.White.copy(alpha = 0.5f),
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
 }
 
 @Composable

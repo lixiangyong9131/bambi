@@ -134,11 +134,18 @@ internal fun SourcesPanel(
     val spanishOnly = state.spanishOnly
     val groups = remember(sources, unavailable, spanishFirst, spanishOnly) {
         val byProvider = sources.groupBy { it.provider }
-        (byProvider.keys + unavailable.keys).distinct().sortedBy { order.indexOf(it) }.map { section ->
-            // Mismo orden que "Reproducir" (el que ya trae la lista): nada de reordenar aquí.
-            section to byProvider[section].orEmpty()
-                .filter { !spanishOnly || it.advertisesSpanishAudio }
-        }
+        // Modified build: CMS sites are flattened into one list (no sub-folders);
+        // torrent/addon providers keep their sections.
+        val cmsSources = sources.filter { it.provider.startsWith("CMS") }
+        val flatCms = if (cmsSources.isNotEmpty()) listOf("" to cmsSources) else emptyList()
+        val others = (byProvider.keys + unavailable.keys).distinct()
+            .filter { !it.startsWith("CMS") }
+            .sortedBy { order.indexOf(it) }
+            .map { section ->
+                section to byProvider[section].orEmpty()
+                    .filter { !spanishOnly || it.advertisesSpanishAudio }
+            }
+        flatCms + others
     }
     var open by remember { mutableStateOf(emptySet<String>()) }
     var autoOpened by remember { mutableStateOf(false) }
@@ -161,15 +168,12 @@ internal fun SourcesPanel(
                 .background(AppColors.BackgroundRaised.copy(alpha = 0.95f))
                 .padding(top = 32.dp, start = 24.dp, end = 24.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = localizedStringResource(StringsR.string.details_choose_a_source),
-                    color = Color.White,
-                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                    modifier = Modifier.weight(1f),
-                )
-                SpanishOnlyChip(enabled = spanishOnly, onClick = onToggleSpanishOnly)
-            }
+            // Modified build: no Spanish-only chip in the header (user does not want it).
+            Text(
+                text = localizedStringResource(StringsR.string.details_choose_a_source),
+                color = Color.White,
+                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+            )
             state.selectedEpisode?.takeIf { state.isSeries }?.let {
                 Text("${it.localizedCode()} · ${it.title}", color = Grey, style = MaterialTheme.typography.bodyMedium)
             }
@@ -239,26 +243,39 @@ internal fun SourcesPanel(
                             }
                         }
                         groups.forEachIndexed { index, (name, list) ->
-                            item(key = "h:$name") {
-                                ProviderHeader(
-                                    name = name,
-                                    count = list.size,
-                                    cached = list.count { it.isCached },
-                                    expanded = name in open,
-                                    note = unavailable[name].takeIf { list.isEmpty() }
-                                        ?: localizedStringResource(StringsR.string.details_none_in_spanish).takeIf { list.isEmpty() && spanishOnly },
-                                    onClick = { if (list.isNotEmpty()) open = if (name in open) open - name else open + name },
-                                    modifier = if (index == 0 && pick == null) Modifier.focusRequester(firstRequester) else Modifier,
-                                )
-                            }
-                            if (name in open) {
+                            if (name.isEmpty()) {
+                                // CMS: flat rows, no header / no expand-collapse.
                                 items(list, key = { it.id }) { source ->
                                     SourceRow(
                                         source = source,
                                         blocked = isBlocked(source),
                                         onClick = { onPick(source) },
                                         onLongClick = { brokenCandidate = source },
+                                        modifier = if (index == 0 && pick == null) Modifier.focusRequester(firstRequester) else Modifier,
                                     )
+                                }
+                            } else {
+                                item(key = "h:$name") {
+                                    ProviderHeader(
+                                        name = name,
+                                        count = list.size,
+                                        cached = list.count { it.isCached },
+                                        expanded = name in open,
+                                        note = unavailable[name].takeIf { list.isEmpty() }
+                                            ?: localizedStringResource(StringsR.string.details_none_in_spanish).takeIf { list.isEmpty() && spanishOnly },
+                                        onClick = { if (list.isNotEmpty()) open = if (name in open) open - name else open + name },
+                                        modifier = if (index == 0 && pick == null) Modifier.focusRequester(firstRequester) else Modifier,
+                                    )
+                                }
+                                if (name in open) {
+                                    items(list, key = { it.id }) { source ->
+                                        SourceRow(
+                                            source = source,
+                                            blocked = isBlocked(source),
+                                            onClick = { onPick(source) },
+                                            onLongClick = { brokenCandidate = source },
+                                        )
+                                    }
                                 }
                             }
                         }

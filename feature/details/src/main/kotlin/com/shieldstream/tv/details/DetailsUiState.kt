@@ -63,6 +63,9 @@ sealed interface DetailsUiState {
         val ratings: TraktRatingsState = TraktRatingsState.Idle,
         /** Resto de películas de la saga (sin la actual), cuando la hay. */
         val collection: com.shieldstream.tv.model.CollectionDetails? = null,
+        /** Modified build: per-source probe results, filled one by one as they complete. */
+        val sourceProbes: Map<String, SourceProber.Result> = emptyMap(),
+        val probingDone: Boolean = false,
     ) : DetailsUiState {
         val isSeries: Boolean get() = details.item.type == MediaType.TV
 

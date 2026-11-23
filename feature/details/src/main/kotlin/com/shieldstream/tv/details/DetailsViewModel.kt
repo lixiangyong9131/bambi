@@ -38,6 +38,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
@@ -61,6 +62,7 @@ class DetailsViewModel @Inject constructor(
     private val planner: DownloadPlanner,
     private val debridCache: com.shieldstream.tv.domain.DebridCacheRepository,
     private val manualSkip: com.shieldstream.tv.domain.ManualSkipRepository,
+    private val sourceProber: SourceProber,
 ) : ViewModel() {
 
     /** Descargas (para enseñar el estado en la ficha y reproducir lo descargado). */
@@ -73,6 +75,9 @@ class DetailsViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow<DetailsUiState>(DetailsUiState.Loading)
     val uiState: StateFlow<DetailsUiState> = _uiState.asStateFlow()
+
+    /** Modified build: ongoing source-probe job; cancelled as soon as playback starts. */
+    private var probeJob: kotlinx.coroutines.Job? = null
 
     /** Modified build: per-show intro/outro skip config, refreshed when the item or settings change. */
     val skipConfig: StateFlow<com.shieldstream.tv.domain.ManualSkipRepository.Config> =
@@ -176,6 +181,7 @@ class DetailsViewModel @Inject constructor(
 
     /** Un episodio al azar de toda la serie (de las temporadas ya emitidas) y a reproducir. */
     fun playRandomEpisode() {
+        cancelProbing()
         val c = content() ?: return
         if (!c.isSeries) return
         viewModelScope.launch {
@@ -484,6 +490,7 @@ class DetailsViewModel @Inject constructor(
     }
 
     fun play(fromStart: Boolean = false) {
+        cancelProbing()
         val c = content() ?: return
         pendingFromStart = fromStart
         if (c.isSeries) {
@@ -508,6 +515,7 @@ class DetailsViewModel @Inject constructor(
     }
 
     fun playEpisode(episode: Episode, fromStart: Boolean = false) {
+        cancelProbing()
         val c = content() ?: return
         pendingFromStart = fromStart
         if (playDownloaded(c.copy(selectedEpisode = episode), episode, fromStart)) {
@@ -541,6 +549,7 @@ class DetailsViewModel @Inject constructor(
      * y respetan tus filtros, no simplemente a la siguiente de la lista.
      */
     fun playSource(source: StreamSource) {
+        cancelProbing()
         val c = content() ?: return
         val ready = c.sources as? SourcesState.Ready ?: return
         val episode = c.selectedEpisode?.takeIf { c.isSeries }
@@ -682,9 +691,43 @@ class DetailsViewModel @Inject constructor(
                         trace("sources_ready", "count=${sorted.size}")
                     }
                     updateContent { it.copy(sources = SourcesState.Ready(sorted, result.unavailable, result.pending)) }
+                    startProbing(sorted)
                     tryStartPendingPlayback()
                 }
         }
+    }
+
+    /**
+     * Modified build: probe sources serially, publishing each result as soon as it arrives.
+     * Stops early if playback starts (see cancelProbing).
+     */
+    private fun startProbing(sources: List<com.shieldstream.tv.model.StreamSource>) {
+        probeJob?.cancel()
+        // Only direct-playable sources can be probed without a debrid service.
+        val candidates = sources.filter { it.directUrl?.startsWith("http") == true }.distinctBy { it.id }.take(12)
+        if (candidates.isEmpty()) {
+            updateContent { it.copy(probingDone = true) }
+            return
+        }
+        updateContent { it.copy(sourceProbes = emptyMap(), probingDone = false) }
+        probeJob = viewModelScope.launch {
+            for (src in candidates) {
+                if (!isActive) break
+                val result = sourceProber.probe(src)
+                if (!isActive) break
+                updateContent { ui ->
+                    if (ui !is DetailsUiState.Content) ui
+                    else ui.copy(sourceProbes = ui.sourceProbes + (src.id to result))
+                }
+            }
+            if (isActive) updateContent { it.copy(probingDone = true) }
+        }
+    }
+
+    /** Stop probing the moment the user starts playback. */
+    private fun cancelProbing() {
+        probeJob?.cancel()
+        probeJob = null
     }
 
     private fun tryStartPendingPlayback() {

@@ -198,7 +198,7 @@ class CmsStreams @Inject constructor(
         return listOf(
             StreamSource(
                 id = "cms:${siteLabel}:$vid",
-                title = name,
+                title = if (siteLabel.isNotBlank()) "$siteLabel · $name" else name,
                 // Modified build: unique infoHash so distinctBy() doesn't collapse CMS sources,
                 // and an "ES" language tag so the "Spanish only" source filter doesn't drop them.
                 infoHash = "cms-$siteLabel-$vid",
