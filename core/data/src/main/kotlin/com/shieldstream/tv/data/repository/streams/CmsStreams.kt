@@ -42,11 +42,11 @@ class CmsStreams @Inject constructor(
         private const val HONGNIU = "https://www.hongniuzy2.com/api.php/provide/vod"      // 红牛资源
         // Pair = display name to base URL. Ordered by reliability/speed; verified sources first.
         private val SOURCES = listOf(
-            "非凡影视" to API,
-            "iQIYI" to IQIYI,
-            "红牛资源" to HONGNIU,
             "如意资源" to RYI,
+            "非凡影视" to API,
             "速播资源" to JISU,
+            "红牛资源" to HONGNIU,
+            "iQIYI" to IQIYI,
             "魔都资源" to MODU,
             "电影天堂" to DYTT,
             "暴风资源" to BFZY,
