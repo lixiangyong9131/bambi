@@ -101,4 +101,6 @@
     <string name="player_video_fit_original">Original (con bandas negras)</string>
     <string name="player_video_fit_zoom">Ampliar · sin bandas, recorta los lados</string>
     <string name="player_video_fit_stretch">Estirar · sin bandas, deforma la imagen</string>
+    <string name="player_skip_intro_short">片头</string>
+    <string name="player_skip_outro_short">片尾</string>
 </resources>

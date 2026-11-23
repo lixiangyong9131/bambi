@@ -11,6 +11,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -525,26 +526,31 @@ private fun InfoBlock(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        // Modified build: synopsis, two lines by default, tap to expand/collapse.
+        // Modified build: synopsis, two lines by default, focusable expand/collapse button.
         val synopsis = item.overview.ifBlank { details.tagline.orEmpty() }
         if (synopsis.isNotBlank()) {
             Spacer(Modifier.height(12.dp))
             var expanded by remember { mutableStateOf(false) }
+            var synopsisFocused by remember { mutableStateOf(false) }
             Text(
                 text = synopsis,
                 color = Color.White.copy(alpha = 0.9f),
                 style = MaterialTheme.typography.bodyLarge,
                 maxLines = if (expanded) Int.MAX_VALUE else 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.tvClickable(enabled = interactive) { expanded = !expanded },
             )
             Text(
                 text = if (expanded) "▲ 收起" else "▼ 展开",
-                color = Color.White.copy(alpha = 0.55f),
-                style = MaterialTheme.typography.labelSmall,
+                color = if (synopsisFocused) Color.Black else Color.White.copy(alpha = 0.75f),
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                 modifier = Modifier
-                    .padding(top = 4.dp)
-                    .tvClickable(enabled = interactive) { expanded = !expanded },
+                    .padding(top = 6.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(if (synopsisFocused) Color.White else Color.White.copy(alpha = 0.12f))
+                    .onFocusChanged { synopsisFocused = it.isFocused }
+                    .focusable(enabled = interactive)
+                    .tvClickable(enabled = interactive) { expanded = !expanded }
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
             )
         }
         Spacer(Modifier.height(20.dp))

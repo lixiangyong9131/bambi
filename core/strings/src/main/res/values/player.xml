@@ -107,4 +107,6 @@
     <string name="player_set_outro_point">设当前位置为片尾开始</string>
     <string name="player_intro_point_set">片头已设为 %1 秒</string>
     <string name="player_outro_point_set">片尾已设为末尾 %1 秒</string>
+    <string name="player_skip_intro_short">片头</string>
+    <string name="player_skip_outro_short">片尾</string>
 </resources>

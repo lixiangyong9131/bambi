@@ -90,6 +90,10 @@ fun TracksPanel(
     onSubtitlesOff: () -> Unit = {},
     onSetIntroPoint: (Int) -> Unit = {},
     onSetOutroPoint: (Int) -> Unit = {},
+    skipEnabled: Boolean = false,
+    introSec: Int = 0,
+    outroSec: Int = 0,
+    onToggleSkip: () -> Unit = {},
 ) {
     val texts = rememberTexts()
     var tracks by remember(player) { mutableStateOf(player.currentTracks) }
@@ -167,7 +171,7 @@ fun TracksPanel(
                     )
                 }
             }
-            val playback = remember(playbackSpeed, sleepTimer, sleepTimerRemainingMinutes, videoFit) {
+            val playback = remember(playbackSpeed, sleepTimer, sleepTimerRemainingMinutes, videoFit, skipEnabled, introSec, outroSec) {
                 listOf(
                     TrackOption(
                         key = "p_speed",
@@ -202,19 +206,26 @@ fun TracksPanel(
                         selected = videoFit != com.shieldstream.tv.model.VideoFit.FIT,
                         onSelect = onCycleVideoFit,
                     ),
-                    // Modified build: mark the current playback position as intro end / outro start.
+                    // Modified build: auto-skip toggle + compact intro/outro rows showing set seconds.
+                    TrackOption(
+                        key = "p_skip_toggle",
+                        title = texts.get(StringsR.string.details_skip_enable),
+                        detail = if (skipEnabled) "ON" else "OFF",
+                        selected = skipEnabled,
+                        onSelect = onToggleSkip,
+                    ),
                     TrackOption(
                         key = "p_intro_point",
-                        title = texts.get(StringsR.string.player_set_intro_point),
-                        detail = "",
-                        selected = false,
+                        title = texts.get(StringsR.string.player_skip_intro_short),
+                        detail = if (introSec > 0) formatSkipTime(introSec) else "",
+                        selected = introSec > 0,
                         onSelect = { onSetIntroPoint((player.currentPosition / 1000).toInt()) },
                     ),
                     TrackOption(
                         key = "p_outro_point",
-                        title = texts.get(StringsR.string.player_set_outro_point),
-                        detail = "",
-                        selected = false,
+                        title = texts.get(StringsR.string.player_skip_outro_short),
+                        detail = if (outroSec > 0) "-" + formatSkipTime(outroSec) else "",
+                        selected = outroSec > 0,
                         onSelect = {
                             val remain = ((player.duration - player.currentPosition) / 1000).toInt()
                                 .coerceAtLeast(0)
@@ -254,13 +265,24 @@ private fun TracksView(audio: List<TrackOption>, text: List<TrackOption>, playba
             .then(if (cardStyle) Modifier.background(TracksPanelColor, RoundedCornerShape(18.dp)) else Modifier)
             .padding(horizontal = 20.dp, vertical = 22.dp),
     ) {
+        // Modified build: playback column first, so skip settings are the first focus.
+        OptionColumn(
+            title = localizedStringResource(StringsR.string.player_playback),
+            options = playback,
+            emptyText = "",
+            onClick = { it.onSelect() },
+            focusIndex = -1,
+            focusRequester = initialFocus,
+            modifier = Modifier.width(PlaybackColumnWidth),
+        )
+        ColumnDivider()
         OptionColumn(
             title = localizedStringResource(StringsR.string.player_audio),
             options = audio,
             emptyText = localizedStringResource(StringsR.string.player_no_audio_tracks),
             onClick = { it.onSelect() },
             focusIndex = audioFocusIndex,
-            focusRequester = initialFocus,
+            focusRequester = null,
             modifier = Modifier.width(TrackColumnWidth),
         )
         ColumnDivider()
@@ -272,16 +294,6 @@ private fun TracksView(audio: List<TrackOption>, text: List<TrackOption>, playba
             focusIndex = -1,
             focusRequester = null,
             modifier = Modifier.width(TrackColumnWidth),
-        )
-        ColumnDivider()
-        OptionColumn(
-            title = localizedStringResource(StringsR.string.player_playback),
-            options = playback,
-            emptyText = "",
-            onClick = { it.onSelect() },
-            focusIndex = -1,
-            focusRequester = null,
-            modifier = Modifier.width(PlaybackColumnWidth),
         )
     }
     }
@@ -393,3 +405,10 @@ private val PlaybackColumnWidth = 214.dp
 private val TracksPanelHeight = 420.dp
 
 private val TracksPanelColor = Color(0xF2181A20)
+
+/** Format skip seconds as m:ss (or mm:ss). */
+private fun formatSkipTime(seconds: Int): String {
+    val m = seconds / 60
+    val sec = seconds % 60
+    return "%d:%02d".format(java.util.Locale.US, m, sec)
+}
