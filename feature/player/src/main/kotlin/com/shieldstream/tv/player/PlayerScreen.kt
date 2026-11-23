@@ -341,6 +341,10 @@ fun PlayerScreen(
         // Modified build: when a bottom skip button has focus, let OK reach its click handler
         // instead of toggling playback here.
         if (okKey && skipBarFocused && scrubMs == null) return false
+        // Modified build: while a bottom skip button has focus, Left/Right must move focus
+        // between the buttons instead of seeking the video.
+        if (skipBarFocused && scrubMs == null &&
+            (event.key == Key.DirectionLeft || event.key == Key.DirectionRight)) return false
         return when (event.key) {
             Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.MediaPlayPause, Key.Spacebar -> {
                 if (p.isPlaying) p.pause() else p.play()
@@ -731,30 +735,34 @@ private fun ControlsOverlay(
                     style = MaterialTheme.typography.titleMedium,
                 )
             }
-            // Modified build: bottom quick-settings for intro/outro skip - focus + OK sets the point.
-            Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                SkipSettingButton(
-                    label = localizedStringResource(StringsR.string.player_set_intro_point),
-                    value = if (introSec > 0) "${introSec}s" else "—",
-                    active = skipEnabled && introSec > 0,
-                    onClick = onSetIntro,
-                    focusRequester = skipIntroFocus,
-                    onFocused = onBottomFocused,
-                )
-                Spacer(Modifier.width(12.dp))
-                SkipSettingButton(
-                    label = localizedStringResource(StringsR.string.player_set_outro_point),
-                    value = if (outroSec > 0) "${outroSec}s" else "—",
-                    active = skipEnabled && outroSec > 0,
-                    onClick = onSetOutro,
-                )
-                Spacer(Modifier.width(12.dp))
+            // Modified build: vertical menu rows (like the reference screenshot) navigated
+            // with Up/Down + OK, so Left/Right keep seeking and never steal the selection.
+            Spacer(Modifier.height(8.dp))
+            Column(
+                Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .padding(6.dp),
+            ) {
                 SkipSettingButton(
                     label = localizedStringResource(StringsR.string.details_skip_enable),
                     value = if (skipEnabled) "ON" else "OFF",
                     active = skipEnabled,
                     onClick = onToggleSkip,
+                    focusRequester = skipIntroFocus,
+                    onFocused = onBottomFocused,
+                )
+                SkipSettingButton(
+                    label = localizedStringResource(StringsR.string.player_set_intro_point),
+                    value = if (introSec > 0) formatTime(introSec * 1000L) else "—",
+                    active = introSec > 0,
+                    onClick = onSetIntro,
+                )
+                SkipSettingButton(
+                    label = localizedStringResource(StringsR.string.player_set_outro_point),
+                    value = if (outroSec > 0) "-" + formatTime(outroSec * 1000L) else "—",
+                    active = outroSec > 0,
+                    onClick = onSetOutro,
                 )
             }
         }
@@ -771,27 +779,30 @@ private fun SkipSettingButton(
     onFocused: () -> Unit = {},
 ) {
     var focused by remember { mutableStateOf(false) }
-    val bg = when {
-        focused -> Color.White
-        active -> Color.White.copy(alpha = 0.25f)
-        else -> Color.White.copy(alpha = 0.10f)
-    }
-    val fg = if (focused) Color.Black else Color.White
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
+            .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .background(bg)
+            .background(if (focused) Color.White.copy(alpha = 0.15f) else Color.Transparent)
             .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocused() }
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             .tvClickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
-        Text(label, color = fg, style = MaterialTheme.typography.labelSmall)
-        Text(value, color = fg, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
+        Text(
+            text = label,
+            color = if (focused || active) Color.White else Color.White.copy(alpha = 0.75f),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Spacer(Modifier.weight(1f))
+        Text(
+            text = value,
+            color = if (active) Color(0xFF7EC8E3) else Color.White.copy(alpha = 0.55f),
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+        )
     }
 }
-
 /**
  * Fraction of [durationMs] covered by [ms], or null while the duration is unknown (0 or less).
  * Without this guard an unknown duration made any position render as a full bar.

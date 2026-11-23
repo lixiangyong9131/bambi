@@ -77,6 +77,7 @@ import com.shieldstream.tv.ui.component.ProvideMinimalScroll
 import com.shieldstream.tv.ui.component.TvButton
 import com.shieldstream.tv.ui.component.formatEpisodeDate
 import com.shieldstream.tv.ui.component.onBackKey
+import com.shieldstream.tv.ui.component.tvClickable
 
 internal val Green = Color(0xFF46D369)
 
@@ -459,9 +460,27 @@ private fun InfoBlock(
         Spacer(Modifier.height(14.dp))
 
         MetaRow(details, state)
-        if (details.genres.isNotEmpty()) {
-            Spacer(Modifier.height(6.dp))
-            Text(details.genres.take(4).joinToString("  ·  "), color = Grey, style = MaterialTheme.typography.bodyMedium)
+        // Modified build: genres + release year as tags, matching the request to show the
+        // premiere date alongside types.
+        val tags = buildList {
+            details.genres.take(4).forEach { add(it) }
+            item.year?.let { add(it.toString()) }
+        }
+        if (tags.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                tags.forEach { tag ->
+                    Text(
+                        text = tag,
+                        color = Color.White.copy(alpha = 0.8f),
+                        style = MaterialTheme.typography.labelMedium,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color.White.copy(alpha = 0.12f))
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
+                }
+            }
         }
         if (details.directors.isNotEmpty()) {
             Spacer(Modifier.height(4.dp))
@@ -469,6 +488,20 @@ private fun InfoBlock(
                 text = localizedStringResource(
                     if (item.type == com.shieldstream.tv.model.MediaType.TV) StringsR.string.details_created_by else StringsR.string.details_directed_by,
                     details.directors.take(2).joinToString(", ") { it.name },
+                ),
+                color = Grey,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        // Modified build: show main cast near the top, next to genres/runtime.
+        if (details.cast.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = localizedStringResource(
+                    StringsR.string.details_starring,
+                    details.cast.take(3).joinToString(", ") { it.name },
                 ),
                 color = Grey,
                 style = MaterialTheme.typography.bodyMedium,
@@ -492,14 +525,28 @@ private fun InfoBlock(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Spacer(Modifier.height(12.dp))
-        Text(
-            text = item.overview.ifBlank { details.tagline.orEmpty() },
-            color = Color.White.copy(alpha = 0.9f),
-            style = MaterialTheme.typography.bodyLarge,
-            maxLines = 4,
-            overflow = TextOverflow.Ellipsis,
-        )
+        // Modified build: synopsis, two lines by default, tap to expand/collapse.
+        val synopsis = item.overview.ifBlank { details.tagline.orEmpty() }
+        if (synopsis.isNotBlank()) {
+            Spacer(Modifier.height(12.dp))
+            var expanded by remember { mutableStateOf(false) }
+            Text(
+                text = synopsis,
+                color = Color.White.copy(alpha = 0.9f),
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = if (expanded) Int.MAX_VALUE else 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.tvClickable(enabled = interactive) { expanded = !expanded },
+            )
+            Text(
+                text = if (expanded) "▲ 收起" else "▼ 展开",
+                color = Color.White.copy(alpha = 0.55f),
+                style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier
+                    .padding(top = 4.dp)
+                    .tvClickable(enabled = interactive) { expanded = !expanded },
+            )
+        }
         Spacer(Modifier.height(20.dp))
 
         Row(

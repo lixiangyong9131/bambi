@@ -80,6 +80,29 @@ class CmsStreams @Inject constructor(
         return emptyList()
     }
 
+    /** Fetch the synopsis (vod_content) for a title from the CMS, plain text. */
+    suspend fun getDescription(title: String): String {
+        val t = clean(title)
+        if (t.isBlank()) return ""
+        for (base in SEARCH_SOURCES) {
+            val rows = parseList(get("$base?ac=vod&wd=" + URLEncoder.encode(t, "UTF-8"))) ?: continue
+            val cand = rows.firstOrNull { row ->
+                val n = clean(str(row, "vod_name"))
+                n == t || n.contains(t.take(6), true) || t.contains(n.take(6), true)
+            } ?: rows.firstOrNull() ?: continue
+            val vid = str(cand, "vod_id")
+            val detailRows = parseList(get("$base?ac=detail&ids=" + URLEncoder.encode(vid, "UTF-8"))) ?: continue
+            val raw = str(detailRows.firstOrNull() ?: continue, "vod_content")
+            if (raw.isBlank()) continue
+            // Strip HTML tags and entities.
+            val text = raw.replace(Regex("<[^>]*>"), " ")
+                .replace("&nbsp;", " ").replace("&amp;", "&")
+                .replace(Regex("\\s+"), " ").trim()
+            if (text.isNotBlank()) return text
+        }
+        return ""
+    }
+
     /** A CMS episode: number, title and its direct m3u8 URL. */
     data class EpisodeInfo(val number: Int, val title: String, val url: String)
 

@@ -44,7 +44,7 @@
     <string name="details_episode_play">播放本集</string>
     <string name="details_hold_ok_for_episode_options">长按剧集的 OK 查看选项</string>
     <string name="details_remaining">剩余 %1$s</string>
-    <string name="details_rating">★ %1$.1f / 10</string>
+    <string name="details_rating">★ %1$.1f</string>
     <string name="details_rate_movie">给电影评分</string>
     <string name="details_rate_show">给剧集评分</string>
     <string name="details_rate_episode">给第 %1$s 集评分</string>
@@ -101,4 +101,5 @@
     <string name="details_skip_seconds">%1 秒</string>
     <string name="details_skip_off">关闭</string>
     <string name="details_skip_hint">设置后每集自动跳过片头和片尾</string>
+    <string name="details_starring">主演：%1$s</string>
 </resources>

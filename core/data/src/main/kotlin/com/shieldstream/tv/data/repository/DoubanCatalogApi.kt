@@ -204,15 +204,23 @@ class DoubanCatalogApi @Inject constructor(
         val s = a.subject ?: return TmdbMovieDetailDto(id = id)
         val year = s.releaseYear.take(4).toIntOrNull()
         val cover = coverFor(id, s.title)
+        val synopsis = runCatching { cms.getDescription(cleanTitle(s.title)) }.getOrDefault("")
+            .ifBlank { s.shortComment?.content.orEmpty() }
+        val cast = com.shieldstream.tv.network.dto.TmdbCreditsDto(
+            cast = s.actors.mapIndexed { i, name ->
+                com.shieldstream.tv.network.dto.TmdbCastDto(id = i, name = name, order = i)
+            },
+        )
         return TmdbMovieDetailDto(
             id = id,
             title = cleanTitle(s.title),
-            overview = s.shortComment?.content.orEmpty(),
+            overview = synopsis,
             poster_path = cover,
             backdrop_path = cover,
             release_date = s.releaseYear.ifBlank { null },
             vote_average = (s.rate.toDoubleOrNull() ?: 0.0),
             genres = s.types.map { TmdbGenreDto(name = it) },
+            credits = cast,
         )
     }
 
@@ -229,10 +237,17 @@ class DoubanCatalogApi @Inject constructor(
             ),
         ) else emptyList()
         val cover = coverFor(id, s.title)
+        val synopsis = runCatching { cms.getDescription(cleanTitle(s.title)) }.getOrDefault("")
+            .ifBlank { s.shortComment?.content.orEmpty() }
+        val cast = com.shieldstream.tv.network.dto.TmdbCreditsDto(
+            cast = s.actors.mapIndexed { i, name ->
+                com.shieldstream.tv.network.dto.TmdbCastDto(id = i, name = name, order = i)
+            },
+        )
         return TmdbTvDetailDto(
             id = id,
             name = cleanTitle(s.title),
-            overview = s.shortComment?.content.orEmpty(),
+            overview = synopsis,
             poster_path = cover,
             backdrop_path = cover,
             first_air_date = s.releaseYear.ifBlank { null },
@@ -240,6 +255,7 @@ class DoubanCatalogApi @Inject constructor(
             genres = s.types.map { TmdbGenreDto(name = it) },
             seasons = seasons,
             number_of_seasons = if (episodeCount > 0) 1 else 0,
+            aggregate_credits = cast,
         )
     }
 
