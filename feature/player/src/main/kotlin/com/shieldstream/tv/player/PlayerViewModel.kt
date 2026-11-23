@@ -48,6 +48,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.first
@@ -105,6 +106,15 @@ class PlayerViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow<PlayerUiState>(PlayerUiState.Resolving(texts.get(StringsR.string.player_preparing), 1, 1))
     val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
+
+    /** Modified build: current show's manual skip config, exposed for the player bottom bar. */
+    val skipConfig: StateFlow<com.shieldstream.tv.domain.ManualSkipRepository.Config> =
+        manualSkip.changes.map { _ ->
+            val m = mediaSnapshot
+            if (m != null) manualSkip.get(
+                com.shieldstream.tv.domain.ManualSkipRepository.keyFor(m.title, m.type.name)
+            ) else com.shieldstream.tv.domain.ManualSkipRepository.Config()
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, com.shieldstream.tv.domain.ManualSkipRepository.Config())
 
     private val _notice = MutableStateFlow<String?>(null)
     val notice: StateFlow<String?> = _notice.asStateFlow()
@@ -273,6 +283,14 @@ class PlayerViewModel @Inject constructor(
         manualSkip.save(key, updated)
         manualSkipConfig = updated
         _notice.value = texts.get(StringsR.string.player_outro_point_set, seconds)
+    }
+
+    /** Toggle auto-skip on/off from the player bottom bar. */
+    fun toggleSkip() {
+        val m = mediaSnapshot ?: return
+        val key = com.shieldstream.tv.domain.ManualSkipRepository.keyFor(m.title, m.type.name)
+        val c = manualSkip.get(key)
+        manualSkip.save(key, c.copy(enabled = !c.enabled))
     }
 
     private fun loadSegments() {

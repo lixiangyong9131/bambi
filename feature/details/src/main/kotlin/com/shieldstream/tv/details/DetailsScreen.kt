@@ -154,7 +154,6 @@ private fun DetailsContent(
     val context = androidx.compose.ui.platform.LocalContext.current
     val downloadList by viewModel.downloadList.collectAsStateWithLifecycle()
     val plannerProgress by viewModel.plannerProgress.collectAsStateWithLifecycle()
-    val skipCfg by viewModel.skipConfig.collectAsStateWithLifecycle()
     // El episodio sobre el que se estaba (enfocado), no solo el último abierto: "Más" actúa sobre ese.
     var focusedEpisode by remember { mutableStateOf<Episode?>(null) }
     val menuState = remember(state, focusedEpisode) {
@@ -172,11 +171,9 @@ private fun DetailsContent(
     }
     var actionsOpen by remember { mutableStateOf(false) }
     var ratingTarget by remember { mutableStateOf<TraktRatingTarget?>(null) }
-    var skipSettingsOpen by remember { mutableStateOf(false) }
     var episodeMenu by remember { mutableStateOf<Episode?>(null) }
     BackHandler(enabled = actionsOpen || episodeMenu != null || !panelOpen) {
         when {
-            skipSettingsOpen -> skipSettingsOpen = false
             ratingTarget != null -> ratingTarget = null
             episodeMenu != null -> episodeMenu = null
             else -> when (detailsBackAction(actionsOpen, panelOpen)) {
@@ -338,13 +335,6 @@ private fun DetailsContent(
         if (actionsOpen) {
             val target = ratingTarget
             when {
-                skipSettingsOpen -> SkipSettingsDialog(
-                    enabled = skipCfg.enabled,
-                    introSec = skipCfg.introSec,
-                    outroSec = skipCfg.outroSec,
-                    onConfig = viewModel::saveSkipConfig,
-                    onDismiss = { skipSettingsOpen = false },
-                )
                 target != null -> RatingPickerDialog(
                     state = state,
                     target = target,
@@ -355,11 +345,6 @@ private fun DetailsContent(
                 )
                 else -> DetailsActions(
                     state = menuState,
-                    skipEnabled = skipCfg.enabled,
-                    skipIntroSec = skipCfg.introSec,
-                    skipOutroSec = skipCfg.outroSec,
-                    onSkipConfig = viewModel::saveSkipConfig,
-                    onOpenSkipSettings = { skipSettingsOpen = true },
                     onToggleSeasonWatched = {
                         viewModel.toggleSeasonWatched()
                         actionsOpen = false
@@ -593,7 +578,7 @@ private fun MetaRow(details: CatalogDetails, state: DetailsUiState.Content) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         item.rating?.takeIf { it > 0f }?.let {
             Text(
-                text = localizedStringResource(StringsR.string.details_rating, (it * 10).toInt()),
+                text = localizedStringResource(StringsR.string.details_rating, it),
                 color = Green,
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
             )

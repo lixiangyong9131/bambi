@@ -73,11 +73,6 @@ internal fun DetailsActions(
     onToggleFollowing: () -> Unit,
     onRate: (TraktRatingTarget) -> Unit,
     onRandomEpisode: () -> Unit,
-    skipEnabled: Boolean,
-    skipIntroSec: Int,
-    skipOutroSec: Int,
-    onSkipConfig: (Boolean, Int, Int) -> Unit,
-    onOpenSkipSettings: () -> Unit,
     downloads: List<Download>,
     onDownload: (List<Episode>, DownloadQuality) -> Unit,
     onDownloadAction: (Download) -> Unit,
@@ -162,13 +157,6 @@ internal fun DetailsActions(
             if (state.details.seasons.isNotEmpty()) {
                 MoreRow(localizedStringResource(StringsR.string.details_random_episode), AppIcons.Bolt, onRandomEpisode)
             }
-            MoreRow(
-                text = localizedStringResource(StringsR.string.details_skip_settings),
-                icon = AppIcons.Bolt,
-                detail = if (skipEnabled) localizedStringResource(StringsR.string.details_skip_enable) else null,
-                highlighted = skipEnabled,
-                onClick = onOpenSkipSettings,
-            )
         } else {
             val watched = state.mainProgress?.isWatched == true
             MoreRow(

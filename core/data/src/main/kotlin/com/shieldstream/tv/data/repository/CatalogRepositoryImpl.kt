@@ -232,7 +232,7 @@ class CatalogRepositoryImpl @Inject constructor(
             RowSpec("m_now", texts.get(StringsR.string.data_now_in_theaters)) { page -> tmdb.nowPlayingMovies(key, page = page).results.map { it.toCatalogItem() } },
             RowSpec("m_action", texts.get(StringsR.string.data_action)) { page -> tmdb.discoverMovies(key, "28", page = page).results.map { it.toCatalogItem() } },
             RowSpec("m_scifi", texts.get(StringsR.string.data_sci_fi)) { page -> tmdb.discoverMovies(key, "878", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("m_thriller", "Thriller") { page -> tmdb.discoverMovies(key, "53", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("m_thriller", texts.get(StringsR.string.category_thrillers)) { page -> tmdb.discoverMovies(key, "53", page = page).results.map { it.toCatalogItem() } },
             RowSpec("m_horror", texts.get(StringsR.string.data_horror)) { page -> tmdb.discoverMovies(key, "27", page = page).results.map { it.toCatalogItem() } },
             RowSpec("m_comedy", texts.get(StringsR.string.data_comedies)) { page -> tmdb.discoverMovies(key, "35", page = page).results.map { it.toCatalogItem() } },
             RowSpec("m_animation", texts.get(StringsR.string.data_animation)) { page -> tmdb.discoverMovies(key, "16", page = page).results.map { it.toCatalogItem() } },
@@ -241,7 +241,7 @@ class CatalogRepositoryImpl @Inject constructor(
         HomeFilter.TV -> listOf(
             RowSpec("t_top10", texts.get(StringsR.string.data_top_10_tv_shows_week), RowStyle.TOP10) { page -> tmdb.trendingTv(key, page = page).results.map { it.toCatalogItem() } },
             RowSpec("t_popular", texts.get(StringsR.string.data_popular)) { page -> tmdb.popularTv(key, page = page).results.map { it.toCatalogItem() } },
-            RowSpec("t_drama", "Dramas") { page -> tmdb.discoverTv(key, "18", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("t_drama", texts.get(StringsR.string.category_dramas)) { page -> tmdb.discoverTv(key, "18", page = page).results.map { it.toCatalogItem() } },
             RowSpec("t_crime", texts.get(StringsR.string.data_crime)) { page -> tmdb.discoverTv(key, "80", page = page).results.map { it.toCatalogItem() } },
             RowSpec("t_scifi", texts.get(StringsR.string.data_sci_fi_fantasy)) { page -> tmdb.discoverTv(key, "10765", page = page).results.map { it.toCatalogItem() } },
             RowSpec("t_action", texts.get(StringsR.string.data_action_adventure)) { page -> tmdb.discoverTv(key, "10759", page = page).results.map { it.toCatalogItem() } },

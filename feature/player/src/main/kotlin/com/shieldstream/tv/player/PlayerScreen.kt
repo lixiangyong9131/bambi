@@ -59,6 +59,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -86,6 +87,7 @@ import androidx.media3.ui.PlayerView
 import com.shieldstream.tv.ui.component.AppIcons
 import com.shieldstream.tv.ui.component.PlaybackMediaBadges
 import com.shieldstream.tv.ui.component.onBackKey
+import com.shieldstream.tv.ui.component.tvClickable
 import com.shieldstream.tv.ui.theme.AppColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -116,6 +118,7 @@ fun PlayerScreen(
     val nextUp by viewModel.nextUp.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val skipPrompt by viewModel.skipPrompt.collectAsStateWithLifecycle()
+    val skipCfg by viewModel.skipConfig.collectAsStateWithLifecycle()
     val texts = rememberTexts()
     LaunchedEffect(Unit) { viewModel.goNext.collect { onBack() } }
     LaunchedEffect(Unit) { viewModel.backToSources.collect { onBack() } }
@@ -234,7 +237,11 @@ fun PlayerScreen(
     }
 
     val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(tracksOpen) { if (!tracksOpen) runCatching { focusRequester.requestFocus() } }
+    val skipIntroFocus = remember { FocusRequester() }
+    var skipBarFocused by remember { mutableStateOf(false) }
+    LaunchedEffect(tracksOpen) {
+        if (!tracksOpen) { skipBarFocused = false; runCatching { focusRequester.requestFocus() } }
+    }
 
     val skipTarget = (skipPrompt as? SkipPromptUiState.Showing)?.targetMs
     var skipExpired by remember { mutableStateOf(false) }
@@ -331,6 +338,9 @@ fun PlayerScreen(
                 else -> Unit
             }
         }
+        // Modified build: when a bottom skip button has focus, let OK reach its click handler
+        // instead of toggling playback here.
+        if (okKey && skipBarFocused && scrubMs == null) return false
         return when (event.key) {
             Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.MediaPlayPause, Key.Spacebar -> {
                 if (p.isPlaying) p.pause() else p.play()
@@ -357,13 +367,24 @@ fun PlayerScreen(
                 }
                 true
             }
-            Key.DirectionDown, Key.Menu, Key.Captions -> {
-                if (controlsVisible || event.key != Key.DirectionDown) {
+            Key.DirectionDown -> {
+                if (controlsVisible && !skipBarFocused && state == PlayerUiState.Playing) {
+                    // Modified build: first Down focuses the bottom skip buttons (focus + OK to set).
+                    skipBarFocused = true
+                    runCatching { skipIntroFocus.requestFocus() }
+                    showControls()
+                } else {
+                    controlsVisible = false
+                    skipBarFocused = false
+                    tracksOpen = true
+                }
+                true
+            }
+            Key.Menu, Key.Captions -> {
+                if (controlsVisible) {
                     controlsVisible = false
                     tracksOpen = true
-                } else {
-                    showControls()
-                }
+                } else showControls()
                 true
             }
             Key.DirectionUp, Key.Info -> { showControls(); true }
@@ -455,6 +476,14 @@ fun PlayerScreen(
                     scrubMs = scrubMs,
                     thumbs = thumbs,
                     thumbnailsEnabled = thumbnailsEnabled,
+                    introSec = skipCfg.introSec,
+                    outroSec = skipCfg.outroSec,
+                    skipEnabled = skipCfg.enabled,
+                    onSetIntro = { player?.let { viewModel.setIntroPoint((it.currentPosition / 1000).toInt()) } },
+                    onSetOutro = { player?.let { viewModel.setOutroPoint(((it.duration - it.currentPosition) / 1000).toInt().coerceAtLeast(0)) } },
+                    onToggleSkip = viewModel::toggleSkip,
+                    skipIntroFocus = skipIntroFocus,
+                    onBottomFocused = { skipBarFocused = true },
                 )
             }
             seekFeedback?.let {
@@ -626,6 +655,14 @@ private fun ControlsOverlay(
     scrubMs: Long?,
     thumbs: SeekThumbnails?,
     thumbnailsEnabled: Boolean,
+    introSec: Int = 0,
+    outroSec: Int = 0,
+    skipEnabled: Boolean = false,
+    onSetIntro: () -> Unit = {},
+    onSetOutro: () -> Unit = {},
+    onToggleSkip: () -> Unit = {},
+    skipIntroFocus: FocusRequester? = null,
+    onBottomFocused: () -> Unit = {},
 ) {
     val shownMs = scrubMs ?: playback.positionMs
     Box(Modifier.fillMaxSize()) {
@@ -694,7 +731,64 @@ private fun ControlsOverlay(
                     style = MaterialTheme.typography.titleMedium,
                 )
             }
+            // Modified build: bottom quick-settings for intro/outro skip - focus + OK sets the point.
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SkipSettingButton(
+                    label = localizedStringResource(StringsR.string.player_set_intro_point),
+                    value = if (introSec > 0) "${introSec}s" else "—",
+                    active = skipEnabled && introSec > 0,
+                    onClick = onSetIntro,
+                    focusRequester = skipIntroFocus,
+                    onFocused = onBottomFocused,
+                )
+                Spacer(Modifier.width(12.dp))
+                SkipSettingButton(
+                    label = localizedStringResource(StringsR.string.player_set_outro_point),
+                    value = if (outroSec > 0) "${outroSec}s" else "—",
+                    active = skipEnabled && outroSec > 0,
+                    onClick = onSetOutro,
+                )
+                Spacer(Modifier.width(12.dp))
+                SkipSettingButton(
+                    label = localizedStringResource(StringsR.string.details_skip_enable),
+                    value = if (skipEnabled) "ON" else "OFF",
+                    active = skipEnabled,
+                    onClick = onToggleSkip,
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun SkipSettingButton(
+    label: String,
+    value: String,
+    active: Boolean,
+    onClick: () -> Unit,
+    focusRequester: FocusRequester? = null,
+    onFocused: () -> Unit = {},
+) {
+    var focused by remember { mutableStateOf(false) }
+    val bg = when {
+        focused -> Color.White
+        active -> Color.White.copy(alpha = 0.25f)
+        else -> Color.White.copy(alpha = 0.10f)
+    }
+    val fg = if (focused) Color.Black else Color.White
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(bg)
+            .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocused() }
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .tvClickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    ) {
+        Text(label, color = fg, style = MaterialTheme.typography.labelSmall)
+        Text(value, color = fg, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold))
     }
 }
 
