@@ -31,6 +31,14 @@ data class PlaybackRequest(
 )
 
 class SelectedContentHolder {
+    // Modified build: remember the last playable direct URL per progress key so
+    // "continue watching" can start instantly without waiting for source lookup.
+    private val lastDirectUrls = java.util.concurrent.ConcurrentHashMap<String, String>()
+    fun rememberDirectUrl(key: String?, url: String?) {
+        if (!key.isNullOrBlank() && !url.isNullOrBlank()) lastDirectUrls[key] = url
+    }
+    fun lastDirectUrl(key: String?): String? = key?.let { lastDirectUrls[it] }
+
     @Volatile private var pickedSourceFailure: String? = null
 
     /** El reproductor avisa de que la fuente elegida a mano no funcionó (con el motivo) antes de cerrarse. */

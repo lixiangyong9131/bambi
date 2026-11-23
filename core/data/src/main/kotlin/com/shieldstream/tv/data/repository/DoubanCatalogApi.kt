@@ -154,9 +154,15 @@ class DoubanCatalogApi @Inject constructor(
         // otherwise a pinyin query finds no CMS hits and every suggestion gets filtered out.
         val suggestions = runCatching { api.suggest(query) }.getOrDefault(emptyList())
         val rawHits = runCatching { cms.searchTitles(query) }.getOrDefault(emptyList()).toMutableList()
-        if (query.matches(Regex("(?i)^[a-z\\s]+$")) && rawHits.isEmpty()) {
-            for (sug in suggestions.take(4)) {
-                val cn = sug.title.ifBlank { continue }
+        if (query.matches(Regex("(?i)^[a-z\\s]+$"))) {
+            val cnTitles = LinkedHashSet<String>()
+            suggestions.take(4).forEach { if (it.title.isNotBlank()) cnTitles += it.title }
+            // Modified build: local pinyin-initials match (e.g. xxrj -> 小巷人家) as a fallback
+            // when Douban suggest is rate-limited or has no entry for the abbreviation.
+            if (rawHits.isEmpty()) {
+                cnTitles += runCatching { cms.searchByInitials(query) }.getOrDefault(emptyList())
+            }
+            for (cn in cnTitles) {
                 rawHits += runCatching { cms.searchTitles(cn) }.getOrDefault(emptyList())
             }
         }

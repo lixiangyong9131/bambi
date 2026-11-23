@@ -498,10 +498,41 @@ class DetailsViewModel @Inject constructor(
         }
     }
 
+    /** Continue-watching fast path: play the remembered direct URL with zero lookup/probing. */
+    private fun tryPlayCached(c: DetailsUiState.Content, fromStart: Boolean): Boolean {
+        if (!holder.details.value?.playImmediately.orDefaultFalse()) return false
+        val ep = c.selectedEpisode?.takeIf { c.isSeries }
+        val key = downloadKey(c, ep) ?: return false
+        val url = holder.lastDirectUrl(key) ?: return false
+        val savedId = watchProgress.get(key)?.sourceId
+        val cached = com.shieldstream.tv.model.StreamSource(
+            id = savedId ?: "cached:$key",
+            title = c.details.item.title,
+            infoHash = "cached-$key",
+            fileIdx = null,
+            magnet = "",
+            quality = com.shieldstream.tv.model.Quality.FHD_1080,
+            hdrType = com.shieldstream.tv.model.HdrType.SDR,
+            sizeBytes = 0L,
+            seeders = null,
+            isCached = true,
+            directUrl = url,
+            fileName = c.details.item.title,
+            languages = listOf("ES"),
+            provider = "缓存",
+        )
+        stopProbingForPlayback()
+        handoff(c, ep, key, fromStart, listOf(cached))
+        return true
+    }
+
+    private fun Boolean?.orDefaultFalse(): Boolean = this ?: false
+
     fun play(fromStart: Boolean = false) {
         stopProbingForPlayback()
         val c = content() ?: return
         pendingFromStart = fromStart
+        if (tryPlayCached(c, fromStart)) return
         if (c.isSeries) {
             val ep = c.selectedEpisode ?: return
             playEpisode(ep, fromStart)
@@ -527,6 +558,7 @@ class DetailsViewModel @Inject constructor(
         stopProbingForPlayback()
         val c = content() ?: return
         pendingFromStart = fromStart
+        if (tryPlayCached(c.copy(selectedEpisode = episode), fromStart)) return
         if (playDownloaded(c.copy(selectedEpisode = episode), episode, fromStart)) {
             updateContent { it.copy(selectedEpisode = episode) }
             return
@@ -876,6 +908,8 @@ class DetailsViewModel @Inject constructor(
             episode = episode?.number,
         )
         updateContent { it.copy(pendingPlay = false) }
+        // Modified build: remember the first playable direct URL for instant "continue watching".
+        holder.rememberDirectUrl(key, queue.firstOrNull()?.directUrl)
         trace("player_handoff", "queue=${queue.size}")
         holder.playQueue(
             queue,

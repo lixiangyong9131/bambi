@@ -90,6 +90,7 @@ coil = { group = "io.coil-kt", name = "coil", version.ref = "coil" }
 
 androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+tinypinyin = { group = "com.github.promeg", name = "tinypinyin", version = "2.0.0" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

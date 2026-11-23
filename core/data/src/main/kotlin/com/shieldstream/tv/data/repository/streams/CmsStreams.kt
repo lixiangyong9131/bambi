@@ -4,6 +4,7 @@ import com.shieldstream.tv.model.CatalogItem
 import com.shieldstream.tv.model.HdrType
 import com.shieldstream.tv.model.Quality
 import com.shieldstream.tv.model.StreamSource
+import com.github.promeg.pinyinhelper.Pinyin
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withContext
@@ -81,6 +82,28 @@ class CmsStreams @Inject constructor(
 
     /** Titles that exist in the CMS catalog (has playable resources). Used for search. */
     data class Hit(val title: String, val id: String, val type: String, val remarks: String)
+
+    /** Match pinyin initials / full pinyin (xxrj -> title) against recently updated CMS titles. */
+    suspend fun searchByInitials(query: String): List<String> {
+        val q = query.lowercase().replace(" ", "")
+        if (q.length < 2 || !q.all { it in 'a'..'z' }) return emptyList()
+        val pool = LinkedHashSet<String>()
+        val base = SEARCH_SOURCES.firstOrNull() ?: return emptyList()
+        for (pg in 1..5) {
+            val rows = runCatching { parseList(get("$base?ac=vod&pg=$pg")) }.getOrDefault(null) ?: break
+            if (rows.isEmpty()) break
+            rows.forEach { r -> pool += clean(str(r, "vod_name")) }
+        }
+        val out = mutableListOf<String>()
+        for (title in pool) {
+            if (title.isBlank()) continue
+            val syllables = title.map { Pinyin.toPinyin(it).lowercase() }.filter { it.isNotBlank() }
+            val pinyin = syllables.joinToString("")
+            val initials = syllables.map { it.first() }.joinToString("")
+            if (initials == q || initials.startsWith(q) || pinyin.startsWith(q) || pinyin.contains(q)) out += title
+        }
+        return out.take(8)
+    }
 
     suspend fun searchTitles(query: String): List<Hit> {
         if (query.isBlank()) return emptyList()
