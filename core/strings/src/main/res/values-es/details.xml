@@ -44,7 +44,7 @@
     <string name="details_episode_play">Reproducir episodio</string>
     <string name="details_hold_ok_for_episode_options">Mantén OK en un episodio para ver opciones</string>
     <string name="details_remaining">Quedan %1$s</string>
-    <string name="details_rating">★ %1$.1f / 10</string>
+    <string name="details_rating">★ %1$.1f</string>
     <string name="details_rate_movie">Valorar película</string>
     <string name="details_rate_show">Valorar serie</string>
     <string name="details_rate_episode">Valorar episodio %1$s</string>
@@ -93,4 +93,5 @@
     <string name="details_more_series">Serie</string>
     <string name="details_plays_on_play">▶ SE REPRODUCE AL PULSAR REPRODUCIR</string>
     <string name="details_picked_source_failed">Esa fuente no funciona: %1$s Elige otra.</string>
+    <string name="details_starring">主演：%1$s</string>
 </resources>
