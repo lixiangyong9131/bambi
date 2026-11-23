@@ -33,7 +33,18 @@ class CmsStreams @Inject constructor(
         private const val BFZY = "https://bfzyapi.com/api.php/provide/vod"               // 暴风资源
         private const val API = "http://ffzy5.tv/api.php/provide/vod"                     // 非凡影视
         private const val TAOPIAN = "https://taopianapi.com/cjapi/mc/vod/json.html"       // 淘片
-        private val SOURCES = listOf(API, DYTT, BFZY, TAOPIAN)  // ffzy first: the only reachable source on this box
+        // Modified build: extra CMS sites, verified reachable with direct m3u8 streams.
+        private const val IQIYI = "https://www.iqiyizyapi.com/api.php/provide/vod"        // iQIYI资源
+        private const val MODU = "https://www.mdzyapi.com/api.php/provide/vod"            // 魔都资源
+        // Pair = display name to base URL. Ordered by reliability/speed.
+        private val SOURCES = listOf(
+            "非凡影视" to API,
+            "iQIYI" to IQIYI,
+            "魔都资源" to MODU,
+            "电影天堂" to DYTT,
+            "暴风资源" to BFZY,
+            "淘片" to TAOPIAN,
+        )
         // Search stays on the fast source (ffzy) so typing results are instant.
         private val SEARCH_SOURCES = listOf(API, TAOPIAN)
         // Short timeout so an unreachable source is skipped fast instead of hanging playback.
@@ -146,17 +157,25 @@ class CmsStreams @Inject constructor(
         val title = clean(item.title)
         android.util.Log.i("CmsStream", "find(title=${item.title}, clean=$title)")
         if (title.isBlank()) return emptyList()
-        // Try the fast source first, then backup.
-        for (base in SOURCES) {
-            val sources = searchAndBuild(base, title, episode)
-            android.util.Log.i("CmsStream", "$base -> ${sources.size} sources")
-            if (sources.isNotEmpty()) return sources
+        // Modified build: collect a playable line from EVERY reachable CMS site so the source
+        // panel offers multiple alternatives instead of only the first site's single line.
+        val all = mutableListOf<StreamSource>()
+        val seenUrls = HashSet<String>()
+        for ((label, base) in SOURCES) {
+            val sources = searchAndBuild(base, title, episode, label)
+            if (sources.isNotEmpty()) {
+                for (src in sources) {
+                    val key = src.directUrl.orEmpty()
+                    if (key.isNotBlank() && seenUrls.add(key)) all += src
+                }
+            }
+            android.util.Log.i("CmsStream", "$label -> ${sources.size} sources")
         }
-        android.util.Log.w("CmsStream", "NO direct url found for $title")
-        return emptyList()
+        android.util.Log.i("CmsStream", "total ${all.size} CMS lines for $title")
+        return all
     }
 
-    private fun searchAndBuild(base: String, title: String, episode: com.shieldstream.tv.model.Episode?): List<StreamSource> {
+    private fun searchAndBuild(base: String, title: String, episode: com.shieldstream.tv.model.Episode?, siteLabel: String = "CMS"): List<StreamSource> {
         val searchUrl = "$base?ac=vod&wd=" + URLEncoder.encode(title, "UTF-8")
         val body = get(searchUrl)
         android.util.Log.i("CmsStream", "search url=" + searchUrl + " body=" + body?.take(120))
@@ -178,11 +197,11 @@ class CmsStreams @Inject constructor(
         val name = str(v, "vod_name").ifBlank { title }
         return listOf(
             StreamSource(
-                id = "cms:$vid",
+                id = "cms:${siteLabel}:$vid",
                 title = name,
                 // Modified build: unique infoHash so distinctBy() doesn't collapse CMS sources,
                 // and an "ES" language tag so the "Spanish only" source filter doesn't drop them.
-                infoHash = "cms-$vid",
+                infoHash = "cms-$siteLabel-$vid",
                 fileIdx = null,
                 magnet = "",
                 quality = Quality.FHD_1080,
@@ -193,7 +212,7 @@ class CmsStreams @Inject constructor(
                 directUrl = url,
                 fileName = name,
                 languages = listOf("ES"),
-                provider = "CMS",
+                provider = "CMS·$siteLabel",
             )
         )
     }
