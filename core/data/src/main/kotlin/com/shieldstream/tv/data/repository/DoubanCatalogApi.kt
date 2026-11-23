@@ -149,11 +149,19 @@ class DoubanCatalogApi @Inject constructor(
 
     private suspend fun searchDouban(query: String): TmdbSearchResponse {
         if (query.isBlank()) return TmdbSearchResponse()
-        // Search via the CMS (Moontv/Feifei) catalog: only titles that actually have playable
-        // resources are returned. Douban suggest supplies the poster + a detail-compatible id.
-        val hits = runCatching { cms.searchTitles(query) }.getOrDefault(emptyList())
-        android.util.Log.i("DoubanHome", "CMS search '$query' -> ${hits.size} hits")
+        // Modified build: the on-screen keyboard types pinyin (letters). Douban suggest understands
+        // pinyin and returns the Chinese title, so re-search the CMS with that Chinese title -
+        // otherwise a pinyin query finds no CMS hits and every suggestion gets filtered out.
         val suggestions = runCatching { api.suggest(query) }.getOrDefault(emptyList())
+        val rawHits = runCatching { cms.searchTitles(query) }.getOrDefault(emptyList()).toMutableList()
+        if (query.matches(Regex("(?i)^[a-z\\s]+$")) && rawHits.isEmpty()) {
+            for (sug in suggestions.take(4)) {
+                val cn = sug.title.ifBlank { continue }
+                rawHits += runCatching { cms.searchTitles(cn) }.getOrDefault(emptyList())
+            }
+        }
+        val hits = rawHits.distinctBy { it.title }
+        android.util.Log.i("DoubanHome", "CMS search '$query' -> ${hits.size} hits (suggest ${suggestions.size})")
 
         fun matches(cmsTitle: String, doubanTitle: String): Boolean {
             val a = cleanTitle(cmsTitle).replace(" ", "")

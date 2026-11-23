@@ -341,7 +341,8 @@ private fun OnScreenKeyboard(
                 },
                 modifier = Modifier.focusRequester(layoutKeyRequester),
             ) {
-                Text(if (qwerty) "ABC" else "QWERTY", style = MaterialTheme.typography.bodyMedium, color = it)
+                // Modified build: label the layouts as 拼音/英文 so the switch is obvious.
+                Text(if (qwerty) "拼音" else "英文", style = MaterialTheme.typography.bodyMedium, color = it)
             }
             KeyButton(width = fullWidth - 88.dp - 4.dp, onClick = onSystemKeyboard) {
                 Text(localizedStringResource(StringsR.string.home_system_keyboard), style = MaterialTheme.typography.bodyMedium, color = it, maxLines = 1)

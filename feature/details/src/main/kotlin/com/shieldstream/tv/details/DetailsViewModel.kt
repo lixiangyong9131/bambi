@@ -78,6 +78,8 @@ class DetailsViewModel @Inject constructor(
 
     /** Modified build: ongoing source-probe job; cancelled as soon as playback starts. */
     private var probeJob: kotlinx.coroutines.Job? = null
+    /** Once the user asks to play, stop probing for good (until a new item is opened). */
+    private var playbackRequested: Boolean = false
 
     /** Modified build: per-show intro/outro skip config, refreshed when the item or settings change. */
     val skipConfig: StateFlow<com.shieldstream.tv.domain.ManualSkipRepository.Config> =
@@ -310,6 +312,7 @@ class DetailsViewModel @Inject constructor(
     }
 
     private fun load() {
+        playbackRequested = false
         val request = holder.details.value
         if (request == null) {
             _uiState.value = DetailsUiState.Error(texts.get(StringsR.string.details_no_title_selected))
@@ -496,6 +499,7 @@ class DetailsViewModel @Inject constructor(
     }
 
     fun play(fromStart: Boolean = false) {
+        stopProbingForPlayback()
         val c = content() ?: return
         pendingFromStart = fromStart
         if (c.isSeries) {
@@ -520,6 +524,7 @@ class DetailsViewModel @Inject constructor(
     }
 
     fun playEpisode(episode: Episode, fromStart: Boolean = false) {
+        stopProbingForPlayback()
         val c = content() ?: return
         pendingFromStart = fromStart
         if (playDownloaded(c.copy(selectedEpisode = episode), episode, fromStart)) {
@@ -553,6 +558,7 @@ class DetailsViewModel @Inject constructor(
      * y respetan tus filtros, no simplemente a la siguiente de la lista.
      */
     fun playSource(source: StreamSource) {
+        stopProbingForPlayback()
         val c = content() ?: return
         val ready = c.sources as? SourcesState.Ready ?: return
         val episode = c.selectedEpisode?.takeIf { c.isSeries }
@@ -707,6 +713,7 @@ class DetailsViewModel @Inject constructor(
      * Stops early if playback starts (see cancelProbing).
      */
     private fun startProbing(sources: List<com.shieldstream.tv.model.StreamSource>) {
+        if (playbackRequested) return
         probeJob?.cancel()
         // Only direct-playable sources can be probed without a debrid service.
         val candidates = sources.filter { it.directUrl?.startsWith("http") == true }.distinctBy { it.id }.take(12)
@@ -729,6 +736,12 @@ class DetailsViewModel @Inject constructor(
         }
     }
 
+    /** Modified build: user asked to play - cancel probing and stop future probes. */
+    private fun stopProbingForPlayback() {
+        playbackRequested = true
+        cancelProbing()
+    }
+
     /** Stop probing the moment the user starts playback. */
     private fun cancelProbing() {
         probeJob?.cancel()
@@ -739,8 +752,9 @@ class DetailsViewModel @Inject constructor(
         val c = content() ?: return
         if (!c.pendingPlay || !detailsLoaded) return
         val ready = c.sources as? SourcesState.Ready ?: return
-        val enoughCached = c.eligibleSources(ready.sources).count { it.isCached } >= MIN_CACHED_TO_START
-        if (!enoughCached && ready.pending.isNotEmpty()) return
+        // Modified build: start immediately once any source exists. A previously chosen source
+        // is enough on its own - don't wait for probing / extra cached sources.
+        if (ready.sources.isEmpty()) return
         updateContent { it.copy(pendingPlay = false) }
         startPlayback(ready.sources, startIndex = 0, fromStart = pendingFromStart)
     }
