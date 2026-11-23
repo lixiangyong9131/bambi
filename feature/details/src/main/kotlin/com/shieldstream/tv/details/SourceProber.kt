@@ -53,32 +53,32 @@ class SourceProber @Inject constructor() {
         val url = source.directUrl?.takeIf { it.startsWith("http") }
             ?: return@withContext Result(null, "", "", false)
         val started = System.nanoTime()
-        var pingMs: Long? = null
         try {
-            // 1) HEAD latency - cheap reachability check (MoonTV does the same).
-            val head = Request.Builder().url(url).head().build()
-            client.newCall(head).execute().use { resp ->
-                val code = resp.code
-                if (code >= 400) return@withContext Result(null, "", "", false)
-            }
-            pingMs = (System.nanoTime() - started) / 1_000_000L
-
-            // 2) GET the manifest / first bytes: resolve quality and rough speed.
+            // Modified build: probe with GET only. Many CMS m3u8 CDNs reject HEAD (502/405)
+            // while serving GET fine - a HEAD failure must NOT mark a good source unusable.
             val get = Request.Builder().url(url).get().build()
             client.newCall(get).execute().use { resp ->
-                val body = resp.body ?: return@withContext Result(pingMs, "", "", false)
+                if (resp.code >= 400) return@withContext Result(null, "", "", false)
+                val body = resp.body ?: return@withContext Result(null, "", "", false)
                 val responseSource = body.source()
                 // Read up to 64 KB - enough for an m3u8 master playlist or an mp4 header.
                 val buffer = okio.Buffer()
                 var total = 0L
+                var firstByteMs: Long? = null
                 repeat(64) {
                     if (responseSource.exhausted()) return@repeat
                     val read = responseSource.read(buffer, 4096)
                     if (read <= 0) return@repeat
+                    if (firstByteMs == null) firstByteMs = (System.nanoTime() - started) / 1_000_000L
                     total += read
                 }
+                if (total <= 0L) return@withContext Result(null, "", "", false)
                 val elapsedMs = ((System.nanoTime() - started) / 1_000_000L).coerceAtLeast(1L)
                 val text = buffer.clone().readUtf8()
+                // A playable manifest must start with #EXTM3U (or be a direct media file).
+                val isMedia = text.startsWith("#EXTM3U", ignoreCase = true) ||
+                    url.contains(".mp4", true) || url.contains(".m3u8", true)
+                if (!isMedia) return@withContext Result(null, "", "", false)
                 val quality = qualityOf(text, url)
                 val bytesPerSec = total * 1000L / elapsedMs
                 val speed = when {
@@ -86,10 +86,10 @@ class SourceProber @Inject constructor() {
                     bytesPerSec >= 1024 -> String.format(java.util.Locale.US, "%d KB/s", bytesPerSec / 1024)
                     else -> ""
                 }
-                Result(pingMs, quality, speed, true)
+                Result(firstByteMs, quality, speed, true)
             }
         } catch (t: Throwable) {
-            Result(pingMs, "", "", false)
+            Result(null, "", "", false)
         }
     }
 

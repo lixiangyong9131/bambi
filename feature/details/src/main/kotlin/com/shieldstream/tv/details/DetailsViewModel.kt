@@ -181,7 +181,6 @@ class DetailsViewModel @Inject constructor(
 
     /** Un episodio al azar de toda la serie (de las temporadas ya emitidas) y a reproducir. */
     fun playRandomEpisode() {
-        cancelProbing()
         val c = content() ?: return
         if (!c.isSeries) return
         viewModelScope.launch {
@@ -465,6 +464,13 @@ class DetailsViewModel @Inject constructor(
                             selectedEpisode = selected,
                         )
                     }
+                    // Modified build: start source lookup + probing as soon as the episode
+                    // is selected on entering details, without waiting for a play click.
+                    val selectedNow = (content() as? DetailsUiState.Content)?.selectedEpisode
+                    if (episodeToPlay == null && selectedNow != null &&
+                        content()?.sources == SourcesState.Idle && !prefetchSources) {
+                        loadSources(selectedNow)
+                    }
                     episodeToPlay?.let { episode ->
                         if (content()?.sources == SourcesState.Idle) {
                             playEpisode(episode)
@@ -490,7 +496,6 @@ class DetailsViewModel @Inject constructor(
     }
 
     fun play(fromStart: Boolean = false) {
-        cancelProbing()
         val c = content() ?: return
         pendingFromStart = fromStart
         if (c.isSeries) {
@@ -515,7 +520,6 @@ class DetailsViewModel @Inject constructor(
     }
 
     fun playEpisode(episode: Episode, fromStart: Boolean = false) {
-        cancelProbing()
         val c = content() ?: return
         pendingFromStart = fromStart
         if (playDownloaded(c.copy(selectedEpisode = episode), episode, fromStart)) {
@@ -549,7 +553,6 @@ class DetailsViewModel @Inject constructor(
      * y respetan tus filtros, no simplemente a la siguiente de la lista.
      */
     fun playSource(source: StreamSource) {
-        cancelProbing()
         val c = content() ?: return
         val ready = c.sources as? SourcesState.Ready ?: return
         val episode = c.selectedEpisode?.takeIf { c.isSeries }
@@ -619,6 +622,8 @@ class DetailsViewModel @Inject constructor(
     }
 
     fun onScreenHidden() {
+        // Modified build: stop probing when leaving the details screen (playback handoff or back).
+        cancelProbing()
         if (content()?.pendingPlay == true) updateContent { it.copy(pendingPlay = false) }
     }
 
