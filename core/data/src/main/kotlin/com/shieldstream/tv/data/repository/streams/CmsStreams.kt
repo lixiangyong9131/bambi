@@ -36,10 +36,17 @@ class CmsStreams @Inject constructor(
         // Modified build: extra CMS sites, verified reachable with direct m3u8 streams.
         private const val IQIYI = "https://www.iqiyizyapi.com/api.php/provide/vod"        // iQIYI资源
         private const val MODU = "https://www.mdzyapi.com/api.php/provide/vod"            // 魔都资源
-        // Pair = display name to base URL. Ordered by reliability/speed.
+        // Modified build: newly verified sources (both titles -> 29-30 valid m3u8 lines).
+        private const val RYI = "http://www.ryzyw.com/api.php/provide/vod"                // 如意资源(备域名)
+        private const val JISU = "https://www.jisuzy.com/api.php/provide/vod"             // 速播资源(备域名)
+        private const val HONGNIU = "https://www.hongniuzy2.com/api.php/provide/vod"      // 红牛资源
+        // Pair = display name to base URL. Ordered by reliability/speed; verified sources first.
         private val SOURCES = listOf(
             "非凡影视" to API,
             "iQIYI" to IQIYI,
+            "红牛资源" to HONGNIU,
+            "如意资源" to RYI,
+            "速播资源" to JISU,
             "魔都资源" to MODU,
             "电影天堂" to DYTT,
             "暴风资源" to BFZY,
