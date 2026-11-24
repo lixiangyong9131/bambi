@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -51,6 +53,9 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.font.FontWeight
@@ -72,7 +77,9 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 private const val KEYS = "abcdefghijklmnopqrstuvwxyz1234567890"
 private const val KEY_COLUMNS = 6
 
-private val QWERTY_ROWS = listOf("1234567890", "qwertyuiop", "asdfghjklñ", "zxcvbnm")
+// 5 列大键位，遥控器上下左右移动更少、更好按。
+private val PINYIN_ROWS = listOf("qwert", "yuiop", "asdfg", "hjklz", "xcvbn", "m1234")
+private val QWERTY_ROWS = listOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
 
 @Composable
 fun SearchScreen(
@@ -103,6 +110,8 @@ fun SearchScreen(
         )
     }
     val qwerty by viewModel.qwerty.collectAsStateWithLifecycle()
+    val composing by viewModel.composing.collectAsStateWithLifecycle()
+    val candidates by viewModel.candidates.collectAsStateWithLifecycle()
 
     val firstKey = remember { FocusRequester() }
     val layoutKey = remember { FocusRequester() }
@@ -120,12 +129,36 @@ fun SearchScreen(
         if (!backOnCard) runCatching { firstKey.requestFocus() }
     }
 
+    // 预热拼音字典（约 1MB / 4.7 万词条），在后台线程解析，避免首次按键卡顿。
+    val context = androidx.compose.ui.platform.LocalContext.current
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            PinyinEngine.ensureLoaded(context)
+        }
+    }
+
     val keyboard = LocalSoftwareKeyboardController.current
     val fieldRequester = remember { FocusRequester() }
     var systemKeyboard by remember { mutableStateOf(false) }
     var field by remember { mutableStateOf(TextFieldValue(query, TextRange(query.length))) }
-    LaunchedEffect(query, systemKeyboard) {
-        if (!systemKeyboard && field.text != query) field = TextFieldValue(query, TextRange(query.length))
+
+    // In on-screen IME mode the field mirrors "committed text + pinyin being composed".
+    // The composing part is tinted so the user can see it is not committed yet.
+    val display = remember(query, composing, systemKeyboard) {
+        if (systemKeyboard) return@remember field
+        val text = query + composing
+        val styled = buildAnnotatedString {
+            append(query)
+            if (composing.isNotEmpty()) {
+                withStyle(SpanStyle(color = Color(0xFF7FD4FF))) { append(composing) }
+            }
+        }
+        TextFieldValue(styled, TextRange(text.length))
+    }
+    LaunchedEffect(query, composing, systemKeyboard) {
+        if (!systemKeyboard && field.text != query + composing) {
+            field = TextFieldValue(query + composing, TextRange((query + composing).length))
+        }
     }
     LaunchedEffect(systemKeyboard) {
         if (systemKeyboard) {
@@ -161,11 +194,15 @@ fun SearchScreen(
                 Spacer(Modifier.width(10.dp))
                 Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
                     BasicTextField(
-                        value = field,
+                        value = if (systemKeyboard) field else display,
                         onValueChange = {
-                            field = it
-                            viewModel.setQuery(it.text.replace("\n", ""))
+                            if (systemKeyboard) {
+                                field = it
+                                viewModel.setQuery(it.text.replace("\n", ""))
+                            }
                         },
+                        enabled = true,
+                        readOnly = !systemKeyboard,
                         singleLine = true,
                         textStyle = MaterialTheme.typography.titleMedium.copy(color = Color.White),
                         cursorBrush = SolidColor(Color.White),
@@ -194,16 +231,37 @@ fun SearchScreen(
                     }
                 }
             }
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(10.dp))
+            // 候选词条固定在键盘上方，且始终占位：否则候选出现/消失会把按键推上推下，
+            // 遥控器用户点一次 G 再点 Y 就点到别的键上了。
+            if (!qwerty) {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                ) {
+                    itemsIndexed(candidates) { _, cand ->
+                        CandidateChip(text = cand, onClick = { viewModel.commitCandidate(cand) })
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+            }
             OnScreenKeyboard(
                 qwerty = qwerty,
+                composing = composing,
+                candidateCount = if (qwerty) 0 else candidates.size,
                 firstKeyRequester = firstKey,
                 layoutKeyRequester = layoutKey,
-                onChar = viewModel::type,
-                onBackspace = viewModel::backspace,
+                onChar = { c ->
+                    if (qwerty) viewModel.type(c) else viewModel.typeLetter(c)
+                },
+                onBackspace = {
+                    // En modo pinyin, primero borra el buffer; si está vacío, borra la consulta.
+                    if (qwerty || !viewModel.backspaceComposing()) viewModel.backspace()
+                },
                 onClear = viewModel::clear,
                 onToggleLayout = viewModel::toggleKeyboardLayout,
                 onSystemKeyboard = { systemKeyboard = true },
+                onSearch = viewModel::flushComposingToQuery,
             )
         }
 
@@ -292,6 +350,8 @@ fun SearchScreen(
 @Composable
 private fun OnScreenKeyboard(
     qwerty: Boolean,
+    composing: String,
+    candidateCount: Int,
     firstKeyRequester: FocusRequester,
     layoutKeyRequester: FocusRequester,
     onChar: (Char) -> Unit,
@@ -299,6 +359,7 @@ private fun OnScreenKeyboard(
     onClear: () -> Unit,
     onToggleLayout: () -> Unit,
     onSystemKeyboard: () -> Unit,
+    onSearch: () -> Unit,
 ) {
     var toggled by remember { mutableStateOf(false) }
     LaunchedEffect(qwerty) {
@@ -307,53 +368,103 @@ private fun OnScreenKeyboard(
             runCatching { layoutKeyRequester.requestFocus() }
         }
     }
-    val rows = if (qwerty) QWERTY_ROWS else KEYS.chunked(KEY_COLUMNS)
-    val keyWidth = if (qwerty) 36.dp else 42.dp
-    val fullWidth = if (qwerty) 36.dp * 10 + 4.dp * 9 else 42.dp * 6 + 4.dp * 5
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    // 拼音模式 5 列大键位（遥控器好按），英文模式 10 列紧凑排列。
+    val rows = if (qwerty) QWERTY_ROWS else PINYIN_ROWS
+    // 列宽 = 内容区宽度（Column 宽度 - 左右 padding 56dp），按最长一行等分算键宽。
+    val columnWidth = if (qwerty) 452.dp else 300.dp
+    val contentWidth = columnWidth - 56.dp
+    val perRow = rows.first().length
+    val keyGap = if (qwerty) 4.dp else 5.dp
+    val keyWidth = (contentWidth - keyGap * (perRow - 1)) / perRow
+    val fullWidth = keyWidth * perRow + keyGap * (perRow - 1)
+    // 拼音模式 6 行字母 + 候选条 + 2 行功能键要在一屏 1080 里放下，键高缩到 36dp。
+    val keyHeight = if (qwerty) 40.dp else 36.dp
+    Column(verticalArrangement = Arrangement.spacedBy(if (qwerty) 6.dp else 5.dp)) {
         rows.forEachIndexed { rowIndex, rowKeys ->
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(keyGap)) {
                 rowKeys.forEachIndexed { colIndex, c ->
                     val mod = if (rowIndex == 0 && colIndex == 0) Modifier.focusRequester(firstKeyRequester) else Modifier
-                    KeyButton(width = keyWidth, onClick = { onChar(c) }, modifier = mod) {
+                    KeyButton(width = keyWidth, height = keyHeight, onClick = { onChar(c) }, modifier = mod) {
                         Text(c.uppercase(), style = MaterialTheme.typography.titleMedium, color = it)
                     }
                 }
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            KeyButton(width = fullWidth - 42.dp - 88.dp - 8.dp, onClick = { onChar(' ') }) {
+        Row(horizontalArrangement = Arrangement.spacedBy(keyGap)) {
+            val backWidth = keyWidth * 1.0f + keyGap
+            val clearWidth = keyWidth * 1.5f + keyGap
+            KeyButton(width = fullWidth - backWidth - clearWidth - keyGap * 2, height = keyHeight, onClick = { onChar(' ') }) {
                 Text(localizedStringResource(StringsR.string.home_space), style = MaterialTheme.typography.bodyMedium, color = it)
             }
-            KeyButton(width = 42.dp, onClick = onBackspace) {
+            KeyButton(width = backWidth, height = keyHeight, onClick = onBackspace) {
                 Icon(AppIcons.Backspace, contentDescription = localizedStringResource(StringsR.string.home_clear), tint = it, modifier = Modifier.size(20.dp))
             }
-            KeyButton(width = 88.dp, onClick = onClear) {
+            KeyButton(width = clearWidth, height = keyHeight, onClick = onClear) {
                 Text(localizedStringResource(StringsR.string.home_clear), style = MaterialTheme.typography.bodyMedium, color = it)
             }
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(keyGap)) {
+            val sideWidth = fullWidth * 0.38f - keyGap
+            val sysWidth = fullWidth - sideWidth * 2 - keyGap * 2
             KeyButton(
-                width = 88.dp,
+                width = sideWidth,
+                height = keyHeight,
                 onClick = {
                     toggled = true
                     onToggleLayout()
                 },
                 modifier = Modifier.focusRequester(layoutKeyRequester),
             ) {
-                // Modified build: label the layouts as 拼音/英文 so the switch is obvious.
                 Text(if (qwerty) "拼音" else "英文", style = MaterialTheme.typography.bodyMedium, color = it)
             }
-            KeyButton(width = fullWidth - 88.dp - 4.dp, onClick = onSystemKeyboard) {
-                Text(localizedStringResource(StringsR.string.home_system_keyboard), style = MaterialTheme.typography.bodyMedium, color = it, maxLines = 1)
+            KeyButton(width = sideWidth, height = keyHeight, onClick = onSearch) {
+                // 把还在拼音缓冲里的字母落成正文并立即搜索。
+                Text("搜索", style = MaterialTheme.typography.bodyMedium, color = it)
+            }
+            KeyButton(width = sysWidth, height = keyHeight, onClick = onSystemKeyboard) {
+                Text(localizedStringResource(StringsR.string.home_system_keyboard), style = MaterialTheme.typography.bodySmall, color = it, maxLines = 1)
             }
         }
+        // 当前拼音缓冲：让用户知道这些字母还没上屏。
+        if (!qwerty && composing.isNotEmpty()) {
+            Text(
+                text = "拼音 “$composing”" + if (candidateCount == 0) " · 无匹配，可点「搜索」按字母查" else "",
+                color = Color.White.copy(alpha = 0.5f),
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+/** 拼音候选词：一个汉字/词组一格，遥控器左右移动选择。 */
+@Composable
+private fun CandidateChip(text: String, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Box(
+        modifier = Modifier
+            .height(44.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .clip(RoundedCornerShape(6.dp))
+            .background(if (focused) Color.White else Color(0xFF1C1C1F))
+            .then(if (focused) Modifier else Modifier.border(1.dp, Color(0xFF2C2C30), RoundedCornerShape(6.dp)))
+            .tvClickable(onClick = onClick)
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            color = if (focused) Color.Black else Color.White,
+            style = MaterialTheme.typography.titleMedium,
+            maxLines = 1,
+        )
     }
 }
 
 @Composable
 private fun KeyButton(
     width: Dp,
+    height: Dp = 40.dp,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable (Color) -> Unit,
@@ -362,7 +473,7 @@ private fun KeyButton(
     Box(
         modifier = modifier
             .width(width)
-            .height(40.dp)
+            .height(height)
             .onFocusChanged { focused = it.isFocused }
             .clip(RoundedCornerShape(4.dp))
             .background(if (focused) Color.White else Color(0xFF1C1C1F))

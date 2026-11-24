@@ -55,8 +55,9 @@ class CmsStreams @Inject constructor(
             "红牛资源" to HONGNIU,
             "iQIYI" to IQIYI,
         )
-        // Search stays on the fast source (ffzy) so typing results are instant.
-        private val SEARCH_SOURCES = listOf(API, TAOPIAN)
+        // Search: 如意 first (best Chinese substring matching - "谷" alone returns 211 rows
+        // including 《谷雨》), then the general purpose sites as a fallback.
+        private val SEARCH_SOURCES = listOf(RYI, API, JISU, HONGNIU)
         // Short timeout so an unreachable source is skipped fast instead of hanging playback.
         private val cmsClient: OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
@@ -107,20 +108,31 @@ class CmsStreams @Inject constructor(
 
     suspend fun searchTitles(query: String): List<Hit> {
         if (query.isBlank()) return emptyList()
-        for (base in SEARCH_SOURCES) {
-            val rows = parseList(get("$base?ac=vod&wd=" + URLEncoder.encode(query, "UTF-8"))) ?: continue
-            if (rows.isEmpty()) continue
-            val hits = rows.map { r ->
-                Hit(
-                    title = str(r, "vod_name"),
-                    id = str(r, "vod_id"),
-                    type = str(r, "type_name"),
-                    remarks = str(r, "vod_remarks"),
-                )
-            }.filter { it.title.isNotBlank() }
-            if (hits.isNotEmpty()) return hits
+        // Modified build: query all search sources in parallel and merge. The old
+        // "first source with hits wins" loop meant 如意 (best Chinese substring matching,
+        // 211 rows for "谷") was never reached because 非凡 answered first with fewer rows.
+        val perSource = withContext(Dispatchers.IO) {
+            SEARCH_SOURCES.map { base ->
+                async {
+                    val rows = parseList(get("$base?ac=vod&wd=" + URLEncoder.encode(query, "UTF-8")))
+                        ?: return@async emptyList()
+                    rows.map { r ->
+                        Hit(
+                            title = str(r, "vod_name"),
+                            id = str(r, "vod_id"),
+                            type = str(r, "type_name"),
+                            remarks = str(r, "vod_remarks"),
+                        )
+                    }.filter { it.title.isNotBlank() }
+                }
+            }.map { it.await() }
         }
-        return emptyList()
+        // Keep source order (= reliability order) but drop duplicate titles.
+        val out = LinkedHashMap<String, Hit>()
+        for (hits in perSource) {
+            for (h in hits) out.putIfAbsent(h.title, h)
+        }
+        return out.values.toList()
     }
 
     /** Fetch the synopsis (vod_content) for a title from the CMS, plain text. */

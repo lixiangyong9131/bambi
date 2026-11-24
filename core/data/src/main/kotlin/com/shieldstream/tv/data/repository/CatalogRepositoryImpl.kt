@@ -255,11 +255,18 @@ class CatalogRepositoryImpl @Inject constructor(
         if (kids) kidsMovies(mapOf()).take(20)
         else tmdb.trendingAll(key).results.mapNotNull { it.toCatalogItemOrNull() }.filter { it.posterUrl != null }
 
-    override suspend fun search(query: String): List<CatalogItem> =
-        tmdb.search(key, query).results
+    override suspend fun search(query: String): List<CatalogItem> {
+        val results = tmdb.search(key, query).results
             .filter { !kids || it.genre_ids.any { g -> g in KIDS_GENRES } }
             .mapNotNull { it.toCatalogItemOrNull() } // descarta personas
-            .filter { it.posterUrl != null }
+        // Modified build: CMS-only titles (Chinese search hits from 如意/速播) have no Douban
+        // poster. The old unconditional posterUrl filter silently dropped every one of them,
+        // so a Chinese query could look empty even though the CMS had playable sources.
+        // PosterCard falls back to the title text, so they are safe to keep.
+        val withPoster = results.filter { it.posterUrl != null }
+        val withoutPoster = results.filter { it.posterUrl == null }
+        return withPoster + withoutPoster
+    }
 
     override suspend fun searchOutsideKids(query: String): List<CatalogItem> {
         if (!kids) return emptyList()

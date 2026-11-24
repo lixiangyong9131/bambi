@@ -40,6 +40,7 @@ class SearchViewModel @Inject constructor(
     private val settings: SettingsRepository,
     private val texts: Texts,
     private val requests: com.shieldstream.tv.domain.RequestRepository,
+    @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context,
 ) : ViewModel() {
 
     private val _notice = MutableStateFlow<String?>(null)
@@ -66,6 +67,71 @@ class SearchViewModel @Inject constructor(
     private val _query = MutableStateFlow("")
     val query: StateFlow<String> = _query.asStateFlow()
 
+    // ---- 拼音输入法状态 ----
+    /**
+     * Currently composed pinyin (e.g. "guyu") shown after the committed [query].
+     * Committing a candidate moves it into [query] and clears this buffer.
+     */
+    private val _composing = MutableStateFlow("")
+    val composing: StateFlow<String> = _composing.asStateFlow()
+
+    /** Chinese candidates for the current [composing] buffer; empty when idle. */
+    private val _candidates = MutableStateFlow<List<String>>(emptyList())
+    val candidates: StateFlow<List<String>> = _candidates.asStateFlow()
+
+    private fun refreshCandidates() {
+        val buf = _composing.value
+        // Candidates come from a local dictionary: no network, safe on the main thread.
+        _candidates.value = if (buf.isEmpty()) emptyList() else PinyinEngine.candidates(appContext, buf)
+    }
+
+    /** A candidate was picked: append it to the query and clear the pinyin buffer. */
+    fun commitCandidate(text: String) {
+        if (text.isEmpty()) return
+        _composing.value = ""
+        refreshCandidates()
+        setQuery(_query.value + text)
+    }
+
+    /** Type one letter into the pinyin buffer instead of straight into the query. */
+    fun typeLetter(char: Char) {
+        val c = char.lowercaseChar()
+        if (c !in 'a'..'z') {
+            // Digits/symbols go straight through, flushing whatever was composing.
+            _composing.value = ""
+            refreshCandidates()
+            setQuery(_query.value + char)
+            return
+        }
+        _composing.value += c
+        refreshCandidates()
+    }
+
+    /** Backspace removes the pinyin buffer first, then the committed query. */
+    fun backspaceComposing(): Boolean {
+        val buf = _composing.value
+        if (buf.isEmpty()) return false
+        _composing.value = buf.dropLast(1)
+        refreshCandidates()
+        return true
+    }
+
+    fun clearComposing() {
+        _composing.value = ""
+        refreshCandidates()
+    }
+
+    /** Search now, keeping whatever letters are still composing as plain text. */
+    fun flushComposingToQuery(): String {
+        val buf = _composing.value
+        if (buf.isNotEmpty()) {
+            _composing.value = ""
+            refreshCandidates()
+            setQuery(_query.value + buf)
+        }
+        return _query.value
+    }
+
     private val _uiState = MutableStateFlow<SearchUiState>(SearchUiState.Loading)
     val uiState: StateFlow<SearchUiState> = _uiState.asStateFlow()
 
@@ -89,7 +155,10 @@ class SearchViewModel @Inject constructor(
         _query.value = value
         searchJob?.cancel()
         val q = value.trim()
-        if (q.length < 2) {
+        // Modified build: a single Chinese character is a valid query ("谷" -> 211 CMS hits),
+        // whereas a single Latin letter is not worth a round-trip.
+        val minLen = if (PinyinEngine.hasChinese(q)) 1 else 2
+        if (q.length < minLen) {
             _uiState.value = SearchUiState.Suggestions(suggestions)
             return
         }
