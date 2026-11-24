@@ -226,7 +226,7 @@ class HomeViewModel @Inject constructor(
                     when (rowQuery.filter) {
                         HomeFilter.ALL -> true
                         HomeFilter.MOVIES -> it.type == MediaType.MOVIE
-                        HomeFilter.TV -> it.type == MediaType.TV
+                        HomeFilter.TV, HomeFilter.ANIME -> it.type == MediaType.TV
                     }
                 }.take(rowQuery.maxItems)
             }
@@ -491,7 +491,7 @@ class HomeViewModel @Inject constructor(
 
         when (query.filter) {
             HomeFilter.MOVIES -> load(MediaType.MOVIE).map { MediaType.MOVIE to it }
-            HomeFilter.TV -> load(MediaType.TV).map { MediaType.TV to it }
+            HomeFilter.TV, HomeFilter.ANIME -> load(MediaType.TV).map { MediaType.TV to it }
             HomeFilter.ALL -> {
                 val movies = async { load(MediaType.MOVIE).map { MediaType.MOVIE to it } }
                 val shows = async { load(MediaType.TV).map { MediaType.TV to it } }
@@ -547,7 +547,8 @@ class HomeViewModel @Inject constructor(
         prefetchJob?.cancel()
         prefetchJob = viewModelScope.launch {
             delay(1_500)
-            for (other in listOf(HomeFilter.TV, HomeFilter.MOVIES)) {
+            // Modified build: pre-warm the other CMS tabs (now 3 content tabs).
+            for (other in listOf(HomeFilter.TV, HomeFilter.MOVIES, HomeFilter.ANIME)) {
                 coroutineScope {
                     launch { runCatching { catalogRepository.getFeatured(other) } }
                     runCatching { catalogRepository.getHome(other, rowItemLimit.value) }
@@ -566,13 +567,14 @@ class HomeViewModel @Inject constructor(
         viewModelScope.launch {
             // En silencio se mantiene lo que hay en pantalla hasta que llega lo nuevo.
             if (!(silent && _uiState.value is HomeUiState.Content)) _uiState.value = HomeUiState.Loading
-            val featured = async { runCatching { catalogRepository.getFeatured(filter) }.getOrDefault(emptyList()) }
+            // Modified build: the featured billboard is disabled in this build (rows-only home).
+            // Skipping its detail fan-out removes ~1s of blocking from the first paint.
             runCatching { catalogRepository.getHome(filter, limit) }
                 .onSuccess { rows ->
                     _uiState.value = if (rows.isEmpty()) {
                         HomeUiState.Error(texts.get(StringsR.string.home_couldn_t_load_the_catalog_check_your))
                     } else {
-                        HomeUiState.Content(rows, featured.await())
+                        HomeUiState.Content(rows, emptyList())
                     }
                     if (filter == HomeFilter.ALL) prefetchOtherTabs()
                 }

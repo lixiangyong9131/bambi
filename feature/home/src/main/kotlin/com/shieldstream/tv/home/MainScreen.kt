@@ -49,8 +49,11 @@ fun MainScreen(
     profileImage: String? = null,
     onSwitchProfile: () -> Unit = {},
 ) {
-    var tab by rememberSaveable { mutableStateOf(TopTab.HOME) }
+    // Modified build: default tab is 电视剧 (TV); Search/Home/MyList remain reachable via the bar state.
+    var tab by rememberSaveable { mutableStateOf(TopTab.TV) }
     var category by rememberSaveable { mutableStateOf<Category?>(null) }
+    // Modified build: OK on a top tab opens its CMS hot-categories + year-tags panel.
+    var cmsCategoryOpen by rememberSaveable { mutableStateOf(false) }
     // Modified build: immersive browsing - top bar hides after a tab is chosen, Back restores it.
     var immersive by rememberSaveable { mutableStateOf(false) }
     // Ignore the automatic initial card focus; only real DPAD navigation arms immersive mode.
@@ -63,6 +66,7 @@ fun MainScreen(
     val filter = when (tab) {
         TopTab.TV -> HomeFilter.TV
         TopTab.MOVIES -> HomeFilter.MOVIES
+        TopTab.ANIME -> HomeFilter.ANIME
         else -> HomeFilter.ALL
     }
     val episodeCenter: EpisodeCenterViewModel = hiltViewModel()
@@ -94,6 +98,12 @@ fun MainScreen(
             onSettings = onOpenSettings,
             selectedRequester = topBarRequester,
             newEpisodeCount = (episodeState as? EpisodeCenterUiState.Content)?.newEpisodeCount ?: 0,
+            onConfirm = { confirmed ->
+                if (confirmed == TopTab.TV || confirmed == TopTab.MOVIES || confirmed == TopTab.ANIME) {
+                    cmsCategoryOpen = true
+                    immersive = false
+                }
+            },
             modifier = modifier.onFocusChanged { topBarFocused = it.hasFocus },
             profileInitial = profileInitial,
             profileAvatar = profileAvatar,
@@ -104,8 +114,9 @@ fun MainScreen(
         )
     }
 
-    BackHandler(enabled = showExitConfirmation || immersive || shouldRequestExit(category != null, topBarFocused)) {
+    BackHandler(enabled = cmsCategoryOpen || showExitConfirmation || immersive || shouldRequestExit(category != null, topBarFocused)) {
         when {
+            cmsCategoryOpen -> { cmsCategoryOpen = false; focusTopBar() }
             showExitConfirmation -> showExitConfirmation = false
             immersive -> onBackToTop()
             else -> showExitConfirmation = !showExitConfirmation
@@ -121,6 +132,14 @@ fun MainScreen(
                 filter = filter,
                 onItemClick = onOpenItem,
                 onBack = { category = null },
+            )
+            cmsCategoryOpen -> CmsCategoryScreen(
+                filter = filter,
+                onItemClick = onOpenItem,
+                onBack = {
+                    cmsCategoryOpen = false
+                    focusTopBar()
+                },
             )
             tab == TopTab.SEARCH || tab == TopTab.MY_LIST || tab == TopTab.EPISODES -> {
                 Column(Modifier.fillMaxSize().onBackKey(enabled = !topBarFocused) { focusTopBar() }) {

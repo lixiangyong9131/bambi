@@ -62,6 +62,7 @@ enum class Category(val forMovies: Boolean = true, val forTv: Boolean = true) {
                 HomeFilter.ALL -> true
                 HomeFilter.MOVIES -> it.forMovies
                 HomeFilter.TV -> it.forTv
+                HomeFilter.ANIME -> it == ANIME || it == ANIMATION || it == KIDS || it == FAMILY
             }
         }
     }

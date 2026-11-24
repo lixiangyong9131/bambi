@@ -42,12 +42,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+/**
+ * Modified build: top navigation follows the CMS resource site —
+ * 搜索 / 电视剧(剧集) / 电影 / 动漫. HOME/EPISODES/MY_LIST stay in the enum for
+ * existing callers but are hidden from the bar.
+ */
 enum class TopTab {
     SEARCH,
     HOME,
     EPISODES,
     TV,
     MOVIES,
+    ANIME,
     MY_LIST,
 }
 
@@ -59,8 +65,12 @@ private val TopTab.labelResource: Int
         TopTab.EPISODES -> StringsR.string.common_episodes
         TopTab.TV -> StringsR.string.common_tv_shows
         TopTab.MOVIES -> StringsR.string.common_movies
+        TopTab.ANIME -> StringsR.string.category_anime
         TopTab.MY_LIST -> StringsR.string.common_my_list
     }
+
+/** Tabs rendered in the top bar, in the order requested by the user. */
+private val VISIBLE_TABS = listOf(TopTab.SEARCH, TopTab.TV, TopTab.MOVIES, TopTab.ANIME)
 
 @Composable
 fun TopBar(
@@ -74,6 +84,8 @@ fun TopBar(
     profileImage: String? = null,
     onProfile: () -> Unit = {},
     newEpisodeCount: Int = 0,
+    /** Modified build: OK pressed on an already-focused content tab opens its category/tag panel. */
+    onConfirm: (TopTab) -> Unit = {},
     /** Indicador de descargas arriba a la derecha (solo si hay alguna en marcha); al pulsarlo abre Descargas. */
     downloads: DownloadIndicatorState? = null,
     onDownloads: () -> Unit = {},
@@ -89,14 +101,14 @@ fun TopBar(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Modified build: hide the empty "Episodes" (tracked-show updates) tab.
-            TopTab.entries.filter { it != TopTab.EPISODES }.forEach { tab ->
+            VISIBLE_TABS.forEach { tab ->
                 TopBarItem(
                     icon = if (tab == TopTab.SEARCH) AppIcons.Search else null,
                     label = if (tab == TopTab.SEARCH) null else localizedStringResource(tab.labelResource),
                     selected = tab == selected,
                     badgeCount = if (tab == TopTab.EPISODES) newEpisodeCount else 0,
-                    onClick = { onSelect(tab) },
+                    onClick = { if (tab == selected) onConfirm(tab) else onSelect(tab) },
+                    onFocused = { if (tab != selected) onSelect(tab) },
                     modifier = if (tab == selected) Modifier.focusRequester(selectedRequester) else Modifier,
                 )
             }
@@ -155,6 +167,7 @@ private fun TopBarItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     badgeCount: Int = 0,
+    onFocused: () -> Unit = {},
 ) {
     var focused by remember { mutableStateOf(false) }
     val scale = if (LocalLightweightUi.current) {
@@ -181,7 +194,10 @@ private fun TopBarItem(
             }
             // Fondo dibujado ya redondeado (sin clip): en la Shield el clip de una capa escalada se perdía.
             .background(background, RoundedCornerShape(50))
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) onFocused()
+            }
             .tvClickable(onClick = onClick)
             .padding(horizontal = if (label != null) 18.dp else 10.dp, vertical = 7.dp),
         contentAlignment = Alignment.Center,

@@ -46,9 +46,10 @@ import javax.inject.Singleton
 @InstallIn(SingletonComponent::class)
 abstract class DataModule {
 
+    /** Modified build: catalog backed by CMS resources (poster, Douban score, synopsis, categories). */
     @Binds
     @Singleton
-    abstract fun bindTmdbApi(impl: com.shieldstream.tv.data.repository.DoubanCatalogApi): com.shieldstream.tv.network.api.TmdbApi
+    abstract fun bindTmdbApi(impl: com.shieldstream.tv.data.repository.CmsCatalogApi): com.shieldstream.tv.network.api.TmdbApi
 
     @Binds
     @Singleton

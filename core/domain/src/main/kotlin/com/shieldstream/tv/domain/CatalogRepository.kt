@@ -22,6 +22,9 @@ interface CatalogRepository {
 
     suspend fun getCategoryRows(category: Category, filter: HomeFilter): List<CatalogRow>
 
+    /** Modified build: rows for a CMS V10 category (热门分类) and an optional year tag (常用标签). */
+    suspend fun getCmsCategoryRows(typeId: Int, year: String?, filter: HomeFilter): List<CatalogRow>
+
     suspend fun trending(): List<CatalogItem>
 
     suspend fun search(query: String): List<CatalogItem>

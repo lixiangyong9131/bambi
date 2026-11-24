@@ -165,9 +165,36 @@ class CatalogRepositoryImpl @Inject constructor(
     override suspend fun getCategoryRows(category: Category, filter: HomeFilter): List<CatalogRow> =
         if (kids && category !in Category.KIDS_SAFE) emptyList() else extras.categoryRows(category, filter)
 
-    // Catalog is backed by Douban (key-less); keep a non-blank placeholder so the
+    /**
+     * Modified build: a CMS category shown after pressing OK on a top tab.
+     * Produces 3 rows (latest, more, discoveries) so the existing RowsBrowser renders it.
+     */
+    override suspend fun getCmsCategoryRows(typeId: Int, year: String?, filter: HomeFilter): List<CatalogRow> =
+        coroutineScope {
+            val isMovie = typeId in setOf(1, 6, 7, 8, 9, 10, 11, 12, 20, 34)
+            val titles = listOf("最新更新", "更多内容", "继续发现")
+            titles.mapIndexed { index, title ->
+                async {
+                    runCatching {
+                        val params = buildMap {
+                            put("with_genres", "cms:$typeId")
+                            put("page", (index + 1).toString())
+                            if (!year.isNullOrBlank()) put("year", year)
+                        }
+                        val items = if (isMovie) {
+                            tmdb.discoverMovieQuery(key, params).results.map { it.toCatalogItem() }
+                        } else {
+                            tmdb.discoverTvQuery(key, params).results.map { it.toCatalogItem() }
+                        }
+                        CatalogRow("cms_cat_${typeId}_${year ?: "all"}_$index", title, items.filter { it.posterUrl != null })
+                    }.getOrNull()
+                }
+            }.awaitAll().filterNotNull().filter { it.items.isNotEmpty() }
+        }
+
+    // Catalog is backed by CMS resources (key-less); keep a non-blank placeholder so the
     // legacy "TMDB key missing" guard never blocks home content.
-    private val key: String get() = store.tmdbKey?.takeIf { it.isNotBlank() } ?: "douban"
+    private val key: String get() = store.tmdbKey?.takeIf { it.isNotBlank() } ?: "cms"
 
     private val streamSearch = StreamSearch(tmdb, torrentio, store, settings, texts, { key }, cmsStreams)
 
@@ -213,41 +240,51 @@ class CatalogRepositoryImpl @Inject constructor(
             .filter { it.items.isNotEmpty() }
     }
 
+    /**
+     * Modified build: rows map directly to CMS V10 categories. Each row is ONE videolist
+     * request (~1s) that already carries poster + Douban score + synopsis — no Douban fan-out.
+     */
     private fun rowsFor(filter: HomeFilter): List<RowSpec> = when (filter) {
         HomeFilter.ALL -> listOf(
-            RowSpec("top10_movies", texts.get(StringsR.string.data_top_10_movies_week), RowStyle.TOP10) { page -> tmdb.trendingMovies(key, page = page).results.map { it.toCatalogItem() } },
-            RowSpec("popular_movies", texts.get(StringsR.string.data_popular_movies)) { page -> tmdb.popularMovies(key, page = page).results.map { it.toCatalogItem() } },
-            RowSpec("popular_tv", texts.get(StringsR.string.data_popular_tv_shows)) { page -> tmdb.popularTv(key, page = page).results.map { it.toCatalogItem() } },
-            RowSpec("top10_tv", texts.get(StringsR.string.data_top_10_tv_shows_week), RowStyle.TOP10) { page -> tmdb.trendingTv(key, page = page).results.map { it.toCatalogItem() } },
-            RowSpec("now_playing", texts.get(StringsR.string.data_now_in_theaters)) { page -> tmdb.nowPlayingMovies(key, page = page).results.map { it.toCatalogItem() } },
-            RowSpec("action", texts.get(StringsR.string.data_action)) { page -> tmdb.discoverMovies(key, "28", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("scifi", texts.get(StringsR.string.data_sci_fi)) { page -> tmdb.discoverMovies(key, "878", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("comedy", texts.get(StringsR.string.data_comedies)) { page -> tmdb.discoverMovies(key, "35", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("top_movies", texts.get(StringsR.string.data_acclaimed_movies)) { page -> tmdb.topRatedMovies(key, page = page).results.map { it.toCatalogItem() } },
-            RowSpec("top_tv", texts.get(StringsR.string.data_acclaimed_tv_shows)) { page -> tmdb.topRatedTv(key, page = page).results.map { it.toCatalogItem() } },
+            RowSpec("hot_movies", "热门电影", RowStyle.TOP10) { page -> tmdb.trendingMovies(key, page = page).results.map { it.toCatalogItem() } },
+            RowSpec("hot_tv", "热播剧集", RowStyle.TOP10) { page -> tmdb.trendingTv(key, page = page).results.map { it.toCatalogItem() } },
+            RowSpec("action", "动作片") { page -> tmdb.discoverMovies(key, "cms:6", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("comedy", "喜剧片") { page -> tmdb.discoverMovies(key, "cms:7", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("scifi", "科幻片") { page -> tmdb.discoverMovies(key, "cms:9", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("cn_drama", "国产剧") { page -> tmdb.discoverTv(key, "cms:13", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("kr_drama", "韩剧") { page -> tmdb.discoverTv(key, "cms:15", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("west_drama", "欧美剧") { page -> tmdb.discoverTv(key, "cms:16", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("anime", "动漫") { page -> tmdb.discoverTv(key, "cms:30", page = page).results.map { it.toCatalogItem() } },
         )
         HomeFilter.MOVIES -> listOf(
-            RowSpec("m_top10", texts.get(StringsR.string.data_top_10_movies_week), RowStyle.TOP10) { page -> tmdb.trendingMovies(key, page = page).results.map { it.toCatalogItem() } },
-            RowSpec("m_popular", texts.get(StringsR.string.data_popular)) { page -> tmdb.popularMovies(key, page = page).results.map { it.toCatalogItem() } },
-            RowSpec("m_now", texts.get(StringsR.string.data_now_in_theaters)) { page -> tmdb.nowPlayingMovies(key, page = page).results.map { it.toCatalogItem() } },
-            RowSpec("m_action", texts.get(StringsR.string.data_action)) { page -> tmdb.discoverMovies(key, "28", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("m_scifi", texts.get(StringsR.string.data_sci_fi)) { page -> tmdb.discoverMovies(key, "878", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("m_thriller", texts.get(StringsR.string.category_thrillers)) { page -> tmdb.discoverMovies(key, "53", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("m_horror", texts.get(StringsR.string.data_horror)) { page -> tmdb.discoverMovies(key, "27", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("m_comedy", texts.get(StringsR.string.data_comedies)) { page -> tmdb.discoverMovies(key, "35", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("m_animation", texts.get(StringsR.string.data_animation)) { page -> tmdb.discoverMovies(key, "16", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("m_top", texts.get(StringsR.string.data_critically_acclaimed)) { page -> tmdb.topRatedMovies(key, page = page).results.map { it.toCatalogItem() } },
+            RowSpec("m_hot", "热门电影", RowStyle.TOP10) { page -> tmdb.trendingMovies(key, page = page).results.map { it.toCatalogItem() } },
+            RowSpec("m_action", "动作片") { page -> tmdb.discoverMovies(key, "cms:6", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("m_comedy", "喜剧片") { page -> tmdb.discoverMovies(key, "cms:7", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("m_romance", "爱情片") { page -> tmdb.discoverMovies(key, "cms:8", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("m_scifi", "科幻片") { page -> tmdb.discoverMovies(key, "cms:9", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("m_horror", "恐怖片") { page -> tmdb.discoverMovies(key, "cms:10", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("m_drama", "剧情片") { page -> tmdb.discoverMovies(key, "cms:11", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("m_war", "战争片") { page -> tmdb.discoverMovies(key, "cms:12", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("m_doc", "纪录片") { page -> tmdb.discoverMovies(key, "cms:20", page = page).results.map { it.toCatalogItem() } },
         )
         HomeFilter.TV -> listOf(
-            RowSpec("t_top10", texts.get(StringsR.string.data_top_10_tv_shows_week), RowStyle.TOP10) { page -> tmdb.trendingTv(key, page = page).results.map { it.toCatalogItem() } },
-            RowSpec("t_popular", texts.get(StringsR.string.data_popular)) { page -> tmdb.popularTv(key, page = page).results.map { it.toCatalogItem() } },
-            RowSpec("t_drama", texts.get(StringsR.string.category_dramas)) { page -> tmdb.discoverTv(key, "18", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("t_crime", texts.get(StringsR.string.data_crime)) { page -> tmdb.discoverTv(key, "80", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("t_scifi", texts.get(StringsR.string.data_sci_fi_fantasy)) { page -> tmdb.discoverTv(key, "10765", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("t_action", texts.get(StringsR.string.data_action_adventure)) { page -> tmdb.discoverTv(key, "10759", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("t_comedy", texts.get(StringsR.string.data_comedies)) { page -> tmdb.discoverTv(key, "35", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("t_animation", texts.get(StringsR.string.data_animation)) { page -> tmdb.discoverTv(key, "16", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("t_top", texts.get(StringsR.string.data_critically_acclaimed)) { page -> tmdb.topRatedTv(key, page = page).results.map { it.toCatalogItem() } },
+            RowSpec("t_hot", "热播剧集", RowStyle.TOP10) { page -> tmdb.trendingTv(key, page = page).results.map { it.toCatalogItem() } },
+            RowSpec("t_cn", "国产剧") { page -> tmdb.discoverTv(key, "cms:13", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("t_hk", "港剧") { page -> tmdb.discoverTv(key, "cms:14", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("t_kr", "韩剧") { page -> tmdb.discoverTv(key, "cms:15", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("t_west", "欧美剧") { page -> tmdb.discoverTv(key, "cms:16", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("t_tw", "台剧") { page -> tmdb.discoverTv(key, "cms:21", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("t_jp", "日剧") { page -> tmdb.discoverTv(key, "cms:22", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("t_thai", "泰剧") { page -> tmdb.discoverTv(key, "cms:24", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("t_short", "短剧") { page -> tmdb.discoverTv(key, "cms:36", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("t_variety", "综艺") { page -> tmdb.discoverTv(key, "cms:25", page = page).results.map { it.toCatalogItem() } },
+        )
+        HomeFilter.ANIME -> listOf(
+            RowSpec("a_hot", "热门动漫", RowStyle.TOP10) { page -> tmdb.discoverTv(key, "cms:30", page).results.map { it.toCatalogItem() } },
+            RowSpec("a_cn", "国产动漫") { page -> tmdb.discoverTv(key, "cms:29", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("a_jpkr", "日韩动漫") { page -> tmdb.discoverTv(key, "cms:30", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("a_west", "欧美动漫") { page -> tmdb.discoverTv(key, "cms:31", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("a_hktw", "港台动漫") { page -> tmdb.discoverTv(key, "cms:32", page = page).results.map { it.toCatalogItem() } },
         )
     }
 
@@ -315,6 +352,7 @@ class CatalogRepositoryImpl @Inject constructor(
             HomeFilter.ALL -> listOf(movies[0], shows[0], movies[1], shows[1], movies[2], movies[3], shows[2])
             HomeFilter.MOVIES -> movies
             HomeFilter.TV -> shows
+            HomeFilter.ANIME -> listOf(movies[1], shows[1], shows[2])
         }
     }
 

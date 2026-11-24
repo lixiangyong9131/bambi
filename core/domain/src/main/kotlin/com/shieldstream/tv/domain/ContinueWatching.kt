@@ -27,7 +27,7 @@ object ContinueWatching {
                 when (filter) {
                     HomeFilter.ALL -> true
                     HomeFilter.MOVIES -> it.type == MediaType.MOVIE
-                    HomeFilter.TV -> it.type == MediaType.TV
+                    HomeFilter.TV, HomeFilter.ANIME -> it.type == MediaType.TV
                 }
             }
             .sortedByDescending { it.progress.updatedAt }

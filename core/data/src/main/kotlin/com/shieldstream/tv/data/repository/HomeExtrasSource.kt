@@ -100,6 +100,11 @@ class HomeExtrasSource @Inject constructor(
                 add(ss.next(), FeaturedBadge.SERIES_NOW)
                 add(ss.next(), FeaturedBadge.RISING)
             }
+            HomeFilter.ANIME -> {
+                add(mm.next(), FeaturedBadge.POPULAR)
+                add(best.toMutableList().next(), FeaturedBadge.ACCLAIMED)
+                add(ss.next(), FeaturedBadge.RISING)
+            }
         }
         picks.map { pick -> async { runCatching { loadFeatured(pick) }.getOrNull() } }.awaitAll().filterNotNull()
     }
@@ -113,6 +118,7 @@ class HomeExtrasSource @Inject constructor(
                     HomeFilter.ALL -> true
                     HomeFilter.MOVIES -> it.media_type == "movie"
                     HomeFilter.TV -> it.media_type == "tv"
+                    HomeFilter.ANIME -> true
                 }
             }
             .distinctBy { it.media_type + it.id }
@@ -304,6 +310,10 @@ class HomeExtrasSource @Inject constructor(
             texts.get(StringsR.string.data_more_acclaimed_tv_shows) to suspend { series(Query(), acclaimed(150), page = 2) },
             texts.get(StringsR.string.data_gems_to_discover) to suspend { series(Query(), acclaimed(150), page = 3) },
         )
+        HomeFilter.ANIME -> listOf(
+            texts.get(StringsR.string.data_top_rated) to suspend { series(Query("16"), POPULAR) },
+            texts.get(StringsR.string.data_more_to_discover) to suspend { series(Query("16"), POPULAR, page = 2) },
+        )
     }
 
     private fun classicRows(filter: HomeFilter): List<Pair<String, suspend () -> List<CatalogItem>>> {
@@ -359,6 +369,7 @@ class HomeExtrasSource @Inject constructor(
                 when (filter) {
                     HomeFilter.MOVIES -> movies(movie, POPULAR)
                     HomeFilter.TV -> series(tv, POPULAR)
+                    HomeFilter.ANIME -> series(Query("16"), POPULAR)
                     HomeFilter.ALL -> mix(movies(movie, POPULAR), series(tv, POPULAR))
                 }
             }

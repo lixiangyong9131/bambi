@@ -44,3 +44,7 @@ _opus_trash/
 /*.png
 /截图*.png
 /translate_*.py
+.scratch/
+
+# Local agent memory (project notes, not source)
+.workbuddy/memory/

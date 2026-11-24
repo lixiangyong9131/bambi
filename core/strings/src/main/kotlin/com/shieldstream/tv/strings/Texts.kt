@@ -27,11 +27,24 @@ interface Texts {
 class ResourceTexts @Inject constructor(
     @ApplicationContext private val context: Context,
 ) : Texts {
-    override fun get(id: Int, vararg formatArgs: Any): String =
-        context.localizedContext(Lang.current).resources.getString(id, *formatArgs)
+    override fun get(id: Int, vararg formatArgs: Any): String {
+        val resources = context.localizedContext(Lang.current).resources
+        return try {
+            resources.getString(id, *formatArgs)
+        } catch (e: Exception) {
+            // Never crash on malformed format specifiers; fall back to the raw string.
+            resources.getString(id)
+        }
+    }
 
-    override fun quantity(id: Int, count: Int, vararg formatArgs: Any): String =
-        context.localizedContext(Lang.current).resources.getQuantityString(id, count, *formatArgs)
+    override fun quantity(id: Int, count: Int, vararg formatArgs: Any): String {
+        val resources = context.localizedContext(Lang.current).resources
+        return try {
+            resources.getQuantityString(id, count, *formatArgs)
+        } catch (e: Exception) {
+            resources.getQuantityString(id, count)
+        }
+    }
 }
 
 @Composable
@@ -44,7 +57,11 @@ fun rememberTexts(): Texts {
 fun localizedStringResource(@StringRes id: Int, vararg formatArgs: Any): String {
     val resources = localizedResources()
     return remember(resources, id, formatArgs.toList()) {
-        resources.getString(id, *formatArgs)
+        try {
+            resources.getString(id, *formatArgs)
+        } catch (e: Exception) {
+            resources.getString(id)
+        }
     }
 }
 
@@ -52,7 +69,11 @@ fun localizedStringResource(@StringRes id: Int, vararg formatArgs: Any): String 
 fun localizedPluralResource(@PluralsRes id: Int, count: Int, vararg formatArgs: Any): String {
     val resources = localizedResources()
     return remember(resources, id, count, formatArgs.toList()) {
-        resources.getQuantityString(id, count, *formatArgs)
+        try {
+            resources.getQuantityString(id, count, *formatArgs)
+        } catch (e: Exception) {
+            resources.getQuantityString(id, count)
+        }
     }
 }
 
