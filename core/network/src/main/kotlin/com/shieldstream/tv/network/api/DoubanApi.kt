@@ -33,4 +33,10 @@ interface DoubanApi {
 
     @GET
     suspend fun abstract(@Url url: String): DoubanAbstractDto
+
+    @GET
+    suspend fun rexxarSubject(@Url url: String): com.shieldstream.tv.network.dto.DoubanRexxarSubjectDto
+
+    @GET
+    suspend fun rexxarRatingStats(@Url url: String): com.shieldstream.tv.network.dto.DoubanRexxarStatsDto
 }

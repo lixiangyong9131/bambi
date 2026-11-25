@@ -149,7 +149,7 @@ internal fun RowsBrowser(
                 Modifier
                     .fillMaxWidth()
                     .height(172.dp)
-                    .padding(start = ContentStart, top = 8.dp, end = 320.dp),
+                    .padding(start = ContentStart, top = 8.dp, end = 360.dp),
                 verticalArrangement = Arrangement.Bottom,
             ) {
                 header?.let {

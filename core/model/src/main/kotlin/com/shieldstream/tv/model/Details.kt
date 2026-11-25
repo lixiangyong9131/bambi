@@ -20,6 +20,15 @@ data class CatalogDetails(
     val trailerKeys: List<String> = emptyList(),
     /** Saga a la que pertenece la película, si TMDB la agrupa en una colección. */
     val collection: CollectionRef? = null,
+    val doubanRating: DoubanRatingInfo? = null,
+)
+
+data class DoubanRatingInfo(
+    val score: Float,
+    val starCount: Float,
+    val voteCount: Int,
+    /** Five ratios ordered 1-star through 5-star, matching Douban's rating stats array. */
+    val starDistribution: List<Float> = emptyList(),
 )
 
 data class Person(

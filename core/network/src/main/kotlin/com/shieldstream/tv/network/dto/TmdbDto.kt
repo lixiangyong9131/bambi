@@ -125,6 +125,15 @@ data class TmdbMovieDetailDto(
     val credits: TmdbCreditsDto? = null,
     val videos: TmdbVideosDto? = null,
     val belongs_to_collection: TmdbCollectionRefDto? = null,
+    val douban_rating: TmdbDoubanRatingDto? = null,
+)
+
+@Serializable
+data class TmdbDoubanRatingDto(
+    val score: Float = 0f,
+    val starCount: Float = 0f,
+    val voteCount: Int = 0,
+    val starDistribution: List<Float> = emptyList(),
 )
 
 @Serializable
@@ -160,6 +169,7 @@ data class TmdbTvDetailDto(
     val aggregate_credits: TmdbCreditsDto? = null,
     val videos: TmdbVideosDto? = null,
     val created_by: List<TmdbCrewDto> = emptyList(),
+    val douban_rating: TmdbDoubanRatingDto? = null,
 )
 
 @Serializable

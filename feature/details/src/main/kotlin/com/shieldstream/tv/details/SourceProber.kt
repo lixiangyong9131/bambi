@@ -1,5 +1,6 @@
 package com.shieldstream.tv.details
 
+import com.shieldstream.tv.media.DohDns
 import com.shieldstream.tv.model.StreamSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -43,6 +44,7 @@ class SourceProber @Inject constructor() {
     }
 
     private val client = OkHttpClient.Builder()
+        .dns(DohDns)
         .connectTimeout(TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
         .readTimeout(TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
         .callTimeout(TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)

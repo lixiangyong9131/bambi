@@ -27,11 +27,21 @@ interface Texts {
 class ResourceTexts @Inject constructor(
     @ApplicationContext private val context: Context,
 ) : Texts {
-    override fun get(id: Int, vararg formatArgs: Any): String =
-        context.localizedContext(Lang.current).resources.getString(id, *formatArgs)
+    override fun get(id: Int, vararg formatArgs: Any): String {
+        val res = context.localizedContext(Lang.current).resources
+        return if (formatArgs.isEmpty()) {
+            res.getString(id)
+        } else {
+            runCatching { res.getString(id, *formatArgs) }
+                .getOrElse { res.getString(id) }
+        }
+    }
 
-    override fun quantity(id: Int, count: Int, vararg formatArgs: Any): String =
-        context.localizedContext(Lang.current).resources.getQuantityString(id, count, *formatArgs)
+    override fun quantity(id: Int, count: Int, vararg formatArgs: Any): String {
+        val res = context.localizedContext(Lang.current).resources
+        return runCatching { res.getQuantityString(id, count, *formatArgs) }
+            .getOrElse { res.getQuantityString(id, count) }
+    }
 }
 
 @Composable
@@ -44,7 +54,12 @@ fun rememberTexts(): Texts {
 fun localizedStringResource(@StringRes id: Int, vararg formatArgs: Any): String {
     val resources = localizedResources()
     return remember(resources, id, formatArgs.toList()) {
-        resources.getString(id, *formatArgs)
+        if (formatArgs.isEmpty()) {
+            resources.getString(id)
+        } else {
+            runCatching { resources.getString(id, *formatArgs) }
+                .getOrElse { resources.getString(id) }
+        }
     }
 }
 
@@ -52,7 +67,8 @@ fun localizedStringResource(@StringRes id: Int, vararg formatArgs: Any): String 
 fun localizedPluralResource(@PluralsRes id: Int, count: Int, vararg formatArgs: Any): String {
     val resources = localizedResources()
     return remember(resources, id, count, formatArgs.toList()) {
-        resources.getQuantityString(id, count, *formatArgs)
+        runCatching { resources.getQuantityString(id, count, *formatArgs) }
+            .getOrElse { resources.getQuantityString(id, count) }
     }
 }
 

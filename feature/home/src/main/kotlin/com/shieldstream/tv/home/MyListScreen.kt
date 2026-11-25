@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -33,6 +34,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -133,7 +135,25 @@ fun MyListScreen(
         }
         Spacer(Modifier.height(12.dp))
         when (val s = state) {
-            MyListUiState.Loading -> Text(localizedStringResource(StringsR.string.home_loading), color = Color.White.copy(alpha = 0.6f))
+            MyListUiState.Loading -> {
+                val alpha = delayedSkeletonAlpha() * skeletonPulse()
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(140.dp),
+                    contentPadding = PaddingValues(top = 12.dp, bottom = 48.dp, start = 4.dp, end = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(22.dp),
+                    modifier = Modifier.fillMaxSize().graphicsLayer { this.alpha = alpha },
+                ) {
+                    items(12) {
+                        Box(
+                            Modifier
+                                .width(140.dp)
+                                .aspectRatio(2f / 3f)
+                                .background(SkeletonColor, RoundedCornerShape(6.dp)),
+                        )
+                    }
+                }
+            }
             is MyListUiState.Empty -> Text(
                 if (s.filter == MyListFilter.ALL) {
                     localizedStringResource(StringsR.string.home_your_list_is_empty_add_movies_and)

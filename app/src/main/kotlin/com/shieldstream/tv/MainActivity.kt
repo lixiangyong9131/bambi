@@ -26,8 +26,12 @@ import com.shieldstream.tv.ui.theme.ShieldStreamTheme
 import com.shieldstream.tv.watchnext.WatchNextManager
 import com.shieldstream.tv.watchnext.WatchNextRequest
 import com.shieldstream.tv.watchnext.parseWatchNextRequest
+import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -43,16 +47,16 @@ class MainActivity : ComponentActivity() {
     lateinit var holder: SelectedContentHolder
 
     @Inject
-    lateinit var trakt: TraktRepository
+    lateinit var trakt: dagger.Lazy<TraktRepository>
 
     @Inject
-    lateinit var updates: UpdateRepository
+    lateinit var updates: dagger.Lazy<UpdateRepository>
 
     @Inject
     lateinit var settings: SettingsRepository
 
     @Inject
-    lateinit var watchNext: WatchNextManager
+    lateinit var watchNext: dagger.Lazy<WatchNextManager>
 
     @Inject
     lateinit var profiles: ProfileRepository
@@ -125,10 +129,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        // Modified build: intro disabled entirely.
+        // Modified build: intro disabled; defer background sync slightly so first Compose frames render fast.
         stoppedAt = 0L
-        watchNext.onForeground()
-        trakt.syncActive()
-        updates.check(manual = false)
+        lifecycleScope.launch(Dispatchers.IO) {
+            delay(1_200L)
+            watchNext.get().onForeground()
+            trakt.get().syncActive()
+            updates.get().check(manual = false)
+        }
     }
 }

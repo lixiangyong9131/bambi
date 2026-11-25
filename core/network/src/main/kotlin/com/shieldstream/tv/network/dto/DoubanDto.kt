@@ -54,3 +54,31 @@ data class DoubanSuggestDto(
     val id: String = "",
     val episode: String = "",
 )
+
+@Serializable
+data class DoubanRexxarRatingDto(
+    val count: Int = 0,
+    val star_count: Float = 0f,
+    val value: Double = 0.0,
+)
+
+@Serializable
+data class DoubanRexxarPicDto(
+    val large: String = "",
+    val normal: String = "",
+)
+
+@Serializable
+data class DoubanRexxarSubjectDto(
+    val title: String = "",
+    val year: String = "",
+    val intro: String = "",
+    val genres: List<String> = emptyList(),
+    val pic: DoubanRexxarPicDto? = null,
+    val rating: DoubanRexxarRatingDto? = null,
+)
+
+@Serializable
+data class DoubanRexxarStatsDto(
+    val stats: List<Float> = emptyList(),
+)

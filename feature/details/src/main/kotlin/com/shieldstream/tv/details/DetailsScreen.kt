@@ -6,10 +6,16 @@ import com.shieldstream.tv.strings.localizedStringResource
 import com.shieldstream.tv.domain.TraktRatingTarget
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -17,6 +23,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -51,12 +58,19 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -65,13 +79,17 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import coil.compose.AsyncImage
 import com.shieldstream.tv.model.CatalogDetails
+import com.shieldstream.tv.model.DoubanRatingInfo
 import com.shieldstream.tv.model.Episode
+import com.shieldstream.tv.model.Lang
 import com.shieldstream.tv.ui.component.downloadIndicatorState
 import com.shieldstream.tv.ui.component.busy
 import com.shieldstream.tv.ui.component.DownloadIndicator
 import com.shieldstream.tv.strings.localizedCode
 import com.shieldstream.tv.model.HdrType
 import com.shieldstream.tv.model.WatchProgress
+import com.shieldstream.tv.ui.component.AmbientBackdropImage
+import com.shieldstream.tv.ui.component.FeatheredBackdropStage
 import com.shieldstream.tv.ui.component.AppIcons
 import com.shieldstream.tv.ui.component.ProvideMinimalScroll
 import com.shieldstream.tv.ui.component.TvButton
@@ -200,59 +218,89 @@ private fun DetailsContent(
     val item = state.details.item
 
     Box(Modifier.fillMaxSize().onBackKey(enabled = panelOpen && !actionsOpen) { panelOpen = false }) {
-        // Modified build: keep the hero image and the info block flowing over it, but limit
-        // the image to the top area so a portrait poster is not stretched to fill the whole TV screen.
-        AsyncImage(
-            model = item.backdropUrl ?: item.posterUrl,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(460.dp),
+        // Modified build: edge-extended ambient backdrop fills the entire Details viewport (top and
+        // bottom) so lower sections share the same color wash, while the lowered right cover artwork
+        // feathers cleanly into it without zooming or hard seams.
+        val artworkUrl = item.posterUrl ?: item.backdropUrl
+        if (artworkUrl != null) {
+            AmbientBackdropImage(
+                url = artworkUrl,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        FeatheredBackdropStage(
+            heroUrl = artworkUrl,
+            ambientUrl = null,
+            stageHeight = 500.dp,
+            heroWidthFraction = 0.56f,
+            leftScrimAlpha = 0f,
+            topPadding = 22.dp,
+            verticalBias = 0.12f,
+            fadeBottomToBlack = false,
+            modifier = Modifier.align(Alignment.TopCenter),
         )
-        // A soft vertical fade extends the artwork into the info area instead of a hard seam.
         Box(
-            Modifier
-                .fillMaxWidth()
-                .height(560.dp)
-                .background(
-                    Brush.verticalGradient(
-                        0f to Color.Transparent,
-                        0.45f to Color.Black.copy(alpha = 0.35f),
-                        1f to Color.Black,
-                    ),
+            Modifier.fillMaxSize().background(
+                Brush.horizontalGradient(
+                    0f to Color.Black.copy(alpha = 0.78f),
+                    0.42f to Color.Black.copy(alpha = 0.36f),
+                    0.75f to Color.Transparent,
                 ),
+            ),
         )
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)))
+        Box(
+            Modifier.fillMaxSize().background(
+                Brush.verticalGradient(
+                    0f to Color.Black.copy(alpha = 0.14f),
+                    0.52f to Color.Black.copy(alpha = 0.44f),
+                    1f to Color.Black.copy(alpha = 0.68f),
+                ),
+            ),
+        )
 
         val pageScroll = rememberScrollState()
         val pageScope = rememberCoroutineScope()
         ProvideMinimalScroll(margin = 72.dp) {
         Column(
             Modifier
+                .zIndex(1f)
                 .fillMaxSize()
                 .verticalScroll(pageScroll)
                 .padding(top = 44.dp, bottom = 72.dp),
         ) {
-            InfoBlock(
-                details = state.details,
-                state = state,
-                interactive = !panelOpen && !actionsOpen && episodeMenu == null,
-                playRequester = playRequester,
-                onPlay = { viewModel.play() },
-                onPlaySource = { source -> viewModel.playSource(source) },
-                onPlayFromStart = { viewModel.play(fromStart = true) },
-                onOpenSources = {
-                    viewModel.ensureSources()
-                    panelOpen = true
-                },
-                onOpenActions = { actionsOpen = true },
-                onTrailer = state.details.trailerKey?.let { first -> { onOpenTrailer(state.details.trailerKeys.ifEmpty { listOf(first) }) } },
-                // Al volver a los botones desde abajo, la página sube del todo: si no, la sinopsis quedaba cortada.
+            Row(
                 modifier = Modifier
-                    .padding(start = 56.dp, end = 56.dp)
-                    .onFocusChanged { if (it.hasFocus && pageScroll.value > 0) pageScope.launch { pageScroll.scrollToTopFirmly() } },
-            )
+                    .fillMaxWidth()
+                    .padding(horizontal = 56.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Bottom,
+            ) {
+                InfoBlock(
+                    details = state.details,
+                    state = state,
+                    interactive = !panelOpen && !actionsOpen && episodeMenu == null,
+                    playRequester = playRequester,
+                    onPlay = { viewModel.play() },
+                    onPlaySource = { source -> viewModel.playSource(source) },
+                    onPlayFromStart = { viewModel.play(fromStart = true) },
+                    onOpenSources = {
+                        viewModel.ensureSources()
+                        panelOpen = true
+                    },
+                    onOpenActions = { actionsOpen = true },
+                    onTrailer = state.details.trailerKey?.let { first -> { onOpenTrailer(state.details.trailerKeys.ifEmpty { listOf(first) }) } },
+                    // Al volver a los botones desde abajo, la página sube del todo: si no, la sinopsis quedaba cortada.
+                    modifier = Modifier
+                        .weight(1f)
+                        .onFocusChanged { if (it.hasFocus && pageScroll.value > 0) pageScope.launch { pageScroll.scrollToTopFirmly() } },
+                )
+                DoubanRatingCard(
+                    rating = state.details.doubanRating,
+                    fallbackScore = item.rating,
+                    loading = state.detailsLoading,
+                    modifier = Modifier.padding(start = 24.dp, bottom = 6.dp),
+                )
+            }
 
             if (state.isSeries) {
                 Spacer(Modifier.height(28.dp))
@@ -441,7 +489,10 @@ private fun InfoBlock(
     modifier: Modifier = Modifier,
 ) {
     val item = details.item
-    Column(modifier.widthIn(max = 600.dp)) {
+    val skeletonPulse = rememberDetailsSkeletonPulse()
+    val skeletonPrimary = Color.White.copy(alpha = 0.24f * skeletonPulse)
+    val skeletonSecondary = Color.White.copy(alpha = 0.16f * skeletonPulse)
+    Column(modifier.widthIn(max = 580.dp)) {
         if (details.logoUrl != null) {
             AsyncImage(
                 model = details.logoUrl,
@@ -462,98 +513,139 @@ private fun InfoBlock(
         Spacer(Modifier.height(14.dp))
 
         MetaRow(details, state)
-        // Modified build: genres + release year as tags, matching the request to show the
-        // premiere date alongside types.
         val tags = buildList {
             details.genres.take(4).forEach { add(it) }
             item.year?.let { add(it.toString()) }
         }
-        if (tags.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                tags.forEach { tag ->
+        val synopsis = item.overview.ifBlank { details.tagline.orEmpty() }
+        // Reserve a stable minimum height for the metadata block so buttons and episodes below
+        // do not jump downward when tags/cast/synopsis finish loading from Douban & CMS.
+        Column(Modifier.heightIn(min = 148.dp)) {
+            if (state.detailsLoading && tags.isEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(56.dp, 48.dp, 52.dp).forEach { w ->
+                        Box(
+                            Modifier
+                                .width(w)
+                                .height(24.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(skeletonPrimary),
+                        )
+                    }
+                }
+            } else {
+                val shownTags = if (tags.isNotEmpty()) tags else listOf(
+                    if (item.type == com.shieldstream.tv.model.MediaType.TV) "剧集" else "电影",
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    shownTags.forEach { tag ->
+                        Text(
+                            text = tag,
+                            color = Color.White.copy(alpha = 0.8f),
+                            style = MaterialTheme.typography.labelMedium,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color.White.copy(alpha = 0.12f))
+                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                        )
+                    }
+                }
+            }
+            if (state.detailsLoading && details.directors.isEmpty() && details.cast.isEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Box(
+                    Modifier
+                        .width(240.dp)
+                        .height(14.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(skeletonSecondary),
+                )
+            } else {
+                if (details.directors.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
                     Text(
-                        text = tag,
-                        color = Color.White.copy(alpha = 0.8f),
-                        style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(Color.White.copy(alpha = 0.12f))
-                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                        text = localizedStringResource(
+                            if (item.type == com.shieldstream.tv.model.MediaType.TV) StringsR.string.details_created_by else StringsR.string.details_directed_by,
+                            details.directors.take(2).joinToString(", ") { it.name },
+                        ),
+                        color = Grey,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                // Modified build: show main cast near the top, next to genres/runtime.
+                if (details.cast.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = localizedStringResource(
+                            StringsR.string.details_starring,
+                            details.cast.take(3).joinToString(", ") { it.name },
+                        ),
+                        color = Grey,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
-        }
-        if (details.directors.isNotEmpty()) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = localizedStringResource(
-                    if (item.type == com.shieldstream.tv.model.MediaType.TV) StringsR.string.details_created_by else StringsR.string.details_directed_by,
-                    details.directors.take(2).joinToString(", ") { it.name },
-                ),
-                color = Grey,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        // Modified build: show main cast near the top, next to genres/runtime.
-        if (details.cast.isNotEmpty()) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = localizedStringResource(
-                    StringsR.string.details_starring,
-                    details.cast.take(3).joinToString(", ") { it.name },
-                ),
-                color = Grey,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        details.nextEpisode?.let { next ->
-            val nextCode = next.localizedCode()
-            val release = remember(next, nextCode) {
-                listOf(nextCode, next.title, formatEpisodeDate(next.airDate, includeYear = true))
-                    .filter { it.isNotBlank() }
-                    .joinToString(" · ")
+            details.nextEpisode?.let { next ->
+                val nextCode = next.localizedCode()
+                val release = remember(next, nextCode) {
+                    listOf(nextCode, next.title, formatEpisodeDate(next.airDate, includeYear = true))
+                        .filter { it.isNotBlank() }
+                        .joinToString(" · ")
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = localizedStringResource(StringsR.string.details_coming_soon, release),
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = localizedStringResource(StringsR.string.details_coming_soon, release),
-                color = Color.White,
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+            // Modified build: synopsis, two lines by default, focusable expand/collapse button.
+            if (synopsis.isNotBlank()) {
+                Spacer(Modifier.height(12.dp))
+                var expanded by remember { mutableStateOf(false) }
+                var synopsisFocused by remember { mutableStateOf(false) }
+                Text(
+                    text = synopsis,
+                    color = Color.White.copy(alpha = 0.9f),
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = if (expanded) Int.MAX_VALUE else 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = if (expanded) "▲ 收起" else "▼ 展开",
+                    color = if (synopsisFocused) Color.Black else Color.White.copy(alpha = 0.75f),
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    modifier = Modifier
+                        .padding(top = 6.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(if (synopsisFocused) Color.White else Color.White.copy(alpha = 0.12f))
+                        .onFocusChanged { synopsisFocused = it.isFocused }
+                        .tvClickable(enabled = interactive) { expanded = !expanded }
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                )
+            } else if (state.detailsLoading) {
+                Spacer(Modifier.height(14.dp))
+                Box(Modifier.width(440.dp).height(15.dp).clip(RoundedCornerShape(4.dp)).background(skeletonPrimary))
+                Spacer(Modifier.height(8.dp))
+                Box(Modifier.width(310.dp).height(15.dp).clip(RoundedCornerShape(4.dp)).background(skeletonSecondary))
+            } else {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = "暂无剧情简介",
+                    color = Color.White.copy(alpha = 0.45f),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
         }
-        // Modified build: synopsis, two lines by default, focusable expand/collapse button.
-        val synopsis = item.overview.ifBlank { details.tagline.orEmpty() }
-        if (synopsis.isNotBlank()) {
-            Spacer(Modifier.height(12.dp))
-            var expanded by remember { mutableStateOf(false) }
-            var synopsisFocused by remember { mutableStateOf(false) }
-            Text(
-                text = synopsis,
-                color = Color.White.copy(alpha = 0.9f),
-                style = MaterialTheme.typography.bodyLarge,
-                maxLines = if (expanded) Int.MAX_VALUE else 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = if (expanded) "▲ 收起" else "▼ 展开",
-                color = if (synopsisFocused) Color.Black else Color.White.copy(alpha = 0.75f),
-                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                modifier = Modifier
-                    .padding(top = 6.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(if (synopsisFocused) Color.White else Color.White.copy(alpha = 0.12f))
-                    .onFocusChanged { synopsisFocused = it.isFocused }
-                    .tvClickable(enabled = interactive) { expanded = !expanded }
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-            )
-        }
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(18.dp))
 
         Row(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -605,31 +697,65 @@ private fun InfoBlock(
             }
         }
         // Modified build: probed sources shown right under the play buttons, one card per
-        // completed probe. Click a card to play that source directly.
+        // completed probe. Always show either probed cards, pulsing skeletons while checking,
+        // or a clear fallback message if nothing could be probed.
         val probedSources = (state.sources as? SourcesState.Ready)?.sources.orEmpty()
             .filter { state.sourceProbes.containsKey(it.id) }
-        if (probedSources.isNotEmpty()) {
+        val probingInFlight = state.sources is SourcesState.Idle ||
+            state.sources is SourcesState.Loading ||
+            (state.sources is SourcesState.Ready && !state.probingDone && probedSources.isEmpty())
+        Column(Modifier.fillMaxWidth().heightIn(min = 96.dp)) {
             Spacer(Modifier.height(14.dp))
             Text(
-                text = "已检测片源 · 点击直接播放" + if (!state.probingDone) " · 检测中…" else "",
+                text = when {
+                    probedSources.isNotEmpty() ->
+                        "已检测片源 · 点击直接播放" + if (!state.probingDone) " · 检测中…" else ""
+                    probingInFlight -> "正在检测可用片源…"
+                    else -> "暂未检测到可用线路"
+                },
                 color = Grey,
                 style = MaterialTheme.typography.labelMedium,
             )
             Spacer(Modifier.height(8.dp))
-            androidx.compose.foundation.lazy.LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                items(probedSources.size) { i ->
-                    val src = probedSources[i]
-                    val probe = state.sourceProbes[src.id]
-                    ProbeCard(
-                        label = src.title,
-                        detail = probe?.summary.orEmpty(),
-                        ok = probe?.ok == true,
-                        onClick = { onPlaySource(src) },
-                    )
+            when {
+                probedSources.isNotEmpty() -> androidx.compose.foundation.lazy.LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    items(probedSources.size) { i ->
+                        val src = probedSources[i]
+                        val probe = state.sourceProbes[src.id]
+                        ProbeCard(
+                            label = src.title,
+                            detail = probe?.summary.orEmpty(),
+                            ok = probe?.ok == true,
+                            onClick = { onPlaySource(src) },
+                        )
+                    }
                 }
+                probingInFlight -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    repeat(3) {
+                        Column(
+                            Modifier
+                                .width(190.dp)
+                                .height(58.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(skeletonSecondary)
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            Box(Modifier.width(96.dp).height(12.dp).clip(RoundedCornerShape(3.dp)).background(skeletonPrimary))
+                            Spacer(Modifier.height(6.dp))
+                            Box(Modifier.width(120.dp).height(10.dp).clip(RoundedCornerShape(3.dp)).background(Color.White.copy(alpha = 0.12f * skeletonPulse)))
+                        }
+                    }
+                }
+                else -> Text(
+                    text = "请点击上方「片源」按钮查看或手动选择播放线路",
+                    color = Color.White.copy(alpha = 0.45f),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
             }
         }
         state.mainProgress?.takeIf { it.isResumable }?.let { p ->
@@ -649,14 +775,218 @@ private fun InfoBlock(
             }
         }
         Spacer(Modifier.height(12.dp))
-        SourcesStatus(state)
+        Box(Modifier.heightIn(min = 22.dp), contentAlignment = Alignment.CenterStart) {
+            SourcesStatus(state)
+        }
     }
+}
+
+@Composable
+private fun DoubanRatingCard(
+    rating: DoubanRatingInfo?,
+    fallbackScore: Float?,
+    loading: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val shownRating = rating ?: fallbackScore?.takeIf { it > 0f }?.let { score ->
+        DoubanRatingInfo(score = score, starCount = score / 2f, voteCount = 0)
+    }
+    if (shownRating == null) return
+
+    val cardShape = RoundedCornerShape(12.dp)
+    val cardBg = Color(0xFF101218).copy(alpha = 0.78f)
+    val borderCol = Color.White.copy(alpha = 0.14f)
+    val starGold = Color(0xFFFFAC2D)
+    val starDim = Color.White.copy(alpha = 0.22f)
+    val barGold = Color(0xFFF6C26B)
+    val pulse = rememberDetailsSkeletonPulse()
+    val skelLight = Color.White.copy(alpha = 0.22f * pulse)
+    val skelMuted = Color.White.copy(alpha = 0.14f * pulse)
+
+    Column(
+        modifier = modifier
+            .width(236.dp)
+            .clip(cardShape)
+            .background(cardBg)
+            .border(1.dp, borderCol, cardShape)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Text(
+            text = "豆瓣评分",
+            color = Color.White.copy(alpha = 0.65f),
+            style = MaterialTheme.typography.labelMedium,
+        )
+        Spacer(Modifier.height(8.dp))
+        if (loading && rating == null) {
+            Row(Modifier.height(42.dp), verticalAlignment = Alignment.CenterVertically) {
+                if ((fallbackScore ?: 0f) > 0f) {
+                    Text(
+                        text = String.format(Lang.locale, "%.1f", fallbackScore),
+                        color = Color.White,
+                        fontSize = 30.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Spacer(Modifier.width(12.dp))
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Box(Modifier.width(84.dp).height(12.dp).clip(RoundedCornerShape(3.dp)).background(skelLight))
+                    Box(Modifier.width(72.dp).height(10.dp).clip(RoundedCornerShape(3.dp)).background(skelMuted))
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                listOf(0.55f, 0.80f, 0.45f, 0.25f, 0.15f).forEach { w ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().height(16.dp),
+                    ) {
+                        Box(Modifier.width(20.dp).height(8.dp).clip(RoundedCornerShape(2.dp)).background(skelMuted))
+                        Spacer(Modifier.width(4.dp))
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .height(7.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(Color.White.copy(alpha = 0.08f * pulse)),
+                        ) {
+                            Box(
+                                Modifier
+                                    .fillMaxHeight()
+                                    .fillMaxWidth(w)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(skelLight),
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        Box(Modifier.width(36.dp).height(8.dp).clip(RoundedCornerShape(2.dp)).background(skelMuted))
+                    }
+                }
+            }
+        } else {
+            val active = shownRating
+            Row(Modifier.height(42.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = String.format(Lang.locale, "%.1f", active.score),
+                    color = Color.White,
+                    fontSize = 30.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    val stars = (active.starCount.takeIf { it > 0f } ?: (active.score / 2f)).coerceIn(0f, 5f)
+                    Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        for (index in 1..5) {
+                            val fill = when {
+                                stars >= index -> 1f
+                                stars >= index - 0.5f -> 0.5f
+                                else -> 0f
+                            }
+                            RatingStarIcon(fillFraction = fill, filledColor = starGold, emptyColor = starDim)
+                        }
+                    }
+                    if (active.voteCount > 0) {
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            text = "${active.voteCount}人评价",
+                            color = Color(0xFF9FB4CC),
+                            fontSize = 11.sp,
+                        )
+                    }
+                }
+            }
+            if (active.starDistribution.size == 5) {
+                Spacer(Modifier.height(10.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    for (star in 5 downTo 1) {
+                        val ratio = active.starDistribution[star - 1].coerceIn(0f, 1f)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().height(16.dp),
+                        ) {
+                            Text(
+                                text = "${star}星",
+                                color = Color.White.copy(alpha = 0.65f),
+                                fontSize = 11.sp,
+                                modifier = Modifier.width(24.dp),
+                            )
+                            Box(
+                                Modifier
+                                    .weight(1f)
+                                    .height(7.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(Color.White.copy(alpha = 0.10f)),
+                            ) {
+                                if (ratio > 0f) {
+                                    Box(
+                                        Modifier
+                                            .fillMaxHeight()
+                                            .fillMaxWidth(ratio.coerceAtLeast(0.02f))
+                                            .clip(RoundedCornerShape(3.dp))
+                                            .background(barGold),
+                                    )
+                                }
+                            }
+                            Text(
+                                text = String.format(Lang.locale, "%.1f%%", ratio * 100f),
+                                color = Color.White.copy(alpha = 0.72f),
+                                fontSize = 11.sp,
+                                textAlign = TextAlign.End,
+                                modifier = Modifier.width(42.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RatingStarIcon(
+    fillFraction: Float,
+    filledColor: Color,
+    emptyColor: Color,
+) {
+    Canvas(modifier = Modifier.size(13.dp)) {
+        val starPath = Path().apply {
+            val cx = size.width / 2f
+            val cy = size.height / 2f
+            val outer = size.minDimension / 2f
+            val inner = outer * 0.42f
+            for (i in 0 until 10) {
+                val r = if (i % 2 == 0) outer else inner
+                val angle = (-PI / 2.0) + i * (PI / 5.0)
+                val x = cx + (r * cos(angle)).toFloat()
+                val y = cy + (r * sin(angle)).toFloat()
+                if (i == 0) moveTo(x, y) else lineTo(x, y)
+            }
+            close()
+        }
+        drawPath(path = starPath, color = emptyColor)
+        if (fillFraction > 0f) {
+            clipRect(right = size.width * fillFraction.coerceIn(0f, 1f)) {
+                drawPath(path = starPath, color = filledColor)
+            }
+        }
+    }
+}
+
+@Composable
+private fun rememberDetailsSkeletonPulse(): Float {
+    val transition = rememberInfiniteTransition(label = "detailsSkeleton")
+    val pulse by transition.animateFloat(
+        initialValue = 0.55f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(1_000), RepeatMode.Reverse),
+        label = "detailsSkeletonPulse",
+    )
+    return pulse
 }
 
 @Composable
 private fun MetaRow(details: CatalogDetails, state: DetailsUiState.Content) {
     val item = details.item
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.heightIn(min = 24.dp)) {
         item.rating?.takeIf { it > 0f }?.let {
             Text(
                 text = localizedStringResource(StringsR.string.details_rating, it),

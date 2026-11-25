@@ -44,6 +44,7 @@ sealed interface DetailsUiState {
     data class Error(val message: String) : DetailsUiState
     data class Content(
         val details: CatalogDetails,
+        val detailsLoading: Boolean = true,
         val sources: SourcesState = SourcesState.Idle,
         val selectedSeason: Int? = null,
         val episodes: EpisodesState = EpisodesState.Loading,

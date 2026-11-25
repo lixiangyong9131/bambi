@@ -360,6 +360,7 @@ class CatalogRepositoryImpl @Inject constructor(
                     directors = d.created_by.map { Person(it.id, it.name, null, it.profile_path?.let(TmdbImages::profile)) },
                     trailerKey = d.videos.trailers().firstOrNull(),
                     trailerKeys = d.videos.trailers(),
+                    doubanRating = d.douban_rating?.toDomain(),
                 )
             } else {
                 val d = tmdb.movieDetails(id, key, append = "images,translations,credits,videos")
@@ -380,6 +381,7 @@ class CatalogRepositoryImpl @Inject constructor(
                     trailerKey = d.videos.trailers().firstOrNull(),
                     trailerKeys = d.videos.trailers(),
                     collection = d.belongs_to_collection?.takeIf { it.id > 0 }?.let { CollectionRef(it.id, it.name) },
+                    doubanRating = d.douban_rating?.toDomain(),
                 )
             }
             itemCache[cacheKey] = result.item
@@ -490,6 +492,16 @@ class CatalogRepositoryImpl @Inject constructor(
     private class CachedAiring(val at: Long, val value: ShowAiring)
     private val airingCache = ConcurrentHashMap<String, CachedAiring>()
     private val airingLocks = ConcurrentHashMap<String, Mutex>()
+
+    private fun com.shieldstream.tv.network.dto.TmdbDoubanRatingDto.toDomain(): com.shieldstream.tv.model.DoubanRatingInfo? {
+        if (score <= 0f && voteCount <= 0 && starDistribution.isEmpty()) return null
+        return com.shieldstream.tv.model.DoubanRatingInfo(
+            score = score,
+            starCount = starCount,
+            voteCount = voteCount,
+            starDistribution = starDistribution,
+        )
+    }
 
     override suspend fun getShowAiring(id: String): ShowAiring? {
         val tmdbId = id.toIntOrNull() ?: return null

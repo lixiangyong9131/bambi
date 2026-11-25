@@ -125,6 +125,27 @@ fun PosterCard(
                     .align(Alignment.TopEnd)
                     .padding(6.dp),
             )
+        } else {
+            val ratingText = remember(item.rating) {
+                item.rating?.takeIf { it > 0f }?.let { String.format(java.util.Locale.US, "%.1f", it) }
+            }
+            if (ratingText != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.Black.copy(alpha = 0.72f))
+                        .padding(horizontal = 5.dp, vertical = 2.dp),
+                ) {
+                    Text(
+                        text = ratingText,
+                        color = Color(0xFFFFC145),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
         }
     }
 }

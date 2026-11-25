@@ -43,7 +43,7 @@ fun CategoryScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     Box(Modifier.fillMaxSize().background(Color.Black).onBackKey(enabled = true) { onBack() }) {
         when (val s = state) {
-            HomeUiState.Loading -> HomeSkeleton()
+            HomeUiState.Loading -> HomeSkeleton(hasHeader = true)
             is HomeUiState.Error -> HomeError(s.message, onRetry = { viewModel.load(category, filter, force = true) })
             is HomeUiState.Content -> RowsBrowser(
                 rows = s.rows,

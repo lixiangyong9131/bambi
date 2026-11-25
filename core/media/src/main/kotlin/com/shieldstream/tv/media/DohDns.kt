@@ -38,8 +38,13 @@ object DohDns : Dns {
         cache[hostname]?.takeIf { now - it.at < CACHE_TTL_MS && it.addrs.isNotEmpty() }?.let { return it.addrs }
         val resolved = runCatching { doh.lookup(hostname) }
             .getOrDefault(emptyList())
-            .ifEmpty { runCatching { Dns.SYSTEM.lookup(hostname) }.getOrDefault(emptyList()) }
+            .filter { !it.isLoopbackAddress && !it.isAnyLocalAddress && !it.isLinkLocalAddress }
+            .ifEmpty {
+                runCatching { Dns.SYSTEM.lookup(hostname) }
+                    .getOrDefault(emptyList())
+                    .filter { !it.isLoopbackAddress && !it.isAnyLocalAddress && !it.isLinkLocalAddress }
+            }
         if (resolved.isNotEmpty()) cache[hostname] = CachedEntry(now, resolved)
-        return resolved
+        return resolved.ifEmpty { Dns.SYSTEM.lookup(hostname) }
     }
 }

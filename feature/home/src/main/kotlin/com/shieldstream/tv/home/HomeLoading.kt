@@ -19,9 +19,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -35,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.shieldstream.tv.ui.component.PosterWidth
@@ -44,16 +47,15 @@ import kotlinx.coroutines.delay
 
 // Inicio → pantallas de carga y de error.
 
-internal val SkeletonColor = Color(0xFF1C1E2A)
+internal val SkeletonColor = Color(0xFF1A1D28)
+private val SkeletonTitleColor = Color(0xFF232736)
+private val SkeletonCardShape = RoundedCornerShape(6.dp)
 
 @Composable
 internal fun delayedSkeletonAlpha(): Float {
     var visible by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        delay(250)
-        visible = true
-    }
-    val alpha by animateFloatAsState(if (visible) 1f else 0f, tween(300), label = "skeleton")
+    LaunchedEffect(Unit) { visible = true }
+    val alpha by animateFloatAsState(if (visible) 1f else 0.65f, tween(180), label = "skeleton")
     return alpha
 }
 
@@ -70,36 +72,86 @@ internal fun skeletonPulse(): Float {
     return pulse
 }
 
+/**
+ * Matches [RowsBrowser] geometry: top hero-info block (172dp) + poster rows below + bottom fade,
+ * so switching tabs shows aligned placeholders in place of the old full-screen banner skeleton.
+ */
 @Composable
-internal fun HomeSkeleton() {
+internal fun HomeSkeleton(
+    hasHeader: Boolean = false,
+    modifier: Modifier = Modifier.fillMaxSize(),
+) {
     val alpha = delayedSkeletonAlpha() * skeletonPulse()
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(AppColors.Background)
-            .graphicsLayer { this.alpha = alpha }
-            .padding(start = ContentStart, top = 140.dp),
-    ) {
-        repeat(2) {
-            Box(
+    Box(modifier.background(RowBackground)) {
+        // Subtle ambient glow in the upper-right backdrop stage.
+        Box(
+            Modifier
+                .align(Alignment.TopEnd)
+                .fillMaxWidth(0.56f)
+                .height(348.dp)
+                .graphicsLayer { this.alpha = alpha }
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(Color(0xFF1B2030), Color.Black),
+                    ),
+                ),
+        )
+        Column(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer { this.alpha = alpha },
+        ) {
+            Column(
                 Modifier
-                    .width(180.dp)
-                    .height(18.dp)
-                    .background(SkeletonColor, AppShapes.Badge),
-            )
-            Spacer(Modifier.height(14.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                repeat(7) {
+                    .fillMaxWidth()
+                    .height(172.dp)
+                    .padding(start = ContentStart, top = 8.dp, end = 320.dp),
+                verticalArrangement = Arrangement.Bottom,
+            ) {
+                if (hasHeader) {
+                    Box(Modifier.width(140.dp).height(24.dp).background(SkeletonTitleColor, AppShapes.Badge))
+                    Spacer(Modifier.height(10.dp))
+                }
+                Box(Modifier.width(260.dp).height(30.dp).background(SkeletonTitleColor, AppShapes.Badge))
+                Spacer(Modifier.height(10.dp))
+                Box(Modifier.width(170.dp).height(14.dp).background(SkeletonColor, AppShapes.Badge))
+                Spacer(Modifier.height(10.dp))
+                Box(Modifier.width(420.dp).height(14.dp).background(SkeletonColor, AppShapes.Badge))
+                Spacer(Modifier.height(6.dp))
+                Box(Modifier.width(300.dp).height(14.dp).background(SkeletonColor, AppShapes.Badge))
+            }
+            Column(Modifier.fillMaxWidth().weight(1f)) {
+                repeat(2) { rowIdx ->
                     Box(
                         Modifier
-                            .width(PosterWidth)
-                            .aspectRatio(2f / 3f)
-                            .background(SkeletonColor, AppShapes.Control),
+                            .padding(start = ContentStart, top = 4.dp)
+                            .width(if (rowIdx == 0) 140.dp else 170.dp)
+                            .height(20.dp)
+                            .background(SkeletonTitleColor, AppShapes.Badge),
                     )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.padding(horizontal = ContentStart, vertical = 14.dp),
+                    ) {
+                        repeat(7) {
+                            Box(
+                                Modifier
+                                    .width(PosterWidth)
+                                    .aspectRatio(2f / 3f)
+                                    .background(SkeletonColor, SkeletonCardShape),
+                            )
+                        }
+                    }
                 }
             }
-            Spacer(Modifier.height(24.dp))
         }
+        Box(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(150.dp)
+                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black))),
+        )
     }
 }
 

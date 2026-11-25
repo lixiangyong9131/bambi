@@ -22,8 +22,12 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import okhttp3.Dns
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.dnsoverhttps.DnsOverHttps
+import java.net.InetAddress
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -50,29 +54,68 @@ class CmsStreams @Inject constructor(
         private const val IQIYI = "https://www.iqiyizyapi.com/api.php/provide/vod"        // iQIYI资源
         private const val MODU = "https://www.mdzyapi.com/api.php/provide/vod"            // 魔都资源
         // Modified build: newly verified sources (both titles -> 29-30 valid m3u8 lines).
-        private const val RYI = "http://www.ryzyw.com/api.php/provide/vod"                // 如意资源(备域名)
+        private const val RYI = "http://cj.rycjapi.com/api.php/provide/vod"                    // 如意资源
         private const val JISU = "https://www.jisuzy.com/api.php/provide/vod"             // 速播资源(备域名)
         private const val HONGNIU = "https://www.hongniuzy2.com/api.php/provide/vod"      // 红牛资源
-        // Pair = display name to base URL. Ordered by reliability/speed; verified sources first.
-        // Modified build: only keep the sites verified to return real m3u8 for multiple titles.
-        // Dead/slow sites (魔都/电影天堂/暴风/淘片) never yielded resources and their 6s timeouts
-        // were the main reason source lookup felt slow on "continue playing".
+        // Put consistently low-latency direct sources first; slow/ISP-throttled mirrors stay at the tail.
         private val SOURCES = listOf(
-            "如意资源" to RYI,
             "非凡影视" to API,
-            "速播资源" to JISU,
-            "红牛资源" to HONGNIU,
             "iQIYI" to IQIYI,
+            "红牛资源" to HONGNIU,
+            "速播资源" to JISU,
+            "如意资源" to RYI,
         )
-        // Search: 如意 first (best Chinese substring matching - "谷" alone returns 211 rows
-        // including 《谷雨》), then the general purpose sites as a fallback.
-        private val SEARCH_SOURCES = listOf(RYI, API, JISU, HONGNIU)
+        // Metadata & search use fast responsive endpoints first so Details/Search never stall on blocked edges.
+        private val SEARCH_SOURCES = listOf(API, IQIYI, HONGNIU, JISU)
         private const val CACHE_TTL_MS = 10 * 60_000L
-        // Short timeout so an unreachable source is skipped fast instead of hanging playback.
+        private const val DNS_TTL_MS = 5 * 60_000L
+
+        /**
+         * System DNS first (0ms overhead for clean hosts), falling back to DoH only when system DNS
+         * fails or resolves to a poisoned loopback/unspecified address.
+         */
+        private object SmartDns : Dns {
+            private class Entry(val at: Long, val addrs: List<InetAddress>)
+            private val cache = ConcurrentHashMap<String, Entry>()
+            private val bootstrap = OkHttpClient.Builder()
+                .connectTimeout(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
+                .readTimeout(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
+                .build()
+            private val dohPub = DnsOverHttps.Builder()
+                .client(bootstrap)
+                .url("https://doh.pub/dns-query".toHttpUrl())
+                .bootstrapDnsHosts(
+                    InetAddress.getByName("1.12.12.12"),
+                    InetAddress.getByName("223.5.5.5"),
+                )
+                .includeIPv6(false)
+                .build()
+
+            override fun lookup(hostname: String): List<InetAddress> {
+                val now = System.currentTimeMillis()
+                cache[hostname]?.takeIf { now - it.at < DNS_TTL_MS }?.let { return it.addrs }
+                val sys = runCatching { Dns.SYSTEM.lookup(hostname) }.getOrDefault(emptyList())
+                    .filter { !it.isLoopbackAddress && !it.isAnyLocalAddress && !it.isLinkLocalAddress }
+                if (sys.isNotEmpty()) {
+                    cache[hostname] = Entry(now, sys)
+                    return sys
+                }
+                val dohAddrs = runCatching { dohPub.lookup(hostname) }.getOrDefault(emptyList())
+                    .filter { !it.isLoopbackAddress && !it.isAnyLocalAddress && !it.isLinkLocalAddress }
+                if (dohAddrs.isNotEmpty()) {
+                    cache[hostname] = Entry(now, dohAddrs)
+                    return dohAddrs
+                }
+                return Dns.SYSTEM.lookup(hostname)
+            }
+        }
+
+        // Fast timeouts so unresponsive mirrors never stall source discovery on Details entry.
         private val cmsClient: OkHttpClient = OkHttpClient.Builder()
-            .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(6, java.util.concurrent.TimeUnit.SECONDS)
-            .writeTimeout(8, java.util.concurrent.TimeUnit.SECONDS)
+            .dns(SmartDns)
+            .connectTimeout(2000, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .readTimeout(3500, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .writeTimeout(3500, java.util.concurrent.TimeUnit.MILLISECONDS)
             .build()
     }
 
@@ -103,6 +146,7 @@ class CmsStreams @Inject constructor(
     private val titleBundleCache = ConcurrentHashMap<String, TitleBundle>()
     private val titleBundleLocks = ConcurrentHashMap<String, Mutex>()
     private val siteDetailCache = ConcurrentHashMap<String, CachedSiteDetail>()
+    private val siteDetailLocks = ConcurrentHashMap<String, Mutex>()
     @Volatile
     private var initialPool: InitialPool? = null
     private val initialPoolLock = Mutex()
@@ -183,7 +227,7 @@ class CmsStreams @Inject constructor(
     /** Fetch the full episode list of a TV show from the CMS detail (第01集$url#第02集$url...). */
     suspend fun getEpisodes(title: String): List<EpisodeInfo> = getTitleBundle(title).episodes
 
-    /** Fetch both description and episodes in a single CMS pass and cache them across Details/Season/Playback. */
+    /** Fetch both description and episodes in a single parallel CMS pass and cache across Details/Playback. */
     private suspend fun getTitleBundle(title: String): TitleBundle {
         val t = clean(title)
         if (t.isBlank()) return TitleBundle(0L, "", emptyList())
@@ -193,11 +237,21 @@ class CmsStreams @Inject constructor(
             val loaded = withContext(Dispatchers.IO) {
                 var desc = ""
                 var eps: List<EpisodeInfo> = emptyList()
-                for (base in SEARCH_SOURCES) {
-                    val v = fetchDetailForTitle(base, t) ?: continue
+                val fastDetails = SEARCH_SOURCES.take(2).map { base ->
+                    async { fetchDetailForTitle(base, t) }
+                }.awaitAll()
+                for (v in fastDetails) {
+                    if (v == null) continue
                     if (desc.isBlank()) desc = parseDescription(v)
                     if (eps.isEmpty()) eps = parseEpisodes(v)
-                    if (desc.isNotBlank() && eps.isNotEmpty()) break
+                }
+                if (desc.isBlank() || eps.isEmpty()) {
+                    for (base in SEARCH_SOURCES.drop(2)) {
+                        val v = fetchDetailForTitle(base, t) ?: continue
+                        if (desc.isBlank()) desc = parseDescription(v)
+                        if (eps.isEmpty()) eps = parseEpisodes(v)
+                        if (desc.isNotBlank() && eps.isNotEmpty()) break
+                    }
                 }
                 TitleBundle(System.currentTimeMillis(), desc, eps)
             }
@@ -208,22 +262,25 @@ class CmsStreams @Inject constructor(
         }
     }
 
-    private fun fetchDetailForTitle(base: String, cleanTitle: String): JsonObject? {
+    private suspend fun fetchDetailForTitle(base: String, cleanTitle: String): JsonObject? {
         val cacheKey = "$base|$cleanTitle"
-        val now = System.currentTimeMillis()
-        siteDetailCache[cacheKey]?.takeIf { now - it.at < CACHE_TTL_MS }?.let { return it.detail }
+        siteDetailCache[cacheKey]?.takeIf { System.currentTimeMillis() - it.at < CACHE_TTL_MS }?.let { return it.detail }
+        return siteDetailLocks.getOrPut(cacheKey) { Mutex() }.withLock {
+            val now = System.currentTimeMillis()
+            siteDetailCache[cacheKey]?.takeIf { now - it.at < CACHE_TTL_MS }?.let { return@withLock it.detail }
 
-        val rows = parseList(get("$base?ac=vod&wd=" + URLEncoder.encode(cleanTitle, "UTF-8"))) ?: return null
-        if (rows.isEmpty()) return null
-        val cand = rows.firstOrNull { row ->
-            val n = clean(str(row, "vod_name"))
-            n == cleanTitle || n.contains(cleanTitle.take(6), true) || cleanTitle.contains(n.take(6), true)
-        } ?: rows.first()
-        val vid = str(cand, "vod_id")
-        val detailRows = parseList(get("$base?ac=detail&ids=" + URLEncoder.encode(vid, "UTF-8")))
-        val v = detailRows?.firstOrNull() ?: cand
-        siteDetailCache[cacheKey] = CachedSiteDetail(now, v)
-        return v
+            val rows = parseList(get("$base?ac=vod&wd=" + URLEncoder.encode(cleanTitle, "UTF-8"))) ?: return@withLock null
+            if (rows.isEmpty()) return@withLock null
+            val cand = rows.firstOrNull { row ->
+                val n = clean(str(row, "vod_name"))
+                n == cleanTitle || n.contains(cleanTitle.take(6), true) || cleanTitle.contains(n.take(6), true)
+            } ?: rows.first()
+            val vid = str(cand, "vod_id")
+            val detailRows = parseList(get("$base?ac=detail&ids=" + URLEncoder.encode(vid, "UTF-8")))
+            val v = detailRows?.firstOrNull() ?: cand
+            siteDetailCache[cacheKey] = CachedSiteDetail(now, v)
+            v
+        }
     }
 
     private fun parseDescription(v: JsonObject): String {
@@ -264,8 +321,9 @@ class CmsStreams @Inject constructor(
         withContext(Dispatchers.IO) {
             SOURCES.mapIndexed { idx, (label, base) ->
                 launch {
-                    val sources = runCatching { searchAndBuild(base, title, episode, label) }
-                        .getOrDefault(emptyList())
+                    val sources = kotlinx.coroutines.withTimeoutOrNull(4_500L) {
+                        runCatching { searchAndBuild(base, title, episode, label) }.getOrDefault(emptyList())
+                    }.orEmpty()
                     android.util.Log.i("CmsStream", "$label -> ${sources.size} sources")
                     if (sources.isNotEmpty()) {
                         val snapshot = lock.withLock {
@@ -294,7 +352,7 @@ class CmsStreams @Inject constructor(
         return latest
     }
 
-    private fun searchAndBuild(base: String, title: String, episode: com.shieldstream.tv.model.Episode?, siteLabel: String = "CMS"): List<StreamSource> {
+    private suspend fun searchAndBuild(base: String, title: String, episode: com.shieldstream.tv.model.Episode?, siteLabel: String = "CMS"): List<StreamSource> {
         val v = fetchDetailForTitle(base, title) ?: return emptyList()
         val vid = str(v, "vod_id")
         val url = pickPlayUrl(v, episode?.number) ?: return emptyList()
@@ -358,13 +416,16 @@ class CmsStreams @Inject constructor(
     }
 
     private fun get(url: String): String? = runCatching {
-        // Modified build: use the system DNS directly. The box's DNS recovered and works;
-        // the DoH layer only added latency and used stale/wrong IPs.
         val req = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
         cmsClient.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) return null
+            if (!resp.isSuccessful) {
+                android.util.Log.w("CmsStream", "GET $url -> HTTP ${resp.code}")
+                return null
+            }
             resp.body?.string()
         }
+    }.onFailure { e ->
+        android.util.Log.w("CmsStream", "GET $url failed: ${e.javaClass.simpleName}: ${e.message}")
     }.getOrNull()
 
     private fun parseList(body: String?): List<JsonObject>? {

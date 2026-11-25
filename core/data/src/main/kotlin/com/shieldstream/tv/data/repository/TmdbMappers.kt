@@ -12,9 +12,10 @@ internal object TmdbImages {
     private const val ROOT = "https://image.tmdb.org/t/p"
 
     // Direct sources (Douban) provide full URLs; pass them through. Upgrade Douban's
-    // small poster (s_ratio_poster) to the large variant (l_ratio_poster).
+    // small/medium poster (s_ratio_poster / m_ratio_poster) to the large variant (l_ratio_poster).
     private fun full(path: String): String? = if (path.startsWith("http"))
         path.replace("s_ratio_poster", "l_ratio_poster")
+            .replace("m_ratio_poster", "l_ratio_poster")
     else null
 
     fun poster(path: String) = full(path) ?: "$ROOT/w342$path"

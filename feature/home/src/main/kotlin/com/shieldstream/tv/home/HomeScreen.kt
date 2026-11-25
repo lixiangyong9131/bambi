@@ -72,7 +72,7 @@ fun HomeScreen(
     val hidden by viewModel.hiddenCategories.collectAsStateWithLifecycle()
 
     when (val s = state) {
-        HomeUiState.Loading -> Column(Modifier.fillMaxSize().background(BillboardBackground)) {
+        HomeUiState.Loading -> Column(Modifier.fillMaxSize().background(RowBackground)) {
             topBar(Modifier)
             LaunchedEffect(Unit) {
                 if (preferTopBarFocus) {
@@ -80,7 +80,7 @@ fun HomeScreen(
                     focusTopBar()
                 }
             }
-            BillboardSkeleton()
+            HomeSkeleton(modifier = Modifier.fillMaxWidth().weight(1f))
         }
         is HomeUiState.Error -> Column(Modifier.fillMaxSize().background(BillboardBackground)) {
             topBar(Modifier)

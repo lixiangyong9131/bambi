@@ -9,11 +9,13 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.fillMaxSize
@@ -21,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -47,6 +51,8 @@ import com.shieldstream.tv.model.CatalogItem
 import com.shieldstream.tv.model.Category
 import com.shieldstream.tv.model.FeaturedItem
 import com.shieldstream.tv.model.MediaType
+import com.shieldstream.tv.ui.component.AmbientBackdropImage
+import com.shieldstream.tv.ui.component.FeatheredBackdropStage
 import com.shieldstream.tv.ui.component.onBackKey
 import com.shieldstream.tv.ui.component.requestFocusWithRetry
 import com.shieldstream.tv.ui.theme.LocalSoftBackdrops
@@ -140,43 +146,47 @@ internal fun Billboard(
     }
 }
 
-/** Backdrop del título enfocado, arriba a la derecha, fundido a negro por la izquierda y por abajo. */
+/**
+ * Edge-extended ambient backdrop across the full list viewport (so the lower rows stay tinted
+ * instead of cutting to flat black), paired with the lowered borderless cover artwork on top-right.
+ */
 @Composable
 internal fun HeroBackdrop(item: CatalogItem) {
-    // Direct swap without full-screen Crossfade (per AGENTS.md: avoids double 1080p compositing
-    // and dropped frames on TV boxes). Explicitly size to screen metrics to share HomePreloader's cache.
-    val url = BackdropUrls.fullScreen(item.backdropUrl, lightweight = false, highRes = LocalHighResBackdrops.current)
-    val context = LocalContext.current
-    val request = remember(url, context) {
-        url?.let {
-            val metrics = context.resources.displayMetrics
-            ImageRequest.Builder(context)
-                .data(it)
-                .size(metrics.widthPixels, metrics.heightPixels)
-                .build()
-        }
-    }
+    val artworkUrl = item.posterUrl ?: BackdropUrls.fullScreen(item.backdropUrl, lightweight = false, highRes = LocalHighResBackdrops.current)
     Box(Modifier.fillMaxSize()) {
-        if (request != null) {
-            AsyncImage(
-                model = request,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
+        if (artworkUrl != null) {
+            AmbientBackdropImage(
+                url = artworkUrl,
                 modifier = Modifier.fillMaxSize(),
             )
         }
+        FeatheredBackdropStage(
+            heroUrl = artworkUrl,
+            ambientUrl = null,
+            stageHeight = 395.dp,
+            heroWidthFraction = 0.54f,
+            leftScrimAlpha = 0f,
+            topPadding = 16.dp,
+            verticalBias = 0.12f,
+            fadeBottomToBlack = false,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
         Box(
             Modifier.fillMaxSize().background(
                 Brush.horizontalGradient(
-                    0f to Color.Black,
-                    0.30f to Color.Black.copy(alpha = 0.80f),
-                    0.62f to Color.Transparent,
+                    0f to Color.Black.copy(alpha = 0.78f),
+                    0.42f to Color.Black.copy(alpha = 0.36f),
+                    0.75f to Color.Transparent,
                 ),
             ),
         )
         Box(
             Modifier.fillMaxSize().background(
-                Brush.verticalGradient(0.55f to Color.Transparent, 1f to Color.Black),
+                Brush.verticalGradient(
+                    0f to Color.Black.copy(alpha = 0.14f),
+                    0.52f to Color.Black.copy(alpha = 0.44f),
+                    1f to Color.Black.copy(alpha = 0.72f),
+                ),
             ),
         )
     }

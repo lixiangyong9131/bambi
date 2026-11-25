@@ -65,11 +65,11 @@ fun MainScreen(
         TopTab.MOVIES -> HomeFilter.MOVIES
         else -> HomeFilter.ALL
     }
-    val episodeCenter: EpisodeCenterViewModel = hiltViewModel()
+    val episodeCenter: EpisodeCenterViewModel? = if (tab == TopTab.EPISODES) hiltViewModel() else null
     val downloadsViewModel: DownloadsViewModel = hiltViewModel()
     val downloadList by downloadsViewModel.downloads.collectAsState()
-    val episodeState by episodeCenter.uiState.collectAsState()
-    LaunchedEffect(tab) { if (tab == TopTab.EPISODES) episodeCenter.activate() }
+    val episodeState by (episodeCenter?.uiState?.collectAsState() ?: remember { mutableStateOf<EpisodeCenterUiState>(EpisodeCenterUiState.Loading) })
+    LaunchedEffect(tab) { if (tab == TopTab.EPISODES) episodeCenter?.activate() }
     val focusTopBar: () -> Unit = { runCatching { topBarRequester.requestFocus() } }
     val scope = rememberCoroutineScope()
     val onBackToTop: () -> Unit = {
@@ -128,7 +128,7 @@ fun MainScreen(
                     Box(Modifier.fillMaxWidth().weight(1f)) {
                         when (tab) {
                             TopTab.SEARCH -> saveable.SaveableStateProvider("tab_${tab.name}") { SearchScreen(onItemClick = onOpenItem) }
-                            TopTab.EPISODES -> EpisodeCenterScreen(onOpenEpisode = onOpenNewEpisode, viewModel = episodeCenter)
+                            TopTab.EPISODES -> EpisodeCenterScreen(onOpenEpisode = onOpenNewEpisode, viewModel = episodeCenter!!)
                             else -> saveable.SaveableStateProvider("tab_${tab.name}") { MyListScreen(onItemClick = onOpenItem) }
                         }
                     }

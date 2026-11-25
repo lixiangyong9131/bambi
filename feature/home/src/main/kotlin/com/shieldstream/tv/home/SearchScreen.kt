@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -46,6 +47,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -295,6 +297,16 @@ fun SearchScreen(
                 verticalArrangement = Arrangement.spacedBy(18.dp),
                 modifier = Modifier.fillMaxSize(),
             ) {
+                if (state is SearchUiState.Loading) {
+                    items(10, key = { "search_skeleton_$it" }) {
+                        Box(
+                            Modifier
+                                .width(118.dp)
+                                .aspectRatio(2f / 3f)
+                                .background(SkeletonColor, RoundedCornerShape(6.dp)),
+                        )
+                    }
+                }
                 items(items, key = { it.key }) { item ->
                     PosterCard(
                         item = item,

@@ -333,6 +333,7 @@ class DetailsViewModel @Inject constructor(
         // instead of holding on a blank loading spinner while Douban/CMS details load.
         _uiState.value = DetailsUiState.Content(
             CatalogDetails(item),
+            detailsLoading = true,
             progress = watchProgress.progress.value,
             inMyList = myList.contains(item.type, item.id),
             following = if (item.type == MediaType.TV) tracking.isFollowing(item.id) else false,
@@ -374,6 +375,7 @@ class DetailsViewModel @Inject constructor(
             updateContent {
                 it.copy(
                     details = details,
+                    detailsLoading = false,
                     progress = watchProgress.progress.value,
                     inMyList = myList.contains(details.item.type, details.item.id),
                     following = if (details.item.type == MediaType.TV) tracking.isFollowing(details.item.id) else it.following,
@@ -761,11 +763,17 @@ class DetailsViewModel @Inject constructor(
             updateContent { it.copy(probingDone = true) }
             return
         }
-        updateContent { it.copy(sourceProbes = emptyMap(), probingDone = false) }
+        // Keep already-completed probes for current candidates so streaming updates from CmsStreams
+        // do not wipe and re-probe existing cards.
+        val candidateIds = candidates.map { it.id }.toSet()
+        val preserved = content()?.sourceProbes.orEmpty().filterKeys { it in candidateIds }
+        val pending = candidates.filter { it.id !in preserved }
+        updateContent { it.copy(sourceProbes = preserved, probingDone = pending.isEmpty()) }
+        if (pending.isEmpty()) return
         probeJob = viewModelScope.launch {
             val gate = Semaphore(3)
             coroutineScope {
-                candidates.map { src ->
+                pending.map { src ->
                     launch {
                         val result = gate.withPermit {
                             if (!isActive) return@withPermit null

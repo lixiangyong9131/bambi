@@ -1,11 +1,28 @@
 package com.shieldstream.tv.ui.component
 
 import android.graphics.Bitmap
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Size
@@ -44,6 +61,134 @@ fun SoftBackdropImage(url: String, modifier: Modifier = Modifier) {
         contentScale = ContentScale.Crop,
         modifier = modifier,
     )
+}
+
+/**
+ * Borderless TV hero stage combining an edge-extended [AmbientBackdropImage] fill with a right-side
+ * un-bloated sharp artwork that smoothly feathers into the ambient backdrop and bottom black fade.
+ */
+@Composable
+fun FeatheredBackdropStage(
+    heroUrl: String?,
+    ambientUrl: String?,
+    stageHeight: Dp,
+    modifier: Modifier = Modifier,
+    heroWidthFraction: Float = 0.62f,
+    leftScrimAlpha: Float = 0.74f,
+    topPadding: Dp = 0.dp,
+    verticalBias: Float = 0.12f,
+    fadeBottomToBlack: Boolean = true,
+) {
+    Box(
+        modifier
+            .fillMaxWidth()
+            .height(stageHeight),
+    ) {
+        if (ambientUrl != null) {
+            AmbientBackdropImage(
+                url = ambientUrl,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        if (heroUrl != null) {
+            AsyncImage(
+                model = heroUrl,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                alignment = BiasAlignment(0f, verticalBias),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = topPadding)
+                    .fillMaxWidth(heroWidthFraction)
+                    .fillMaxHeight()
+                    .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                    .drawWithContent {
+                        drawContent()
+                        drawRect(
+                            brush = Brush.horizontalGradient(
+                                0f to Color.Transparent,
+                                0.30f to Color.White.copy(alpha = 0.85f),
+                                0.48f to Color.White,
+                            ),
+                            blendMode = BlendMode.DstIn,
+                        )
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                0f to if (topPadding > 0.dp) Color.Transparent else Color.White,
+                                0.08f to Color.White,
+                                0.56f to Color.White,
+                                0.96f to Color.Transparent,
+                                1f to Color.Transparent,
+                            ),
+                            blendMode = BlendMode.DstIn,
+                        )
+                    },
+            )
+        }
+        if (leftScrimAlpha > 0f) {
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.horizontalGradient(
+                        0f to Color.Black.copy(alpha = leftScrimAlpha),
+                        0.38f to Color.Black.copy(alpha = 0.36f),
+                        0.72f to Color.Transparent,
+                    ),
+                ),
+            )
+        }
+        if (fadeBottomToBlack) {
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(
+                        0.58f to Color.Transparent,
+                        0.96f to Color.Black,
+                        1f to Color.Black,
+                    ),
+                ),
+            )
+        }
+    }
+}
+
+/**
+ * Edge-extended ambient color wash decoded once on Coil's background thread from a tiny
+ * [AmbientSize] bitmap: clamping box-blur smears the poster's edge colors smoothly outward
+ * without per-frame GPU blur cost.
+ */
+@Composable
+fun AmbientBackdropImage(url: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val request = remember(url, context) {
+        ImageRequest.Builder(context)
+            .data(url)
+            .size(AmbientWidth, AmbientHeight)
+            .transformations(AmbientTransformation)
+            .build()
+    }
+    AsyncImage(
+        model = request,
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = modifier,
+    )
+}
+
+private const val AmbientWidth = 144
+private const val AmbientHeight = 144
+private const val AmbientRadius = 18
+
+private object AmbientTransformation : Transformation {
+    override val cacheKey: String = "ambient-$AmbientWidth-$AmbientRadius"
+
+    override suspend fun transform(input: Bitmap, size: Size): Bitmap {
+        val scaled = Bitmap.createScaledBitmap(input, AmbientWidth, AmbientHeight, true)
+        val pixels = IntArray(AmbientWidth * AmbientHeight)
+        scaled.getPixels(pixels, 0, AmbientWidth, 0, 0, AmbientWidth, AmbientHeight)
+        boxBlur(pixels, AmbientWidth, AmbientHeight, AmbientRadius, passes = 3)
+        val output = Bitmap.createBitmap(AmbientWidth, AmbientHeight, Bitmap.Config.ARGB_8888)
+        output.setPixels(pixels, 0, AmbientWidth, 0, 0, AmbientWidth, AmbientHeight)
+        return output
+    }
 }
 
 private object SoftenTransformation : Transformation {

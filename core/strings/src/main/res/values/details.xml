@@ -98,7 +98,7 @@
     <string name="details_skip_enable">自动跳过片头片尾</string>
     <string name="details_skip_intro">片头时长</string>
     <string name="details_skip_outro">片尾时长</string>
-    <string name="details_skip_seconds">%1 秒</string>
+    <string name="details_skip_seconds">%1$d 秒</string>
     <string name="details_skip_off">关闭</string>
     <string name="details_skip_hint">设置后每集自动跳过片头和片尾</string>
     <string name="details_starring">主演：%1$s</string>

@@ -21,23 +21,21 @@ import javax.inject.Inject
 @HiltAndroidApp
 class App : Application(), ImageLoaderFactory, Configuration.Provider {
 
-    // Perezoso: Coil no hace falta hasta la primera imagen y así no retrasa el arranque.
+    // Lazy-injected so cold startup does not block App.onCreate initializing crypto/network graphs.
     @Inject
     lateinit var imageLoader: dagger.Lazy<ImageLoader>
 
     @Inject
-    lateinit var tokenStore: TokenStore
+    lateinit var tokenStore: dagger.Lazy<TokenStore>
 
     @Inject
     lateinit var workerFactory: HiltWorkerFactory
 
     @Inject
-    lateinit var episodeTracking: EpisodeTrackingRepository
+    lateinit var episodeTracking: dagger.Lazy<EpisodeTrackingRepository>
 
     @Inject
-    lateinit var watchNext: WatchNextManager
-
-
+    lateinit var watchNext: dagger.Lazy<WatchNextManager>
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
@@ -49,23 +47,21 @@ class App : Application(), ImageLoaderFactory, Configuration.Provider {
         ) ?: AppLanguage.default()
         super.onCreate()
         StartupTrace.mark("App inyectada")
-        tokenStore.seedOnce(TokenStore.RD_TOKEN, BuildConfig.RD_TOKEN)
-        tokenStore.seedOnce(TokenStore.TMDB_KEY, BuildConfig.TMDB_API_KEY)
-        tokenStore.seedOnce(TokenStore.SUBDL_KEY, BuildConfig.SUBDL_API_KEY)
-        // Solo en Bambi Pruebas: si no hay ningún addon, se deja preconfigurado Torrentio (código abierto) limitado
-        // a las webs españolas, para tener una sección solo con fuentes en castellano. Se quita desde Ajustes → Addons.
-        if (BuildConfig.DEBUG) {
-            tokenStore.seedOnce(TokenStore.keyNameFor(ApiService.AIOSTREAMS), DEBUG_SPANISH_ADDON)
-        }
-        StartupTrace.mark("App claves")
-        watchNext.start()
-        StartupTrace.mark("App watchNext")
-        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
-            episodeTracking.notificationsEnabled.collect { enabled ->
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            val store = tokenStore.get()
+            store.seedOnce(TokenStore.RD_TOKEN, BuildConfig.RD_TOKEN)
+            store.seedOnce(TokenStore.TMDB_KEY, BuildConfig.TMDB_API_KEY)
+            store.seedOnce(TokenStore.SUBDL_KEY, BuildConfig.SUBDL_API_KEY)
+            if (BuildConfig.DEBUG) {
+                store.seedOnce(TokenStore.keyNameFor(ApiService.AIOSTREAMS), DEBUG_SPANISH_ADDON)
+            }
+            StartupTrace.mark("App claves")
+            watchNext.get().start()
+            StartupTrace.mark("App watchNext")
+            episodeTracking.get().notificationsEnabled.collect { enabled ->
                 EpisodeNotificationScheduler.sync(this@App, enabled)
             }
         }
-
     }
 
     override fun newImageLoader(): ImageLoader = imageLoader.get()

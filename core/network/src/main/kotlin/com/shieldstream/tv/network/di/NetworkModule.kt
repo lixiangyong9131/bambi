@@ -77,12 +77,21 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideDoubanApi(client: OkHttpClient, json: Json): com.shieldstream.tv.network.api.DoubanApi {
-        // Douban blocks requests without a browser UA + Referer (HTTP 418).
+        // Douban blocks requests without a browser UA + matching Referer (HTTP 418/404).
         val doubanClient = client.newBuilder()
             .addInterceptor { chain ->
-                val request = chain.request().newBuilder()
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-                    .header("Referer", "https://movie.douban.com/")
+                val orig = chain.request()
+                val isMobileApi = orig.url.host.contains("m.douban.com")
+                val request = orig.newBuilder()
+                    .header(
+                        "User-Agent",
+                        if (isMobileApi) {
+                            "Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36 Mobile Safari/537.36"
+                        } else {
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                        },
+                    )
+                    .header("Referer", if (isMobileApi) "https://m.douban.com/" else "https://movie.douban.com/")
                     .build()
                 chain.proceed(request)
             }

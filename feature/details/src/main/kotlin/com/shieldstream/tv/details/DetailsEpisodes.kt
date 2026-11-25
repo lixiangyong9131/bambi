@@ -152,27 +152,50 @@ internal fun SeasonsAndEpisodes(
                 }
             }
         }
-        if (loadedEpisodes.isNotEmpty()) {
+        if (seasons.size > 1 && loadedEpisodes.isNotEmpty()) {
             // Con varias temporadas el recuento va aquí: al lado de las pestañas lo tapaban al desplazarlas.
-            if (seasons.size > 1) {
-                Text(
-                    text = localizedStringResource(StringsR.string.details_watched_count_short, watched, loadedEpisodes.size),
-                    color = WatchedCountColor,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(start = 56.dp, bottom = 2.dp),
-                )
-            }
             Text(
-                text = localizedStringResource(StringsR.string.details_hold_ok_for_episode_options),
-                color = Color.White.copy(alpha = 0.38f),
-                style = MaterialTheme.typography.labelSmall,
-                modifier = Modifier.padding(start = 56.dp),
+                text = localizedStringResource(StringsR.string.details_watched_count_short, watched, loadedEpisodes.size),
+                color = WatchedCountColor,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(start = 56.dp, bottom = 2.dp),
             )
         }
+        Text(
+            text = if (loadedEpisodes.isNotEmpty()) localizedStringResource(StringsR.string.details_hold_ok_for_episode_options) else "",
+            color = Color.White.copy(alpha = 0.38f),
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier.padding(start = 56.dp).height(18.dp),
+        )
         when (val eps = state.episodes) {
-            EpisodesState.Loading -> Text(localizedStringResource(StringsR.string.details_loading_episodes), color = Grey, modifier = Modifier.padding(start = 56.dp))
-            is EpisodesState.Error -> Text(eps.message, color = Grey, modifier = Modifier.padding(start = 56.dp))
-            is EpisodesState.Ready -> ProvidePivotScroll(leading = 56.dp) {
+            EpisodesState.Loading -> Column(Modifier.padding(horizontal = 56.dp, vertical = 12.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    repeat(6) {
+                        Column(
+                            Modifier
+                                .width(120.dp)
+                                .height(86.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color.White.copy(alpha = 0.10f)),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            Box(Modifier.width(34.dp).height(22.dp).clip(RoundedCornerShape(4.dp)).background(Color.White.copy(alpha = 0.22f)))
+                            Spacer(Modifier.height(8.dp))
+                            Box(Modifier.width(46.dp).height(10.dp).clip(RoundedCornerShape(3.dp)).background(Color.White.copy(alpha = 0.14f)))
+                        }
+                    }
+                }
+            }
+            is EpisodesState.Error -> Text(eps.message, color = Grey, modifier = Modifier.padding(start = 56.dp, top = 12.dp))
+            is EpisodesState.Ready -> if (eps.episodes.isEmpty()) {
+                Text(
+                    text = "暂无可用剧集信息，可点击「播放」或「片源」尝试查找",
+                    color = Grey,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(start = 56.dp, top = 12.dp),
+                )
+            } else ProvidePivotScroll(leading = 56.dp) {
                 // Modified build: FlowRow folds episodes left-to-right (1 2 3 4 5 ...) with no
                 // fixed height / infinite-constraint issues from a nested LazyVerticalGrid.
                 FlowRow(

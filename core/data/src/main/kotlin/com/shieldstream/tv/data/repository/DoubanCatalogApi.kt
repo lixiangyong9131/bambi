@@ -7,6 +7,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -28,6 +30,7 @@ class DoubanCatalogApi @Inject constructor(
     private val coverCache = java.util.concurrent.ConcurrentHashMap<Int, String>()
     /** Persistent id->cover so cold-start Continue Watching has art even if suggest is rate-limited. */
     private val coverPrefs = appContext.getSharedPreferences("douban_covers", android.content.Context.MODE_PRIVATE)
+    private val ratingLocks = ConcurrentHashMap<String, Mutex>()
     private fun rememberCover(id: Int, url: String) {
         if (url.isBlank()) return
         coverCache[id] = url
@@ -235,22 +238,32 @@ class DoubanCatalogApi @Inject constructor(
     }
 
     private suspend fun movieDetail(id: Int, full: Boolean): TmdbMovieDetailDto {
-        val a = safeAbstract(id.toString()) ?: return TmdbMovieDetailDto(id = id)
-        val s = a.subject ?: return TmdbMovieDetailDto(id = id)
-        val clean = cleanTitle(s.title)
+        val (abstractDto, rexxar) = coroutineScope {
+            val absJob = async { safeAbstract(id.toString()) }
+            val rexJob = async { if (full) rexxarDetail("movie", id) else (null to null) }
+            absJob.await() to rexJob.await()
+        }
+        val s = abstractDto?.subject
+        val rxSubject = rexxar.first
+        val rawTitle = s?.title ?: rxSubject?.title.orEmpty()
+        if (rawTitle.isBlank()) return TmdbMovieDetailDto(id = id)
+        val clean = cleanTitle(rawTitle)
+        val fallbackScore = (s?.rate?.toDoubleOrNull() ?: rxSubject?.rating?.value ?: 0.0).toFloat()
+        val doubanRating = if (full) buildRatingDto(rxSubject, rexxar.second, fallbackScore) else null
         val (cover, synopsis) = coroutineScope {
-            val coverJob = async { coverFor(id, s.title) }
+            val coverJob = async { coverFor(id, rawTitle, rxSubject?.pic) }
+            val fallbackDesc = s?.shortComment?.content.orEmpty().ifBlank { rxSubject?.intro.orEmpty() }
             val descJob = async {
                 if (full) {
-                    runCatching { cms.getDescription(clean) }.getOrDefault("").ifBlank { s.shortComment?.content.orEmpty() }
+                    runCatching { cms.getDescription(clean) }.getOrDefault("").ifBlank { fallbackDesc }
                 } else {
-                    s.shortComment?.content.orEmpty()
+                    fallbackDesc
                 }
             }
             coverJob.await() to descJob.await()
         }
         val cast = com.shieldstream.tv.network.dto.TmdbCreditsDto(
-            cast = s.actors.mapIndexed { i, name ->
+            cast = s?.actors.orEmpty().mapIndexed { i, name ->
                 com.shieldstream.tv.network.dto.TmdbCastDto(id = i, name = name, order = i)
             },
         )
@@ -260,30 +273,41 @@ class DoubanCatalogApi @Inject constructor(
             overview = synopsis,
             poster_path = cover,
             backdrop_path = cover,
-            release_date = s.releaseYear.ifBlank { null },
-            vote_average = (s.rate.toDoubleOrNull() ?: 0.0),
-            genres = s.types.map { TmdbGenreDto(name = it) },
+            release_date = (s?.releaseYear ?: rxSubject?.year.orEmpty()).ifBlank { null },
+            vote_average = (doubanRating?.score?.toDouble() ?: fallbackScore.toDouble()),
+            genres = (s?.types?.takeIf { it.isNotEmpty() } ?: rxSubject?.genres.orEmpty()).map { TmdbGenreDto(name = it) },
             credits = cast,
+            douban_rating = doubanRating,
         )
     }
 
     private suspend fun tvDetail(id: Int, full: Boolean): TmdbTvDetailDto {
-        val a = safeAbstract(id.toString()) ?: return TmdbTvDetailDto(id = id)
-        val s = a.subject ?: return TmdbTvDetailDto(id = id)
-        val clean = cleanTitle(s.title)
+        val (abstractDto, rexxar) = coroutineScope {
+            val absJob = async { safeAbstract(id.toString()) }
+            val rexJob = async { if (full) rexxarDetail("tv", id) else (null to null) }
+            absJob.await() to rexJob.await()
+        }
+        val s = abstractDto?.subject
+        val rxSubject = rexxar.first
+        val rawTitle = s?.title ?: rxSubject?.title.orEmpty()
+        if (rawTitle.isBlank()) return TmdbTvDetailDto(id = id)
+        val clean = cleanTitle(rawTitle)
         titleOf[id] = clean
-        // Modified build: Douban has no season data. Fetch cover + CMS bundle (episodes & description)
-        // in parallel only when full details are requested; lightweight item lookups skip CMS.
+        val fallbackScore = (s?.rate?.toDoubleOrNull() ?: rxSubject?.rating?.value ?: 0.0).toFloat()
+        val doubanRating = if (full) buildRatingDto(rxSubject, rexxar.second, fallbackScore) else null
+        // Modified build: Douban has no season data. Fetch cover + CMS bundle in parallel only when
+        // full details are requested; lightweight item lookups skip extra calls.
         val (cover, epsCount, synopsis) = coroutineScope {
-            val coverJob = async { coverFor(id, s.title) }
+            val coverJob = async { coverFor(id, rawTitle, rxSubject?.pic) }
             val epsJob = async {
                 if (full) runCatching { cms.getEpisodes(clean).size }.getOrDefault(0) else 0
             }
+            val fallbackDesc = s?.shortComment?.content.orEmpty().ifBlank { rxSubject?.intro.orEmpty() }
             val descJob = async {
                 if (full) {
-                    runCatching { cms.getDescription(clean) }.getOrDefault("").ifBlank { s.shortComment?.content.orEmpty() }
+                    runCatching { cms.getDescription(clean) }.getOrDefault("").ifBlank { fallbackDesc }
                 } else {
-                    s.shortComment?.content.orEmpty()
+                    fallbackDesc
                 }
             }
             Triple(coverJob.await(), epsJob.await(), descJob.await())
@@ -294,7 +318,7 @@ class DoubanCatalogApi @Inject constructor(
             ),
         ) else emptyList()
         val cast = com.shieldstream.tv.network.dto.TmdbCreditsDto(
-            cast = s.actors.mapIndexed { i, name ->
+            cast = s?.actors.orEmpty().mapIndexed { i, name ->
                 com.shieldstream.tv.network.dto.TmdbCastDto(id = i, name = name, order = i)
             },
         )
@@ -304,12 +328,13 @@ class DoubanCatalogApi @Inject constructor(
             overview = synopsis,
             poster_path = cover,
             backdrop_path = cover,
-            first_air_date = s.releaseYear.ifBlank { null },
-            vote_average = (s.rate.toDoubleOrNull() ?: 0.0),
-            genres = s.types.map { TmdbGenreDto(name = it) },
+            first_air_date = (s?.releaseYear ?: rxSubject?.year.orEmpty()).ifBlank { null },
+            vote_average = (doubanRating?.score?.toDouble() ?: fallbackScore.toDouble()),
+            genres = (s?.types?.takeIf { it.isNotEmpty() } ?: rxSubject?.genres.orEmpty()).map { TmdbGenreDto(name = it) },
             seasons = seasons,
             number_of_seasons = if (epsCount > 0) 1 else 0,
             aggregate_credits = cast,
+            douban_rating = doubanRating,
         )
     }
 
@@ -321,9 +346,14 @@ class DoubanCatalogApi @Inject constructor(
 
     /** Modified build: fill the cover from Douban suggest when the list cache is empty
      * (e.g. Continue Watching rebuilds items by id on a cold start). */
-    private suspend fun coverFor(id: Int, title: String): String? {
+    private suspend fun coverFor(id: Int, title: String, rexxarPic: DoubanRexxarPicDto? = null): String? {
         coverCache[id]?.let { return it }
         coverPrefs.getString(id.toString(), null)?.let { coverCache[id] = it; return it }
+        val picUrl = rexxarPic?.large?.takeIf { it.isNotBlank() } ?: rexxarPic?.normal?.takeIf { it.isNotBlank() }
+        if (picUrl != null) {
+            rememberCover(id, picUrl)
+            return picUrl
+        }
         // Titles may carry an English original suffix ("肖申克的救赎 The Shawshank Redemption")
         // which Douban suggest does not index - strip it so the Chinese title matches.
         var q = cleanTitle(title)
@@ -334,6 +364,59 @@ class DoubanCatalogApi @Inject constructor(
             .getOrDefault(null)
         if (!img.isNullOrBlank()) rememberCover(id, img)
         return img
+    }
+
+    private data class RexxarBundle(val at: Long, val subject: DoubanRexxarSubjectDto?, val stats: DoubanRexxarStatsDto?)
+    private val rexxarCache = ConcurrentHashMap<String, RexxarBundle>()
+
+    /** Fetches Douban Rexxar subject details and 1..5 star distribution in parallel with 6h caching. */
+    private suspend fun rexxarDetail(mediaType: String, id: Int): Pair<DoubanRexxarSubjectDto?, DoubanRexxarStatsDto?> {
+        val key = "${mediaType}_$id"
+        rexxarCache[key]?.takeIf { System.currentTimeMillis() - it.at < ABSTRACT_CACHE_MS }?.let {
+            return it.subject to it.stats
+        }
+        return ratingLocks.getOrPut(key) { Mutex() }.withLock {
+            val now = System.currentTimeMillis()
+            rexxarCache[key]?.takeIf { now - it.at < ABSTRACT_CACHE_MS }?.let { return@withLock it.subject to it.stats }
+
+            val typesToTry = if (mediaType == "tv") listOf("tv", "movie") else listOf("movie", "tv")
+            var bestSubject: DoubanRexxarSubjectDto? = null
+            var bestStats: DoubanRexxarStatsDto? = null
+            for (kind in typesToTry) {
+                val (subject, statsDto) = coroutineScope {
+                    val subjectJob = async {
+                        runCatching { api.rexxarSubject("https://m.douban.com/rexxar/api/v2/$kind/$id") }.getOrNull()
+                    }
+                    val statsJob = async {
+                        runCatching { api.rexxarRatingStats("https://m.douban.com/rexxar/api/v2/$kind/$id/rating") }.getOrNull()
+                    }
+                    subjectJob.await() to statsJob.await()
+                }
+                if (subject != null) bestSubject = subject
+                if (statsDto?.stats?.isNotEmpty() == true) bestStats = statsDto
+                if (bestSubject != null && bestStats != null) break
+            }
+            rexxarCache[key] = RexxarBundle(now, bestSubject, bestStats)
+            bestSubject to bestStats
+        }
+    }
+
+    private fun buildRatingDto(
+        subject: DoubanRexxarSubjectDto?,
+        statsDto: DoubanRexxarStatsDto?,
+        fallbackScore: Float,
+    ): TmdbDoubanRatingDto? {
+        val rating = subject?.rating
+        val score = (rating?.value?.toFloat()?.takeIf { it > 0f } ?: fallbackScore)
+        val stats = statsDto?.stats?.takeIf { it.size == 5 }.orEmpty()
+        val count = rating?.count ?: 0
+        if (count <= 0 && stats.isEmpty() && score <= 0f) return null
+        return TmdbDoubanRatingDto(
+            score = score,
+            starCount = rating?.star_count?.takeIf { it > 0f } ?: (score / 2f),
+            voteCount = count,
+            starDistribution = stats,
+        )
     }
 
     private suspend fun safeAbstract(id: String): DoubanAbstractDto? {

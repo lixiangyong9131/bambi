@@ -88,15 +88,10 @@ fun AppNavHost(
     LaunchedEffect(coldIntro) {
         if (!coldIntro) activity?.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.BLACK))
     }
-    val intro: IntroViewModel = hiltViewModel()
-    // Mientras se ve la intro, la precarga deja para después lo que no corre prisa (ver HomePreloader.setUiBusy).
-    LaunchedEffect(coldIntro) {
-        intro.setUiBusy(coldIntro)
-        if (!coldIntro) {
-            // Defer non-critical profile icon warming slightly so Home catalog & posters get full bandwidth first.
-            kotlinx.coroutines.delay(4_000L)
-            intro.warmAllProfileIcons()
-        }
+    var deferWarmup by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(1_800L)
+        deferWarmup = true
     }
     val request by watchNextRequest.collectAsState()
     // Si se abre desde "Seguir viendo" de Android TV, la intro es más corta.
@@ -152,6 +147,7 @@ fun AppNavHost(
             )
         }
         composable("profile_loading") {
+            val intro: IntroViewModel = hiltViewModel()
             val profiles: ProfilesViewModel = hiltViewModel()
             val active by profiles.active.collectAsState()
             ProfileLoadingScreen(
@@ -163,6 +159,7 @@ fun AppNavHost(
             )
         }
         composable("profiles") { entry ->
+            val intro: IntroViewModel = hiltViewModel()
             ProfilePickerScreen(
                 onSelected = {
                     if (entry.isVisible()) {
@@ -174,7 +171,7 @@ fun AppNavHost(
                 onAdd = { if (entry.isVisible()) navController.navigate("profile_edit/${ProfileEditViewModel.NEW}") },
             )
             // El aviso de actualización es un diálogo (va por encima de todo): que espere a que acabe la intro.
-            if (!coldIntro) UpdatePrompt()
+            if (!coldIntro && deferWarmup) UpdatePrompt()
         }
         composable("profile_edit/{id}") { entry ->
             ProfileEditScreen(
@@ -240,7 +237,7 @@ fun AppNavHost(
                 },
                 onOpenSettings = { navController.navigate("settings") },
             )
-            UpdatePrompt()
+            if (deferWarmup) UpdatePrompt()
         }
         composable("details") { entry ->
             val context = LocalContext.current
@@ -335,6 +332,7 @@ fun AppNavHost(
     }
     }
     if (coldIntro) {
+        val intro: IntroViewModel = hiltViewModel()
         IntroScreen(
             onStartPreload = intro::start,
             awaitReady = intro::awaitReady,
@@ -346,7 +344,11 @@ fun AppNavHost(
             onAnimationStart = { introRunning = true },
         )
     } else {
-        ResumeIntroOverlay(resumeIntro, currentEntry?.destination?.route, intro, onResumeIntroDone) { reveal = it }
+        val pendingResume by resumeIntro.collectAsState()
+        if (pendingResume != null) {
+            val intro: IntroViewModel = hiltViewModel()
+            ResumeIntroOverlay(resumeIntro, currentEntry?.destination?.route, intro, onResumeIntroDone) { reveal = it }
+        }
     }
     }
 }
