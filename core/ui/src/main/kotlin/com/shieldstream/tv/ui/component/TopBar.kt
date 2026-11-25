@@ -5,6 +5,7 @@ import androidx.annotation.StringRes
 import com.shieldstream.tv.strings.localizedStringResource
 import com.shieldstream.tv.strings.R as StringsR
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.width
@@ -160,7 +161,7 @@ private fun TopBarItem(
     val scale = if (LocalLightweightUi.current) {
         if (focused) 1.06f else 1f
     } else {
-        animateFloatAsState(if (focused) 1.06f else 1f, label = "topBarScale").value
+        animateFloatAsState(if (focused) 1.06f else 1f, tween(110), label = "topBarScale").value
     }
     // Como en Bambi: pastilla blanca al enfocar y gris translúcida en la pestaña activa.
     val background = when {

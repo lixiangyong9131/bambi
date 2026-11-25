@@ -50,12 +50,17 @@ internal class StreamSearch(
     private val castellano = CastellanoSearch(torrentio, indexers, titles, texts, ::canPickFile)
 
     fun streams(item: CatalogItem, episode: Episode?): Flow<StreamResults> = channelFlow {
-        // Direct CMS m3u8 source: title-based lookup, no IMDb / debrid needed. Try first so
-        // Douban catalog items (which have no IMDb id) are always playable.
-        val cmsSources = if (cms != null) runCatching { cms.find(item, episode) }.getOrDefault(emptyList()) else emptyList()
-        if (cmsSources.isNotEmpty()) {
-            send(StreamResults(cmsSources))
-            return@channelFlow
+        // Direct CMS m3u8 source: title-based lookup, no IMDb / debrid needed. Stream results
+        // as each CMS site finishes so playback starts on the first fast mirror.
+        if (cms != null) {
+            var latestCms: List<StreamSource> = emptyList()
+            runCatching {
+                cms.findFlow(item, episode).collect { sources ->
+                    latestCms = sources
+                    send(StreamResults(sources))
+                }
+            }
+            if (latestCms.isNotEmpty()) return@channelFlow
         }
         val aioConfigured = !store.getSecret(TokenStore.keyNameFor(ApiService.AIOSTREAMS)).isNullOrBlank()
         val enabled = settings.sourceProviders.first()

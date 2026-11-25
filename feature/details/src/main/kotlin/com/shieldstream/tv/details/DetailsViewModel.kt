@@ -31,6 +31,9 @@ import com.shieldstream.tv.strings.Texts
 import com.shieldstream.tv.strings.episodeCode
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -42,6 +45,8 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import javax.inject.Inject
 
 @HiltViewModel
@@ -324,12 +329,14 @@ class DetailsViewModel @Inject constructor(
         trace("details_opened")
         val prefetchAutoplay = request.playImmediately &&
             (item.type == MediaType.MOVIE || request.target != null)
-        if (request.playImmediately) {
-            _uiState.value = DetailsUiState.Content(
-                CatalogDetails(item),
-                progress = watchProgress.progress.value,
-            )
-        }
+        // Show the known item metadata (title, backdrop, rating, year) immediately on entry
+        // instead of holding on a blank loading spinner while Douban/CMS details load.
+        _uiState.value = DetailsUiState.Content(
+            CatalogDetails(item),
+            progress = watchProgress.progress.value,
+            inMyList = myList.contains(item.type, item.id),
+            following = if (item.type == MediaType.TV) tracking.isFollowing(item.id) else false,
+        )
         viewModelScope.launch {
             if (prefetchAutoplay) {
                 val target = request.target
@@ -343,32 +350,33 @@ class DetailsViewModel @Inject constructor(
                 } else {
                     loadSources(episode = null)
                 }
+            } else if (item.type == MediaType.MOVIE) {
+                // Preload movie sources in parallel with details so clicking Play is instant.
+                loadSources(episode = null)
             }
-            val details = runCatching { catalogRepository.getDetails(item) }.getOrElse { CatalogDetails(item) }
+            val (details, prefs) = coroutineScope {
+                val detailsJob = async { runCatching { catalogRepository.getDetails(item) }.getOrElse { CatalogDetails(item) } }
+                val sFirst = async { settings.spanishFirst.first() }
+                val sOnly = async { settings.spanishOnlySources.first() }
+                val sExcl = async { settings.sourceExclusions.first() }
+                val sBroken = async { settings.brokenSourceIds.first() }
+                val sCast = async { settings.showCast.first() }
+                detailsJob.await() to listOf(sFirst.await(), sOnly.await(), sExcl.await(), sBroken.await(), sCast.await())
+            }
             trace("details_ready")
-            val spanishFirst = settings.spanishFirst.first()
-            val spanishOnly = settings.spanishOnlySources.first()
-            val sourceExclusions = settings.sourceExclusions.first()
-            val brokenSources = settings.brokenSourceIds.first()
-            val showCast = settings.showCast.first()
-            if (request.playImmediately) {
-                updateContent {
-                    it.copy(
-                        details = details,
-                        progress = watchProgress.progress.value,
-                        inMyList = myList.contains(details.item.type, details.item.id),
-                        spanishFirst = spanishFirst,
-                        spanishOnly = spanishOnly,
-                        sourceExclusions = sourceExclusions,
-                        brokenSources = brokenSources,
-                        showCast = showCast,
-                    )
-                }
-            } else {
-                _uiState.value = DetailsUiState.Content(
-                    details,
+            val spanishFirst = prefs[0] as Boolean
+            val spanishOnly = prefs[1] as Boolean
+            @Suppress("UNCHECKED_CAST")
+            val sourceExclusions = prefs[2] as com.shieldstream.tv.model.SourceExclusions
+            @Suppress("UNCHECKED_CAST")
+            val brokenSources = prefs[3] as Set<String>
+            val showCast = prefs[4] as Boolean
+            updateContent {
+                it.copy(
+                    details = details,
                     progress = watchProgress.progress.value,
                     inMyList = myList.contains(details.item.type, details.item.id),
+                    following = if (details.item.type == MediaType.TV) tracking.isFollowing(details.item.id) else it.following,
                     spanishFirst = spanishFirst,
                     spanishOnly = spanishOnly,
                     sourceExclusions = sourceExclusions,
@@ -408,8 +416,8 @@ class DetailsViewModel @Inject constructor(
                         )
                     }
                 }
-            } else {
-                if (playImmediately) play() else loadSources(episode = null)
+            } else if (playImmediately) {
+                play()
             }
         }
     }
@@ -741,8 +749,8 @@ class DetailsViewModel @Inject constructor(
     }
 
     /**
-     * Modified build: probe sources serially, publishing each result as soon as it arrives.
-     * Stops early if playback starts (see cancelProbing).
+     * Modified build: probe sources with bounded concurrency (3 at a time), publishing each
+     * result as soon as it arrives. Stops early if playback starts (see cancelProbing).
      */
     private fun startProbing(sources: List<com.shieldstream.tv.model.StreamSource>) {
         if (playbackRequested) return
@@ -755,14 +763,20 @@ class DetailsViewModel @Inject constructor(
         }
         updateContent { it.copy(sourceProbes = emptyMap(), probingDone = false) }
         probeJob = viewModelScope.launch {
-            for (src in candidates) {
-                if (!isActive) break
-                val result = sourceProber.probe(src)
-                if (!isActive) break
-                updateContent { ui ->
-                    if (ui !is DetailsUiState.Content) ui
-                    else ui.copy(sourceProbes = ui.sourceProbes + (src.id to result))
-                }
+            val gate = Semaphore(3)
+            coroutineScope {
+                candidates.map { src ->
+                    launch {
+                        val result = gate.withPermit {
+                            if (!isActive) return@withPermit null
+                            sourceProber.probe(src)
+                        } ?: return@launch
+                        if (!isActive) return@launch
+                        updateContent { ui ->
+                            ui.copy(sourceProbes = ui.sourceProbes + (src.id to result))
+                        }
+                    }
+                }.forEach { it.join() }
             }
             if (isActive) updateContent { it.copy(probingDone = true) }
         }

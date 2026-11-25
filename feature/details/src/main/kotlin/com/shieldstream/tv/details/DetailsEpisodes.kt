@@ -3,6 +3,7 @@ package com.shieldstream.tv.details
 import com.shieldstream.tv.strings.R as StringsR
 import com.shieldstream.tv.strings.localizedStringResource
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -236,8 +237,7 @@ private fun EpisodeCard(
     onFocused: () -> Unit = {},
 ) {
     var focused by remember { mutableStateOf(false) }
-    LaunchedEffect(focused) { if (focused) onFocused() }
-    val scale by animateFloatAsState(if (focused) 1.06f else 1f, label = "episodeScale")
+    val scale by animateFloatAsState(if (focused) 1.06f else 1f, tween(100), label = "episodeScale")
     val shape = RoundedCornerShape(8.dp)
     val watched = progress?.isWatched == true
     Box(
@@ -249,7 +249,10 @@ private fun EpisodeCard(
             .background(if (selected || focused) Color(0xFF2E2E34) else Color(0xFF1C1C20))
             .then(if (focused) Modifier.border(2.dp, Color.White, shape) else Modifier)
             .padding(vertical = 20.dp, horizontal = 12.dp)
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) onFocused()
+            }
             .then(if (enabled) Modifier.tvClickable(onLongClick = onLongClick, onClick = onClick) else Modifier.tvClickable(enabled = false) {}),
         contentAlignment = Alignment.Center,
     ) {

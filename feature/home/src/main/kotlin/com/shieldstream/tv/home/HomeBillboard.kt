@@ -5,7 +5,6 @@ import com.shieldstream.tv.ui.theme.AppShapes
 import com.shieldstream.tv.strings.R as StringsR
 import com.shieldstream.tv.strings.localizedStringResource
 import com.shieldstream.tv.model.Lang
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.background
@@ -17,7 +16,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -41,6 +39,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,6 +54,7 @@ import com.shieldstream.tv.ui.theme.LocalHighResBackdrops
 import com.shieldstream.tv.model.BackdropUrls
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 
 // Inicio → cabecera con el destacado (fondo, logo, datos) y su esqueleto de carga.
 
@@ -143,19 +143,27 @@ internal fun Billboard(
 /** Backdrop del título enfocado, arriba a la derecha, fundido a negro por la izquierda y por abajo. */
 @Composable
 internal fun HeroBackdrop(item: CatalogItem) {
-    // Modified build: a single full-bleed image. No separate blurred layer -> no visible seam,
-    // no edge re-loading when moving between cards (Coil serves the cached bitmap instantly).
+    // Direct swap without full-screen Crossfade (per AGENTS.md: avoids double 1080p compositing
+    // and dropped frames on TV boxes). Explicitly size to screen metrics to share HomePreloader's cache.
     val url = BackdropUrls.fullScreen(item.backdropUrl, lightweight = false, highRes = LocalHighResBackdrops.current)
+    val context = LocalContext.current
+    val request = remember(url, context) {
+        url?.let {
+            val metrics = context.resources.displayMetrics
+            ImageRequest.Builder(context)
+                .data(it)
+                .size(metrics.widthPixels, metrics.heightPixels)
+                .build()
+        }
+    }
     Box(Modifier.fillMaxSize()) {
-        Crossfade(targetState = url, animationSpec = tween(300), label = "heroBackdrop") { u ->
-            if (u != null) {
-                AsyncImage(
-                    model = u,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
+        if (request != null) {
+            AsyncImage(
+                model = request,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
         }
         Box(
             Modifier.fillMaxSize().background(

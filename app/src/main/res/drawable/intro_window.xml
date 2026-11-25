@@ -1,7 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modified build: black splash with the black-cat logo centered (instead of the red intro gradient). -->
+<!-- Cinema-red radial backdrop matching the black-cat launcher & TV banner, with the transparent cat emblem centered. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="@android:color/black" />
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:type="radial"
+                android:centerX="0.5"
+                android:centerY="0.48"
+                android:gradientRadius="72%p"
+                android:startColor="#FFE82226"
+                android:centerColor="#FFC40C12"
+                android:endColor="#FF7A0408" />
+        </shape>
+    </item>
     <item>
         <bitmap
             android:src="@drawable/blackcat_splash"

@@ -13,9 +13,11 @@ import java.util.concurrent.TimeUnit
  * resolve correctly on the box, so we bootstrap from those and resolve playback hosts via HTTPS.
  */
 object DohDns : Dns {
+    private const val CACHE_TTL_MS = 10 * 60_000L
+
     private val bootstrap = OkHttpClient.Builder()
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(5, TimeUnit.SECONDS)
+        .connectTimeout(2500, TimeUnit.MILLISECONDS)
+        .readTimeout(2500, TimeUnit.MILLISECONDS)
         .build()
 
     private val doh: DnsOverHttps = DnsOverHttps.Builder()
@@ -28,14 +30,16 @@ object DohDns : Dns {
         .includeIPv6(false)
         .build()
 
-    private val cache = java.util.concurrent.ConcurrentHashMap<String, List<InetAddress>>()
+    private class CachedEntry(val at: Long, val addrs: List<InetAddress>)
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, CachedEntry>()
 
     override fun lookup(hostname: String): List<InetAddress> {
-        cache[hostname]?.let { if (it.isNotEmpty()) return it }
+        val now = System.currentTimeMillis()
+        cache[hostname]?.takeIf { now - it.at < CACHE_TTL_MS && it.addrs.isNotEmpty() }?.let { return it.addrs }
         val resolved = runCatching { doh.lookup(hostname) }
             .getOrDefault(emptyList())
             .ifEmpty { runCatching { Dns.SYSTEM.lookup(hostname) }.getOrDefault(emptyList()) }
-        if (resolved.isNotEmpty()) cache[hostname] = resolved
+        if (resolved.isNotEmpty()) cache[hostname] = CachedEntry(now, resolved)
         return resolved
     }
 }

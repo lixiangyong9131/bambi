@@ -7,6 +7,14 @@ import com.shieldstream.tv.model.StreamSource
 import com.github.promeg.pinyinhelper.Pinyin
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -17,6 +25,7 @@ import kotlinx.serialization.json.contentOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.URLEncoder
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -58,6 +67,7 @@ class CmsStreams @Inject constructor(
         // Search: 如意 first (best Chinese substring matching - "谷" alone returns 211 rows
         // including 《谷雨》), then the general purpose sites as a fallback.
         private val SEARCH_SOURCES = listOf(RYI, API, JISU, HONGNIU)
+        private const val CACHE_TTL_MS = 10 * 60_000L
         // Short timeout so an unreachable source is skipped fast instead of hanging playback.
         private val cmsClient: OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
@@ -84,26 +94,55 @@ class CmsStreams @Inject constructor(
     /** Titles that exist in the CMS catalog (has playable resources). Used for search. */
     data class Hit(val title: String, val id: String, val type: String, val remarks: String)
 
+    /** Cached CMS title metadata (description + episodes + raw detail per site) to avoid duplicate lookups across Details/Play. */
+    private data class TitleBundle(val at: Long, val description: String, val episodes: List<EpisodeInfo>)
+    private data class CachedSiteDetail(val at: Long, val detail: JsonObject)
+    private data class InitialEntry(val title: String, val pinyin: String, val initials: String)
+    private data class InitialPool(val at: Long, val entries: List<InitialEntry>)
+
+    private val titleBundleCache = ConcurrentHashMap<String, TitleBundle>()
+    private val titleBundleLocks = ConcurrentHashMap<String, Mutex>()
+    private val siteDetailCache = ConcurrentHashMap<String, CachedSiteDetail>()
+    @Volatile
+    private var initialPool: InitialPool? = null
+    private val initialPoolLock = Mutex()
+
     /** Match pinyin initials / full pinyin (xxrj -> title) against recently updated CMS titles. */
     suspend fun searchByInitials(query: String): List<String> {
         val q = query.lowercase().replace(" ", "")
         if (q.length < 2 || !q.all { it in 'a'..'z' }) return emptyList()
-        val pool = LinkedHashSet<String>()
-        val base = SEARCH_SOURCES.firstOrNull() ?: return emptyList()
-        for (pg in 1..5) {
-            val rows = runCatching { parseList(get("$base?ac=vod&pg=$pg")) }.getOrDefault(null) ?: break
-            if (rows.isEmpty()) break
-            rows.forEach { r -> pool += clean(str(r, "vod_name")) }
-        }
+        val entries = getInitialPool()
         val out = mutableListOf<String>()
-        for (title in pool) {
-            if (title.isBlank()) continue
-            val syllables = title.map { Pinyin.toPinyin(it).lowercase() }.filter { it.isNotBlank() }
-            val pinyin = syllables.joinToString("")
-            val initials = syllables.map { it.first() }.joinToString("")
-            if (initials == q || initials.startsWith(q) || pinyin.startsWith(q) || pinyin.contains(q)) out += title
+        for (entry in entries) {
+            if (entry.initials == q || entry.initials.startsWith(q) || entry.pinyin.startsWith(q) || entry.pinyin.contains(q)) {
+                out += entry.title
+                if (out.size >= 8) break
+            }
         }
-        return out.take(8)
+        return out
+    }
+
+    private suspend fun getInitialPool(): List<InitialEntry> = initialPoolLock.withLock {
+        val now = System.currentTimeMillis()
+        initialPool?.takeIf { now - it.at < CACHE_TTL_MS }?.let { return@withLock it.entries }
+        val base = SEARCH_SOURCES.firstOrNull() ?: return@withLock emptyList()
+        val pool = withContext(Dispatchers.IO) {
+            val pages = (1..5).map { pg ->
+                async { runCatching { parseList(get("$base?ac=vod&pg=$pg")) }.getOrNull().orEmpty() }
+            }.awaitAll()
+            val names = LinkedHashSet<String>()
+            pages.forEach { rows -> rows.forEach { r -> names += clean(str(r, "vod_name")) } }
+            names.filter { it.isNotBlank() }.map { title ->
+                val syllables = title.map { Pinyin.toPinyin(it).lowercase() }.filter { it.isNotBlank() }
+                InitialEntry(
+                    title = title,
+                    pinyin = syllables.joinToString(""),
+                    initials = syllables.map { it.first() }.joinToString(""),
+                )
+            }
+        }
+        if (pool.isNotEmpty()) initialPool = InitialPool(now, pool)
+        pool
     }
 
     suspend fun searchTitles(query: String): List<Hit> {
@@ -125,7 +164,7 @@ class CmsStreams @Inject constructor(
                         )
                     }.filter { it.title.isNotBlank() }
                 }
-            }.map { it.await() }
+            }.awaitAll()
         }
         // Keep source order (= reliability order) but drop duplicate titles.
         val out = LinkedHashMap<String, Hit>()
@@ -136,113 +175,128 @@ class CmsStreams @Inject constructor(
     }
 
     /** Fetch the synopsis (vod_content) for a title from the CMS, plain text. */
-    suspend fun getDescription(title: String): String {
-        val t = clean(title)
-        if (t.isBlank()) return ""
-        for (base in SEARCH_SOURCES) {
-            val rows = parseList(get("$base?ac=vod&wd=" + URLEncoder.encode(t, "UTF-8"))) ?: continue
-            val cand = rows.firstOrNull { row ->
-                val n = clean(str(row, "vod_name"))
-                n == t || n.contains(t.take(6), true) || t.contains(n.take(6), true)
-            } ?: rows.firstOrNull() ?: continue
-            val vid = str(cand, "vod_id")
-            val detailRows = parseList(get("$base?ac=detail&ids=" + URLEncoder.encode(vid, "UTF-8"))) ?: continue
-            val raw = str(detailRows.firstOrNull() ?: continue, "vod_content")
-            if (raw.isBlank()) continue
-            // Strip HTML tags and entities.
-            val text = raw.replace(Regex("<[^>]*>"), " ")
-                .replace("&nbsp;", " ").replace("&amp;", "&")
-                .replace(Regex("\\s+"), " ").trim()
-            if (text.isNotBlank()) return text
-        }
-        return ""
-    }
+    suspend fun getDescription(title: String): String = getTitleBundle(title).description
 
     /** A CMS episode: number, title and its direct m3u8 URL. */
     data class EpisodeInfo(val number: Int, val title: String, val url: String)
 
     /** Fetch the full episode list of a TV show from the CMS detail (第01集$url#第02集$url...). */
-    suspend fun getEpisodes(title: String): List<EpisodeInfo> {
+    suspend fun getEpisodes(title: String): List<EpisodeInfo> = getTitleBundle(title).episodes
+
+    /** Fetch both description and episodes in a single CMS pass and cache them across Details/Season/Playback. */
+    private suspend fun getTitleBundle(title: String): TitleBundle {
         val t = clean(title)
-        if (t.isBlank()) return emptyList()
-        for (base in SEARCH_SOURCES) {
-            val rows = parseList(get("$base?ac=vod&wd=" + URLEncoder.encode(t, "UTF-8"))) ?: continue
-            val cand = rows.firstOrNull { row ->
-                val n = clean(str(row, "vod_name"))
-                n == t || n.contains(t.take(6), true) || t.contains(n.take(6), true)
-            } ?: rows.firstOrNull() ?: continue
-            val vid = str(cand, "vod_id")
-            val detailRows = parseList(get("$base?ac=detail&ids=" + URLEncoder.encode(vid, "UTF-8"))) ?: continue
-            val v = detailRows.firstOrNull() ?: continue
-            val play = str(v, "vod_play_url")
-            if (play.isBlank()) continue
-            val eps = mutableListOf<EpisodeInfo>()
-            // Only accept direct .m3u8/.mp4 links; the feifan group uses /share/ landing pages.
-            for (group in play.split("\$\$\$")) {
-                val groupEps = mutableListOf<EpisodeInfo>()
-                for (ep in group.split("#")) {
-                    val idx = ep.lastIndexOf('$')
-                    if (idx <= 0) continue
-                    val label = ep.substring(0, idx).trim()
-                    val url = ep.substring(idx + 1).trim()
-                    if (!url.startsWith("http")) continue
-                    if (!url.contains(".m3u8") && !url.contains(".mp4")) continue
-                    val num = Regex("\\d+").find(label)?.value?.toIntOrNull() ?: (groupEps.size + 1)
-                    if (groupEps.none { it.number == num }) groupEps += EpisodeInfo(num, label, url)
+        if (t.isBlank()) return TitleBundle(0L, "", emptyList())
+        return titleBundleLocks.getOrPut(t) { Mutex() }.withLock {
+            val now = System.currentTimeMillis()
+            titleBundleCache[t]?.takeIf { now - it.at < CACHE_TTL_MS }?.let { return@withLock it }
+            val loaded = withContext(Dispatchers.IO) {
+                var desc = ""
+                var eps: List<EpisodeInfo> = emptyList()
+                for (base in SEARCH_SOURCES) {
+                    val v = fetchDetailForTitle(base, t) ?: continue
+                    if (desc.isBlank()) desc = parseDescription(v)
+                    if (eps.isEmpty()) eps = parseEpisodes(v)
+                    if (desc.isNotBlank() && eps.isNotEmpty()) break
                 }
-                if (groupEps.isNotEmpty()) { eps.addAll(groupEps); break }
+                TitleBundle(System.currentTimeMillis(), desc, eps)
             }
-            if (eps.isNotEmpty()) return eps.sortedBy { it.number }
+            if (loaded.description.isNotBlank() || loaded.episodes.isNotEmpty()) {
+                titleBundleCache[t] = loaded
+            }
+            loaded
+        }
+    }
+
+    private fun fetchDetailForTitle(base: String, cleanTitle: String): JsonObject? {
+        val cacheKey = "$base|$cleanTitle"
+        val now = System.currentTimeMillis()
+        siteDetailCache[cacheKey]?.takeIf { now - it.at < CACHE_TTL_MS }?.let { return it.detail }
+
+        val rows = parseList(get("$base?ac=vod&wd=" + URLEncoder.encode(cleanTitle, "UTF-8"))) ?: return null
+        if (rows.isEmpty()) return null
+        val cand = rows.firstOrNull { row ->
+            val n = clean(str(row, "vod_name"))
+            n == cleanTitle || n.contains(cleanTitle.take(6), true) || cleanTitle.contains(n.take(6), true)
+        } ?: rows.first()
+        val vid = str(cand, "vod_id")
+        val detailRows = parseList(get("$base?ac=detail&ids=" + URLEncoder.encode(vid, "UTF-8")))
+        val v = detailRows?.firstOrNull() ?: cand
+        siteDetailCache[cacheKey] = CachedSiteDetail(now, v)
+        return v
+    }
+
+    private fun parseDescription(v: JsonObject): String {
+        val raw = str(v, "vod_content")
+        if (raw.isBlank()) return ""
+        return raw.replace(Regex("<[^>]*>"), " ")
+            .replace("&nbsp;", " ").replace("&amp;", "&")
+            .replace(Regex("\\s+"), " ").trim()
+    }
+
+    private fun parseEpisodes(v: JsonObject): List<EpisodeInfo> {
+        val play = str(v, "vod_play_url")
+        if (play.isBlank()) return emptyList()
+        for (group in play.split("\$\$\$")) {
+            val groupEps = mutableListOf<EpisodeInfo>()
+            for (ep in group.split("#")) {
+                val idx = ep.lastIndexOf('$')
+                if (idx <= 0) continue
+                val label = ep.substring(0, idx).trim()
+                val url = ep.substring(idx + 1).trim()
+                if (!url.startsWith("http")) continue
+                if (!url.contains(".m3u8") && !url.contains(".mp4")) continue
+                val num = Regex("\\d+").find(label)?.value?.toIntOrNull() ?: (groupEps.size + 1)
+                if (groupEps.none { it.number == num }) groupEps += EpisodeInfo(num, label, url)
+            }
+            if (groupEps.isNotEmpty()) return groupEps.sortedBy { it.number }
         }
         return emptyList()
     }
 
-    suspend fun find(item: CatalogItem, episode: com.shieldstream.tv.model.Episode? = null): List<StreamSource> {
+    /** Stream CMS sources as each site responds so playback can start without waiting for slow mirrors. */
+    fun findFlow(item: CatalogItem, episode: com.shieldstream.tv.model.Episode? = null): Flow<List<StreamSource>> = channelFlow {
         val title = clean(item.title)
         android.util.Log.i("CmsStream", "find(title=${item.title}, clean=$title)")
-        if (title.isBlank()) return emptyList()
-        // Modified build: query all CMS sites CONCURRENTLY. The old serial loop could take
-        // 9x the timeout (~18s) before the first source was ready, making "continue playing"
-        // feel stuck. Parallel cuts it to roughly the slowest single site.
-        val results = withContext(Dispatchers.IO) {
-            SOURCES.map { (label, base) ->
-                async {
+        if (title.isBlank()) return@channelFlow
+        val lock = Mutex()
+        val bySite = arrayOfNulls<List<StreamSource>>(SOURCES.size)
+        withContext(Dispatchers.IO) {
+            SOURCES.mapIndexed { idx, (label, base) ->
+                launch {
                     val sources = runCatching { searchAndBuild(base, title, episode, label) }
                         .getOrDefault(emptyList())
                     android.util.Log.i("CmsStream", "$label -> ${sources.size} sources")
-                    sources
+                    if (sources.isNotEmpty()) {
+                        val snapshot = lock.withLock {
+                            bySite[idx] = sources
+                            val all = mutableListOf<StreamSource>()
+                            val seenUrls = HashSet<String>()
+                            for (siteList in bySite) {
+                                if (siteList == null) continue
+                                for (src in siteList) {
+                                    val key = src.directUrl.orEmpty()
+                                    if (key.isNotBlank() && seenUrls.add(key)) all += src
+                                }
+                            }
+                            all
+                        }
+                        if (snapshot.isNotEmpty()) send(snapshot)
+                    }
                 }
-            }.map { it.await() }
+            }.joinAll()
         }
-        val all = mutableListOf<StreamSource>()
-        val seenUrls = HashSet<String>()
-        for (sources in results) {
-            for (src in sources) {
-                val key = src.directUrl.orEmpty()
-                if (key.isNotBlank() && seenUrls.add(key)) all += src
-            }
-        }
-        android.util.Log.i("CmsStream", "total ${all.size} CMS lines for $title")
-        return all
+    }
+
+    suspend fun find(item: CatalogItem, episode: com.shieldstream.tv.model.Episode? = null): List<StreamSource> {
+        var latest: List<StreamSource> = emptyList()
+        findFlow(item, episode).collect { latest = it }
+        return latest
     }
 
     private fun searchAndBuild(base: String, title: String, episode: com.shieldstream.tv.model.Episode?, siteLabel: String = "CMS"): List<StreamSource> {
-        val searchUrl = "$base?ac=vod&wd=" + URLEncoder.encode(title, "UTF-8")
-        val body = get(searchUrl)
-        android.util.Log.i("CmsStream", "search url=" + searchUrl + " body=" + body?.take(120))
-        val rows = parseList(body) ?: return emptyList()
-        android.util.Log.i("CmsStream", "search title=" + title + " -> " + rows.size + " rows")
-        if (rows.isEmpty()) return emptyList()
-        // Prefer an exact/near title match, else first row.
-        val cand = rows.firstOrNull { row ->
-            val n = clean(str(row, "vod_name"))
-            n.contains(title.take(6), true) || title.contains(n.take(6), true)
-        } ?: rows.first()
-
-        val vid = str(cand, "vod_id")
-        val detailUrl = "$base?ac=detail&ids=" + URLEncoder.encode(vid, "UTF-8")
-        val detailRows = parseList(get(detailUrl)) ?: listOf(cand)
-        val v = detailRows.firstOrNull() ?: cand
+        val v = fetchDetailForTitle(base, title) ?: return emptyList()
+        val vid = str(v, "vod_id")
         val url = pickPlayUrl(v, episode?.number) ?: return emptyList()
         android.util.Log.i("CmsStream", "picked url (ep=${episode?.number}): ${url.take(100)}")
         val name = str(v, "vod_name").ifBlank { title }

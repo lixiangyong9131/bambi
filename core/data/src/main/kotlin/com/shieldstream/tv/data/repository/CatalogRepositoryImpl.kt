@@ -152,11 +152,21 @@ class CatalogRepositoryImpl @Inject constructor(
         }
     }
 
+    private fun rememberRowItems(rows: List<CatalogRow>) {
+        rows.forEach { row ->
+            row.items.forEach { item ->
+                itemCache.putIfAbsent("${item.type.name}_${item.id}", item)
+            }
+        }
+    }
+
     private suspend fun cachedRows(baseKey: String, load: suspend () -> List<CatalogRow>): List<CatalogRow> =
         cachedHome(baseKey, { c, k -> c.readRows(k) }, { c, k, v -> c.writeRows(k, v) }, load)
+            .also(::rememberRowItems)
 
     private suspend fun cachedFeatured(baseKey: String, load: suspend () -> List<FeaturedItem>): List<FeaturedItem> =
         cachedHome(baseKey, { c, k -> c.readFeatured(k) }, { c, k, v -> c.writeFeatured(k, v) }, load)
+            .also { list -> list.forEach { itemCache.putIfAbsent("${it.item.type.name}_${it.item.id}", it.item) } }
 
     override suspend fun getFeatured(filter: HomeFilter): List<FeaturedItem> =
         if (kids) cachedFeatured("featured_kids_${filter.name}") { extras.kidsFeatured(filter) }
@@ -318,51 +328,63 @@ class CatalogRepositoryImpl @Inject constructor(
         }
     }
 
+    private class CachedDetails(val at: Long, val value: CatalogDetails)
+    private val detailsCache = ConcurrentHashMap<String, CachedDetails>()
+    private val detailsLocks = ConcurrentHashMap<String, Mutex>()
+
     override suspend fun getDetails(item: CatalogItem): CatalogDetails {
         val id = item.id.toIntOrNull() ?: return CatalogDetails(item)
-        return if (item.type == MediaType.TV) {
-            val d = tmdb.tvDetails(id, key, append = "images,external_ids,translations,aggregate_credits,videos")
-            CatalogDetails(
-                item = item.copy(
-                    imdbId = d.external_ids?.imdb_id ?: item.imdbId,
-                    overview = d.overview.ifBlank { item.overview },
-                    backdropUrl = d.backdrop_path?.let { backdrop(it) } ?: item.backdropUrl,
-                ),
-                logoUrl = pickLogo(d.images),
-                originalTitle = englishTitle(d.translations) ?: d.original_name,
-                runtimeMinutes = d.episode_run_time.firstOrNull(),
-                genres = d.genres.map { it.name },
-                tagline = d.tagline?.takeIf { it.isNotBlank() },
-                seasons = d.seasons
-                    .filter { it.season_number > 0 && it.episode_count > 0 }
-                    .map { Season(it.season_number, it.name.ifBlank { texts.get(StringsR.string.data_season_name, it.season_number) }, it.episode_count) },
-                latestEpisode = d.last_episode_to_air?.toEpisode(),
-                nextEpisode = d.next_episode_to_air?.toEpisode(),
-                cast = (d.aggregate_credits ?: d.credits)?.cast.orEmpty().toPeople(),
-                directors = d.created_by.map { Person(it.id, it.name, null, it.profile_path?.let(TmdbImages::profile)) },
-                trailerKey = d.videos.trailers().firstOrNull(),
-                trailerKeys = d.videos.trailers(),
-            )
-        } else {
-            val d = tmdb.movieDetails(id, key, append = "images,translations,credits,videos")
-            CatalogDetails(
-                item = item.copy(
-                    imdbId = d.imdb_id ?: item.imdbId,
-                    overview = d.overview.ifBlank { item.overview },
-                    backdropUrl = d.backdrop_path?.let { backdrop(it) } ?: item.backdropUrl,
-                ),
-                logoUrl = pickLogo(d.images),
-                originalTitle = englishTitle(d.translations) ?: d.original_title,
-                runtimeMinutes = d.runtime?.takeIf { it > 0 },
-                genres = d.genres.map { it.name },
-                tagline = d.tagline?.takeIf { it.isNotBlank() },
-                cast = d.credits?.cast.orEmpty().toPeople(),
-                directors = d.credits?.crew.orEmpty().filter { it.job == "Director" }.distinctBy { it.id }
-                    .map { Person(it.id, it.name, null, it.profile_path?.let(TmdbImages::profile)) },
-                trailerKey = d.videos.trailers().firstOrNull(),
-                trailerKeys = d.videos.trailers(),
-                collection = d.belongs_to_collection?.takeIf { it.id > 0 }?.let { CollectionRef(it.id, it.name) },
-            )
+        val cacheKey = "${item.type.name}_$id"
+        return detailsLocks.getOrPut(cacheKey) { Mutex() }.withLock {
+            val now = System.currentTimeMillis()
+            detailsCache[cacheKey]?.takeIf { now - it.at < DETAILS_CACHE_MS }?.let { return@withLock it.value }
+            val result = if (item.type == MediaType.TV) {
+                val d = tmdb.tvDetails(id, key, append = "images,external_ids,translations,aggregate_credits,videos")
+                CatalogDetails(
+                    item = item.copy(
+                        imdbId = d.external_ids?.imdb_id ?: item.imdbId,
+                        overview = d.overview.ifBlank { item.overview },
+                        backdropUrl = d.backdrop_path?.let { backdrop(it) } ?: item.backdropUrl,
+                    ),
+                    logoUrl = pickLogo(d.images),
+                    originalTitle = englishTitle(d.translations) ?: d.original_name,
+                    runtimeMinutes = d.episode_run_time.firstOrNull(),
+                    genres = d.genres.map { it.name },
+                    tagline = d.tagline?.takeIf { it.isNotBlank() },
+                    seasons = d.seasons
+                        .filter { it.season_number > 0 && it.episode_count > 0 }
+                        .map { Season(it.season_number, it.name.ifBlank { texts.get(StringsR.string.data_season_name, it.season_number) }, it.episode_count) },
+                    latestEpisode = d.last_episode_to_air?.toEpisode(),
+                    nextEpisode = d.next_episode_to_air?.toEpisode(),
+                    cast = (d.aggregate_credits ?: d.credits)?.cast.orEmpty().toPeople(),
+                    directors = d.created_by.map { Person(it.id, it.name, null, it.profile_path?.let(TmdbImages::profile)) },
+                    trailerKey = d.videos.trailers().firstOrNull(),
+                    trailerKeys = d.videos.trailers(),
+                )
+            } else {
+                val d = tmdb.movieDetails(id, key, append = "images,translations,credits,videos")
+                CatalogDetails(
+                    item = item.copy(
+                        imdbId = d.imdb_id ?: item.imdbId,
+                        overview = d.overview.ifBlank { item.overview },
+                        backdropUrl = d.backdrop_path?.let { backdrop(it) } ?: item.backdropUrl,
+                    ),
+                    logoUrl = pickLogo(d.images),
+                    originalTitle = englishTitle(d.translations) ?: d.original_title,
+                    runtimeMinutes = d.runtime?.takeIf { it > 0 },
+                    genres = d.genres.map { it.name },
+                    tagline = d.tagline?.takeIf { it.isNotBlank() },
+                    cast = d.credits?.cast.orEmpty().toPeople(),
+                    directors = d.credits?.crew.orEmpty().filter { it.job == "Director" }.distinctBy { it.id }
+                        .map { Person(it.id, it.name, null, it.profile_path?.let(TmdbImages::profile)) },
+                    trailerKey = d.videos.trailers().firstOrNull(),
+                    trailerKeys = d.videos.trailers(),
+                    collection = d.belongs_to_collection?.takeIf { it.id > 0 }?.let { CollectionRef(it.id, it.name) },
+                )
+            }
+            itemCache[cacheKey] = result.item
+            detailsCache[cacheKey] = CachedDetails(System.currentTimeMillis(), result)
+            result
         }
     }
 
@@ -552,3 +574,4 @@ private const val TMDB_PAGE_SIZE = 20
 private const val MAX_HOME_PAGES = 5
 
 private const val AIRING_CACHE_MS = 6 * 60 * 60 * 1000L
+private const val DETAILS_CACHE_MS = 10 * 60 * 1000L

@@ -4,7 +4,11 @@ import com.shieldstream.tv.network.api.DoubanApi
 import com.shieldstream.tv.network.api.TmdbApi
 import com.shieldstream.tv.network.dto.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -30,7 +34,9 @@ class DoubanCatalogApi @Inject constructor(
         coverPrefs.edit().putString(id.toString(), url).apply()
     }
     /** Douban id -> title, so tvSeason() can look up the CMS episodes by title. */
-    private val titleOf = java.util.concurrent.ConcurrentHashMap<Int, String>()
+    private val titleOf = ConcurrentHashMap<Int, String>()
+    private data class CachedAbstract(val at: Long, val value: DoubanAbstractDto)
+    private val abstractCache = ConcurrentHashMap<String, CachedAbstract>()
 
     override suspend fun trendingAll(key: String, page: Int): TmdbPaginated<TmdbSearchResultDto> = withContext(Dispatchers.IO) { moviesAll(page) }
 
@@ -67,9 +73,13 @@ class DoubanCatalogApi @Inject constructor(
 
     override suspend fun search(key: String, query: String): TmdbSearchResponse = withContext(Dispatchers.IO) { searchDouban(query) }
 
-    override suspend fun movieDetails(id: Int, key: String, append: String, imageLanguages: String, videoLanguages: String): TmdbMovieDetailDto = withContext(Dispatchers.IO) { movieDetail(id) }
+    override suspend fun movieDetails(id: Int, key: String, append: String, imageLanguages: String, videoLanguages: String): TmdbMovieDetailDto = withContext(Dispatchers.IO) {
+        movieDetail(id, full = append.contains("images") || append.contains("credits") || append.contains("videos"))
+    }
 
-    override suspend fun tvDetails(id: Int, key: String, append: String, imageLanguages: String, videoLanguages: String): TmdbTvDetailDto = withContext(Dispatchers.IO) { tvDetail(id) }
+    override suspend fun tvDetails(id: Int, key: String, append: String, imageLanguages: String, videoLanguages: String): TmdbTvDetailDto = withContext(Dispatchers.IO) {
+        tvDetail(id, full = append.contains("images") || append.contains("credits") || append.contains("videos"))
+    }
 
     override suspend fun tvSeason(id: Int, season: Int, key: String): TmdbSeasonDto = withContext(Dispatchers.IO) {
         // Modified build: episodes come from the CMS (Douban has none). Use the title cached by details.
@@ -149,11 +159,14 @@ class DoubanCatalogApi @Inject constructor(
 
     private suspend fun searchDouban(query: String): TmdbSearchResponse {
         if (query.isBlank()) return TmdbSearchResponse()
-        // Modified build: the on-screen keyboard types pinyin (letters). Douban suggest understands
-        // pinyin and returns the Chinese title, so re-search the CMS with that Chinese title -
-        // otherwise a pinyin query finds no CMS hits and every suggestion gets filtered out.
-        val suggestions = runCatching { api.suggest(query) }.getOrDefault(emptyList())
-        val rawHits = runCatching { cms.searchTitles(query) }.getOrDefault(emptyList()).toMutableList()
+        // Modified build: query Douban suggest and direct CMS search in parallel, then resolve any
+        // pinyin-suggested Chinese titles concurrently across CMS sources.
+        val (suggestions, initialHits) = coroutineScope {
+            val sugJob = async { runCatching { api.suggest(query) }.getOrDefault(emptyList()) }
+            val cmsJob = async { runCatching { cms.searchTitles(query) }.getOrDefault(emptyList()) }
+            sugJob.await() to cmsJob.await()
+        }
+        val rawHits = initialHits.toMutableList()
         if (query.matches(Regex("(?i)^[a-z\\s]+$"))) {
             val cnTitles = LinkedHashSet<String>()
             suggestions.take(4).forEach { if (it.title.isNotBlank()) cnTitles += it.title }
@@ -162,8 +175,12 @@ class DoubanCatalogApi @Inject constructor(
             if (rawHits.isEmpty()) {
                 cnTitles += runCatching { cms.searchByInitials(query) }.getOrDefault(emptyList())
             }
-            for (cn in cnTitles) {
-                rawHits += runCatching { cms.searchTitles(cn) }.getOrDefault(emptyList())
+            if (cnTitles.isNotEmpty()) {
+                coroutineScope {
+                    cnTitles.map { cn ->
+                        async { runCatching { cms.searchTitles(cn) }.getOrDefault(emptyList()) }
+                    }.awaitAll().forEach { rawHits += it }
+                }
             }
         }
         val hits = rawHits.distinctBy { it.title }
@@ -217,13 +234,21 @@ class DoubanCatalogApi @Inject constructor(
         return TmdbSearchResponse(results = results.distinctBy { it.title ?: it.name })
     }
 
-    private suspend fun movieDetail(id: Int): TmdbMovieDetailDto {
+    private suspend fun movieDetail(id: Int, full: Boolean): TmdbMovieDetailDto {
         val a = safeAbstract(id.toString()) ?: return TmdbMovieDetailDto(id = id)
         val s = a.subject ?: return TmdbMovieDetailDto(id = id)
-        val year = s.releaseYear.take(4).toIntOrNull()
-        val cover = coverFor(id, s.title)
-        val synopsis = runCatching { cms.getDescription(cleanTitle(s.title)) }.getOrDefault("")
-            .ifBlank { s.shortComment?.content.orEmpty() }
+        val clean = cleanTitle(s.title)
+        val (cover, synopsis) = coroutineScope {
+            val coverJob = async { coverFor(id, s.title) }
+            val descJob = async {
+                if (full) {
+                    runCatching { cms.getDescription(clean) }.getOrDefault("").ifBlank { s.shortComment?.content.orEmpty() }
+                } else {
+                    s.shortComment?.content.orEmpty()
+                }
+            }
+            coverJob.await() to descJob.await()
+        }
         val cast = com.shieldstream.tv.network.dto.TmdbCreditsDto(
             cast = s.actors.mapIndexed { i, name ->
                 com.shieldstream.tv.network.dto.TmdbCastDto(id = i, name = name, order = i)
@@ -231,7 +256,7 @@ class DoubanCatalogApi @Inject constructor(
         )
         return TmdbMovieDetailDto(
             id = id,
-            title = cleanTitle(s.title),
+            title = clean,
             overview = synopsis,
             poster_path = cover,
             backdrop_path = cover,
@@ -242,21 +267,32 @@ class DoubanCatalogApi @Inject constructor(
         )
     }
 
-    private suspend fun tvDetail(id: Int): TmdbTvDetailDto {
+    private suspend fun tvDetail(id: Int, full: Boolean): TmdbTvDetailDto {
         val a = safeAbstract(id.toString()) ?: return TmdbTvDetailDto(id = id)
         val s = a.subject ?: return TmdbTvDetailDto(id = id)
-        titleOf[id] = cleanTitle(s.title)
-        // Modified build: Douban has no season data. Ask the CMS for the episode count so the
-        // details screen can show a season/episode picker for TV shows.
-        val episodeCount = runCatching { cms.getEpisodes(cleanTitle(s.title)).size }.getOrDefault(0)
-        val seasons = if (episodeCount > 0) listOf(
+        val clean = cleanTitle(s.title)
+        titleOf[id] = clean
+        // Modified build: Douban has no season data. Fetch cover + CMS bundle (episodes & description)
+        // in parallel only when full details are requested; lightweight item lookups skip CMS.
+        val (cover, epsCount, synopsis) = coroutineScope {
+            val coverJob = async { coverFor(id, s.title) }
+            val epsJob = async {
+                if (full) runCatching { cms.getEpisodes(clean).size }.getOrDefault(0) else 0
+            }
+            val descJob = async {
+                if (full) {
+                    runCatching { cms.getDescription(clean) }.getOrDefault("").ifBlank { s.shortComment?.content.orEmpty() }
+                } else {
+                    s.shortComment?.content.orEmpty()
+                }
+            }
+            Triple(coverJob.await(), epsJob.await(), descJob.await())
+        }
+        val seasons = if (epsCount > 0) listOf(
             com.shieldstream.tv.network.dto.TmdbSeasonSummaryDto(
-                season_number = 1, name = "第1季", episode_count = episodeCount,
+                season_number = 1, name = "第1季", episode_count = epsCount,
             ),
         ) else emptyList()
-        val cover = coverFor(id, s.title)
-        val synopsis = runCatching { cms.getDescription(cleanTitle(s.title)) }.getOrDefault("")
-            .ifBlank { s.shortComment?.content.orEmpty() }
         val cast = com.shieldstream.tv.network.dto.TmdbCreditsDto(
             cast = s.actors.mapIndexed { i, name ->
                 com.shieldstream.tv.network.dto.TmdbCastDto(id = i, name = name, order = i)
@@ -264,7 +300,7 @@ class DoubanCatalogApi @Inject constructor(
         )
         return TmdbTvDetailDto(
             id = id,
-            name = cleanTitle(s.title),
+            name = clean,
             overview = synopsis,
             poster_path = cover,
             backdrop_path = cover,
@@ -272,7 +308,7 @@ class DoubanCatalogApi @Inject constructor(
             vote_average = (s.rate.toDoubleOrNull() ?: 0.0),
             genres = s.types.map { TmdbGenreDto(name = it) },
             seasons = seasons,
-            number_of_seasons = if (episodeCount > 0) 1 else 0,
+            number_of_seasons = if (epsCount > 0) 1 else 0,
             aggregate_credits = cast,
         )
     }
@@ -300,9 +336,21 @@ class DoubanCatalogApi @Inject constructor(
         return img
     }
 
-    private suspend fun safeAbstract(id: String) = runCatching {
-        api.abstract("https://movie.douban.com/j/subject_abstract?subject_id=$id")
-    }.getOrNull()
+    private suspend fun safeAbstract(id: String): DoubanAbstractDto? {
+        val now = System.currentTimeMillis()
+        abstractCache[id]?.takeIf { now - it.at < ABSTRACT_CACHE_MS }?.let { return it.value }
+        val resp = runCatching {
+            api.abstract("https://movie.douban.com/j/subject_abstract?subject_id=$id")
+        }.getOrNull()
+        if (resp?.subject != null) {
+            abstractCache[id] = CachedAbstract(now, resp)
+        }
+        return resp
+    }
+
+    private companion object {
+        const val ABSTRACT_CACHE_MS = 6 * 60 * 60 * 1000L
+    }
 
     private fun cleanTitle(t: String) = t.replace(Regex("\\s*\\((?:19|20)\\d{2}\\)\\s*"), "").trim()
 

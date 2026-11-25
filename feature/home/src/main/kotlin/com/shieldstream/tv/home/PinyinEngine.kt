@@ -2,7 +2,9 @@ package com.shieldstream.tv.home
 
 import android.content.Context
 import java.io.BufferedReader
+import java.io.InputStream
 import java.io.InputStreamReader
+import java.util.Arrays
 
 /**
  * Offline pinyin IME engine for the TV search keyboard.
@@ -26,8 +28,13 @@ internal object PinyinEngine {
     /** Longest syllable in the dictionary ("zhuang"/"chuang"). */
     private const val MAX_SYLLABLE = 6
 
+    /** Maximum word key length stored in O(log N) length buckets. */
+    private const val MAX_BUCKET_LEN = 32
+
     /** Whole-dictionary cap for one buffer; a TV remote never needs more. */
     private const val MAX_CANDIDATES = 60
+
+    private const val CACHE_SIZE = 64
 
     @Volatile
     private var loaded = false
@@ -35,55 +42,90 @@ internal object PinyinEngine {
     /** syllable -> characters, ordered by frequency. */
     private val syllables = HashMap<String, List<String>>(512)
 
-    /** full pinyin key -> words, ordered by frequency. */
-    private val words = HashMap<String, List<String>>(48_000)
+    /** Sorted keys + raw comma-separated payloads grouped by key length for O(log N) prefix search. */
+    private class WordBucket(val keys: Array<String>, val payloads: Array<String>)
 
-    /** key length -> word keys, so prefix lookup never scans all 47k entries. */
-    private val keysByLength = HashMap<Int, List<String>>(8)
-
-    /** Sorted list of all syllable keys, used for greedy segmentation. */
     @Volatile
-    private var syllableKeys: List<String> = emptyList()
+    private var wordBuckets: Array<WordBucket?> = arrayOfNulls(MAX_BUCKET_LEN + 1)
+
+    /** Recent buffer -> candidate cache so backspacing and repeated typing are instant. */
+    private val recentCache = object : LinkedHashMap<String, List<String>>(CACHE_SIZE + 1, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<String>>): Boolean = size > CACHE_SIZE
+    }
+
+    fun isLoaded(): Boolean = loaded
 
     fun ensureLoaded(context: Context) {
         if (loaded) return
         synchronized(this) {
             if (loaded) return
-            runCatching { load(context) }
-                .onFailure { android.util.Log.e(TAG, "load failed", it) }
+            runCatching {
+                context.assets.open("pinyin_dict.txt").use { raw -> loadFromStream(raw) }
+            }.onFailure { android.util.Log.e(TAG, "load failed", it) }
             loaded = true
         }
     }
 
-    private fun load(context: Context) {
+    internal fun loadFromStream(raw: InputStream) {
         val t0 = System.currentTimeMillis()
         var chars = 0
-        var wordCount = 0
-        context.assets.open("pinyin_dict.txt").use { raw ->
-            BufferedReader(InputStreamReader(raw, Charsets.UTF_8), 1 shl 16).forEachLine { line ->
-                if (line.isEmpty()) return@forEachLine
-                val t1 = line.indexOf('\t')
-                if (t1 < 0) return@forEachLine
-                val t2 = line.indexOf('\t', t1 + 1)
-                if (t2 < 0) return@forEachLine
-                val key = line.substring(t1 + 1, t2)
-                val payload = line.substring(t2 + 1)
-                if (payload.isEmpty()) return@forEachLine
-                val items = payload.split(',')
-                when (line[0]) {
-                    'S' -> { syllables[key] = items; chars += items.size }
-                    'W' -> { words[key] = items; wordCount += items.size }
+        var wordKeysCount = 0
+        val tempSyllables = HashMap<String, List<String>>(512)
+        val byLen = Array<ArrayList<Pair<String, String>>?>(MAX_BUCKET_LEN + 1) { null }
+
+        BufferedReader(InputStreamReader(raw, Charsets.UTF_8), 1 shl 16).forEachLine { line ->
+            if (line.isEmpty()) return@forEachLine
+            val t1 = line.indexOf('\t')
+            if (t1 < 0) return@forEachLine
+            val t2 = line.indexOf('\t', t1 + 1)
+            if (t2 < 0) return@forEachLine
+            val key = line.substring(t1 + 1, t2)
+            val payload = line.substring(t2 + 1)
+            if (payload.isEmpty()) return@forEachLine
+            when (line[0]) {
+                'S' -> {
+                    val items = payload.split(',')
+                    tempSyllables[key] = items
+                    chars += items.size
+                }
+                'W' -> {
+                    val len = key.length
+                    if (len in 1..MAX_BUCKET_LEN) {
+                        val list = byLen[len] ?: ArrayList<Pair<String, String>>(64).also { byLen[len] = it }
+                        list.add(key to payload)
+                        wordKeysCount++
+                    }
                 }
             }
         }
-        syllableKeys = syllables.keys.sortedByDescending { it.length }
-        val grouped = words.keys.groupBy { it.length }
-        keysByLength.putAll(grouped)
+
+        val builtBuckets = arrayOfNulls<WordBucket>(MAX_BUCKET_LEN + 1)
+        for (len in 1..MAX_BUCKET_LEN) {
+            val list = byLen[len] ?: continue
+            list.sortWith(compareBy { it.first })
+            val keys = Array(list.size) { list[it].first }
+            val payloads = Array(list.size) { list[it].second }
+            builtBuckets[len] = WordBucket(keys, payloads)
+        }
+
+        synchronized(recentCache) { recentCache.clear() }
+        syllables.clear()
+        syllables.putAll(tempSyllables)
+        wordBuckets = builtBuckets
+        loaded = true
+
         android.util.Log.i(
             TAG,
             "loaded ${syllables.size} syllables / $chars chars, " +
-                "${words.size} word keys / $wordCount words in ${System.currentTimeMillis() - t0}ms",
+                "$wordKeysCount word keys in ${System.currentTimeMillis() - t0}ms",
         )
+    }
+
+    private fun lookupExactWords(key: String): List<String>? {
+        val bucket = wordBuckets.getOrNull(key.length) ?: return null
+        val idx = Arrays.binarySearch(bucket.keys, key)
+        if (idx < 0) return null
+        return bucket.payloads[idx].split(',')
     }
 
     /**
@@ -92,8 +134,16 @@ internal object PinyinEngine {
      */
     fun candidates(context: Context, buffer: String): List<String> {
         ensureLoaded(context)
-        val q = buffer.lowercase().filter { it in 'a'..'z' }
+        return candidatesFromLoaded(buffer)
+    }
+
+    internal fun candidatesFromLoaded(buffer: String): List<String> {
+        val q = normalizeLetters(buffer)
         if (q.isEmpty()) return emptyList()
+
+        synchronized(recentCache) {
+            recentCache[q]?.let { return it }
+        }
 
         val out = LinkedHashSet<String>()
 
@@ -104,23 +154,26 @@ internal object PinyinEngine {
 
         if (isSingleSyllable) {
             syllables[q]?.let { out += it }
-            words[q]?.let { out += it }
+            lookupExactWords(q)?.let { out += it }
         } else {
             // 1. Exact full-pinyin word match: "guyu" -> 谷雨.
-            words[q]?.let { out += it }
+            lookupExactWords(q)?.let { out += it }
         }
 
         // 2. Prefix word matches ("guyu" while typing "guyuan"), words first.
-        // Scan only keys of plausible length: a prefix match must have length in
-        // [q.length, q.length + 3], otherwise it is not a useful completion.
+        // Binary-search only buckets of plausible length [q.length + 1, q.length + 3] in O(log N).
         if (out.size < MAX_CANDIDATES / 2) {
-            outer@ for (len in q.length + 1..q.length + 3) {
-                val bucket = keysByLength[len] ?: continue
-                for (key in bucket) {
-                    if (key.startsWith(q)) {
-                        out += words[key].orEmpty()
-                        if (out.size >= MAX_CANDIDATES / 2) break@outer
-                    }
+            val maxLen = minOf(q.length + 3, MAX_BUCKET_LEN)
+            outer@ for (len in (q.length + 1)..maxLen) {
+                val bucket = wordBuckets.getOrNull(len) ?: continue
+                var pos = Arrays.binarySearch(bucket.keys, q)
+                if (pos < 0) pos = -pos - 1
+                while (pos < bucket.keys.size) {
+                    val key = bucket.keys[pos]
+                    if (!key.startsWith(q)) break
+                    out += bucket.payloads[pos].split(',')
+                    if (out.size >= MAX_CANDIDATES / 2) break@outer
+                    pos++
                 }
             }
         }
@@ -138,12 +191,23 @@ internal object PinyinEngine {
             if (parts.size > 1) {
                 val composed = parts.mapNotNull { syllables[it]?.firstOrNull() }.joinToString("")
                 if (composed.length == parts.size) out += composed
-                // Per-syllable alternatives are offered separately by the caller
-                // as the buffer grows, so don't explode the list here.
             }
         }
 
-        return out.take(MAX_CANDIDATES)
+        val result = out.take(MAX_CANDIDATES)
+        synchronized(recentCache) {
+            recentCache[q] = result
+        }
+        return result
+    }
+
+    private fun normalizeLetters(raw: String): String {
+        val sb = StringBuilder(raw.length)
+        for (ch in raw) {
+            val low = ch.lowercaseChar()
+            if (low in 'a'..'z') sb.append(low)
+        }
+        return sb.toString()
     }
 
     /** Longest dictionary syllable that [q] ends with, e.g. "xiaoxiang" -> "xiang". */

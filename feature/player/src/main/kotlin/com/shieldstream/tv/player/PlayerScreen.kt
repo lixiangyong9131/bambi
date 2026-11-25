@@ -422,27 +422,45 @@ fun PlayerScreen(
                 matcher.attach()
                 onDispose { matcher.detach() }
             }
+            var lastAppliedFit by remember(playerView) { mutableStateOf<com.shieldstream.tv.model.VideoFit?>(null) }
+            var lastAppliedScale by remember(playerView) { mutableStateOf<Float?>(null) }
+            var lastAppliedSubAppearance by remember(playerView) { mutableStateOf<com.shieldstream.tv.model.SubtitleAppearance?>(null) }
+            var lastAppliedSubVisible by remember(playerView) { mutableStateOf<Boolean?>(null) }
             AndroidView(
                 factory = { playerView },
                 update = { view ->
-                    view.player = exoPlayer
-                    view.resizeMode = when (videoFit) {
-                        com.shieldstream.tv.model.VideoFit.FIT -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
-                        com.shieldstream.tv.model.VideoFit.ZOOM -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                        com.shieldstream.tv.model.VideoFit.STRETCH -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
-                    }
-                    view.videoSurfaceView?.let { surface ->
-                        val (sx, sy) = when (videoFit) {
-                            com.shieldstream.tv.model.VideoFit.FIT -> 1f to 1f
-                            com.shieldstream.tv.model.VideoFit.ZOOM -> barScale to barScale
-                            com.shieldstream.tv.model.VideoFit.STRETCH -> 1f to barScale
+                    if (view.player !== exoPlayer) view.player = exoPlayer
+                    val fitChanged = lastAppliedFit != videoFit
+                    if (fitChanged) {
+                        lastAppliedFit = videoFit
+                        view.resizeMode = when (videoFit) {
+                            com.shieldstream.tv.model.VideoFit.FIT -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            com.shieldstream.tv.model.VideoFit.ZOOM -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                            com.shieldstream.tv.model.VideoFit.STRETCH -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
                         }
-                        surface.scaleX = sx
-                        surface.scaleY = sy
+                    }
+                    if (lastAppliedScale != barScale || fitChanged) {
+                        lastAppliedScale = barScale
+                        view.videoSurfaceView?.let { surface ->
+                            val (sx, sy) = when (videoFit) {
+                                com.shieldstream.tv.model.VideoFit.FIT -> 1f to 1f
+                                com.shieldstream.tv.model.VideoFit.ZOOM -> barScale to barScale
+                                com.shieldstream.tv.model.VideoFit.STRETCH -> 1f to barScale
+                            }
+                            surface.scaleX = sx
+                            surface.scaleY = sy
+                        }
                     }
                     val evaluating = (externalSubs as? ExternalSubsState.Results)?.evaluating == true
-                    view.subtitleView?.applySubtitleAppearance(subtitleAppearance)
-                    view.subtitleView?.visibility = if (activeExternal != null || evaluating) View.GONE else View.VISIBLE
+                    val subVisible = activeExternal == null && !evaluating
+                    if (lastAppliedSubAppearance != subtitleAppearance) {
+                        lastAppliedSubAppearance = subtitleAppearance
+                        view.subtitleView?.applySubtitleAppearance(subtitleAppearance)
+                    }
+                    if (lastAppliedSubVisible != subVisible) {
+                        lastAppliedSubVisible = subVisible
+                        view.subtitleView?.visibility = if (subVisible) View.VISIBLE else View.GONE
+                    }
                 },
                 modifier = Modifier.fillMaxSize(),
             )

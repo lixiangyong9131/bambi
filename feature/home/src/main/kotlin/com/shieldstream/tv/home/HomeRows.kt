@@ -67,7 +67,10 @@ import com.shieldstream.tv.ui.component.requestFocusWithRetry
 import com.shieldstream.tv.ui.component.shouldLoop
 import com.shieldstream.tv.ui.theme.LocalLightweightUi
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.snapshots.Snapshot
 
@@ -100,10 +103,15 @@ internal fun RowsBrowser(
     var myListMenu by remember { mutableStateOf<ItemMenu?>(null) }
     var upNextMenu by remember { mutableStateOf<UpNextMenu?>(null) }
 
-    var hero by remember { mutableStateOf(Snapshot.withoutReadObservation { findByKey(rows, restoreKey) ?: rows.first().items.first() }) }
+    val heroState = remember {
+        MutableStateFlow(Snapshot.withoutReadObservation { findByKey(rows, restoreKey) ?: rows.first().items.first() })
+    }
     LaunchedEffect(rows) {
         snapshotFlow { savedFocus.value }.collectLatest { key ->
-            hero = findByKey(rows, validKey(key)) ?: hero
+            val target = findByKey(rows, validKey(key)) ?: return@collectLatest
+            // Small debounce prevents flooding 1080p backdrop decodes while rapidly holding D-pad.
+            delay(85)
+            heroState.value = target
         }
     }
 
@@ -133,7 +141,7 @@ internal fun RowsBrowser(
                 if (now - lastVerticalRepeat < com.shieldstream.tv.ui.component.VERTICAL_REPEAT_MS) true else { lastVerticalRepeat = now; false }
             },
     ) {
-        if (!LocalLightweightUi.current) HeroBackdrop(hero)
+        if (!LocalLightweightUi.current) HeroBackdropSlot(heroState)
         Column(Modifier.fillMaxSize()) {
             // Modified build: top navigation is always visible (no separate banner page).
             topBar(Modifier)
@@ -152,7 +160,7 @@ internal fun RowsBrowser(
                         color = AppColors.Accent,
                     )
                 }
-                HeroInfo(item = hero)
+                HeroInfoSlot(heroState)
             }
             ProvidePivotScroll(leading = 51.dp) {
                 LazyColumn(
@@ -166,8 +174,6 @@ internal fun RowsBrowser(
                             restoreRequester = restoreRequester,
                             onFocused = { virtual ->
                                 savedFocus.value = keyOf(row, virtual)
-                                // Modified build: update the full-screen hero immediately on focus.
-                                hero = row.items.getOrNull(virtual % row.items.size) ?: hero
                                 onEnterImmersive()
                             },
                             onItemClick = onItemClick,
@@ -262,6 +268,18 @@ internal fun RowsBrowser(
             )
         }
     }
+}
+
+@Composable
+private fun HeroBackdropSlot(heroState: StateFlow<CatalogItem>) {
+    val hero by heroState.collectAsState()
+    HeroBackdrop(hero)
+}
+
+@Composable
+private fun HeroInfoSlot(heroState: StateFlow<CatalogItem>) {
+    val hero by heroState.collectAsState()
+    HeroInfo(item = hero)
 }
 
 @Composable

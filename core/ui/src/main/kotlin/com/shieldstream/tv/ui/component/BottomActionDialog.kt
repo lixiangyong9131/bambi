@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -148,7 +149,7 @@ fun ActionDockCard(
     val scale = if (LocalLightweightUi.current) {
         if (focused) 1.06f else 1f
     } else {
-        animateFloatAsState(if (focused) 1.06f else 1f, label = "actionCardScale").value
+        animateFloatAsState(if (focused) 1.06f else 1f, tween(110), label = "actionCardScale").value
     }
     val content = if (focused) Color.Black else Color.White
     Column(

@@ -36,7 +36,6 @@ import com.shieldstream.tv.model.Lang
 import com.shieldstream.tv.player.PlayerScreen
 import com.shieldstream.tv.settings.AddonsScreen
 import com.shieldstream.tv.settings.SettingsScreen
-import com.shieldstream.tv.settings.SetupGateViewModel
 import com.shieldstream.tv.settings.SetupScreen
 import com.shieldstream.tv.settings.profiles.ProfileEditScreen
 import com.shieldstream.tv.settings.profiles.ProfileEditViewModel
@@ -62,7 +61,6 @@ fun AppNavHost(
     onResumeIntroDone: (ResumeIntro) -> Unit,
 ) {
     val navController = rememberNavController()
-    val gate: SetupGateViewModel = hiltViewModel()
     val watchNextNavigation: WatchNextNavigationViewModel = hiltViewModel()
     // Al abrir en frío, la intro de Bambi (mientras se precarga el Inicio) va ENCIMA de "¿Quién está viendo?", que ya
     // está debajo: al terminar, la película avanza y el fotograma siguiente es esa pantalla (reveal 0→1, IntroReveal).
@@ -95,7 +93,8 @@ fun AppNavHost(
     LaunchedEffect(coldIntro) {
         intro.setUiBusy(coldIntro)
         if (!coldIntro) {
-            // Modified build: no 8s warm-up delay; preload icon bitmaps immediately in background.
+            // Defer non-critical profile icon warming slightly so Home catalog & posters get full bandwidth first.
+            kotlinx.coroutines.delay(4_000L)
             intro.warmAllProfileIcons()
         }
     }

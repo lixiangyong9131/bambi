@@ -114,6 +114,6 @@ class SourceProber @Inject constructor() {
     }
 
     companion object {
-        private const val TIMEOUT_MS = 6_000
+        private const val TIMEOUT_MS = 3_500
     }
 }

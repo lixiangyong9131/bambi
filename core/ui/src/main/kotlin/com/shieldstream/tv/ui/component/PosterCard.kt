@@ -3,6 +3,7 @@ package com.shieldstream.tv.ui.component
 import com.shieldstream.tv.ui.theme.AppColors
 import com.shieldstream.tv.ui.theme.LocalLightweightUi
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -58,7 +59,7 @@ private fun focusScale(focused: Boolean, target: Float): Float =
     if (LocalLightweightUi.current) {
         if (focused) target else 1f
     } else {
-        animateFloatAsState(if (focused) target else 1f, label = "posterScale").value
+        animateFloatAsState(if (focused) target else 1f, tween(110), label = "posterScale").value
     }
 
 /**

@@ -93,7 +93,8 @@ class Media3Factory @Inject constructor(
             .setBufferDurationsMs(
                 /* minBufferMs */ policy.minBufferSeconds * 1000,
                 /* maxBufferMs */ policy.maxBufferSeconds * 1000,
-                /* bufferForPlaybackMs */ policy.bufferForPlaybackMs,
+                // Cap initial startup buffer so first frame renders quickly, while keeping generous steady-state buffer.
+                /* bufferForPlaybackMs */ minOf(policy.bufferForPlaybackMs, 1_500),
                 /* bufferForPlaybackAfterRebufferMs */ policy.bufferForPlaybackAfterRebufferMs,
             )
             .setBackBuffer(/* durationMs */ policy.backBufferMs, /* retainAfterEnd */ false)

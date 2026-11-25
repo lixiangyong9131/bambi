@@ -129,14 +129,6 @@ fun SearchScreen(
         if (!backOnCard) runCatching { firstKey.requestFocus() }
     }
 
-    // 预热拼音字典（约 1MB / 4.7 万词条），在后台线程解析，避免首次按键卡顿。
-    val context = androidx.compose.ui.platform.LocalContext.current
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            PinyinEngine.ensureLoaded(context)
-        }
-    }
-
     val keyboard = LocalSoftwareKeyboardController.current
     val fieldRequester = remember { FocusRequester() }
     var systemKeyboard by remember { mutableStateOf(false) }
@@ -155,13 +147,10 @@ fun SearchScreen(
         }
         TextFieldValue(styled, TextRange(text.length))
     }
-    LaunchedEffect(query, composing, systemKeyboard) {
-        if (!systemKeyboard && field.text != query + composing) {
-            field = TextFieldValue(query + composing, TextRange((query + composing).length))
-        }
-    }
     LaunchedEffect(systemKeyboard) {
         if (systemKeyboard) {
+            val full = query + composing
+            field = TextFieldValue(full, TextRange(full.length))
             withFrameNanos { }
             runCatching { fieldRequester.requestFocus() }
             keyboard?.show()
@@ -239,7 +228,7 @@ fun SearchScreen(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier.fillMaxWidth().height(44.dp),
                 ) {
-                    itemsIndexed(candidates) { _, cand ->
+                    itemsIndexed(candidates, key = { _, cand -> cand }) { _, cand ->
                         CandidateChip(text = cand, onClick = { viewModel.commitCandidate(cand) })
                     }
                 }

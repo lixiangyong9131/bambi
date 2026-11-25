@@ -8,6 +8,7 @@ import com.shieldstream.tv.domain.CatalogRepository
 import com.shieldstream.tv.domain.SettingsRepository
 import com.shieldstream.tv.model.CatalogItem
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.coroutineScope
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -78,11 +80,21 @@ class SearchViewModel @Inject constructor(
     /** Chinese candidates for the current [composing] buffer; empty when idle. */
     private val _candidates = MutableStateFlow<List<String>>(emptyList())
     val candidates: StateFlow<List<String>> = _candidates.asStateFlow()
+    private var candidateJob: Job? = null
 
     private fun refreshCandidates() {
         val buf = _composing.value
-        // Candidates come from a local dictionary: no network, safe on the main thread.
-        _candidates.value = if (buf.isEmpty()) emptyList() else PinyinEngine.candidates(appContext, buf)
+        candidateJob?.cancel()
+        if (buf.isEmpty()) {
+            _candidates.value = emptyList()
+            return
+        }
+        candidateJob = viewModelScope.launch(Dispatchers.Default) {
+            val result = PinyinEngine.candidates(appContext, buf)
+            if (isActive && _composing.value == buf) {
+                _candidates.value = result
+            }
+        }
     }
 
     /** A candidate was picked: append it to the query and clear the pinyin buffer. */
@@ -139,6 +151,9 @@ class SearchViewModel @Inject constructor(
     private var searchJob: Job? = null
 
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            PinyinEngine.ensureLoaded(appContext)
+        }
         viewModelScope.launch {
             suggestions = runCatching { catalogRepository.trending() }.getOrDefault(emptyList())
             if (_query.value.isBlank()) _uiState.value = SearchUiState.Suggestions(suggestions)
