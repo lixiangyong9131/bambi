@@ -62,6 +62,7 @@ class CatalogRepositoryImpl @Inject constructor(
     /** Copia en disco del último Inicio (null en tests). */
     private val diskCache: HomeDiskCache? = null,
     private val cmsStreams: com.shieldstream.tv.data.repository.streams.CmsStreams? = null,
+    private val animeIds: AnimeIdStore? = null,
 ) : CatalogRepository {
 
     private val kids: Boolean get() = profiles.active.value.kids
@@ -152,17 +153,43 @@ class CatalogRepositoryImpl @Inject constructor(
         }
     }
 
-    private fun rememberRowItems(rows: List<CatalogRow>) {
+    private fun rememberRowItems(rows: List<CatalogRow>, filter: HomeFilter? = null) {
+        val discoveredAnime = ArrayList<String>()
         rows.forEach { row ->
             row.items.forEach { item ->
                 itemCache.putIfAbsent("${item.type.name}_${item.id}", item)
+                if (filter == HomeFilter.ANIME || item.genres.any { it.contains("动画") || it.equals("Animation", ignoreCase = true) }) {
+                    discoveredAnime += item.id
+                }
             }
         }
+        if (discoveredAnime.isNotEmpty()) animeIds?.markAll(discoveredAnime)
     }
 
-    private suspend fun cachedRows(baseKey: String, load: suspend () -> List<CatalogRow>): List<CatalogRow> =
+    private suspend fun cachedRows(baseKey: String, filter: HomeFilter? = null, load: suspend () -> List<CatalogRow>): List<CatalogRow> =
         cachedHome(baseKey, { c, k -> c.readRows(k) }, { c, k, v -> c.writeRows(k, v) }, load)
-            .also(::rememberRowItems)
+            .also { rememberRowItems(it, filter) }
+
+    override fun isAnime(id: String): Boolean = animeIds?.contains(id) == true
+
+    override suspend fun loadMoreRow(filter: HomeFilter, rowId: String, page: Int): List<CatalogItem> {
+        if (page < 2 || key.isBlank()) return emptyList()
+        val specs = if (kids) kidsRowsFor(filter, 1) else rowsFor(filter)
+        val spec = specs.firstOrNull { it.id == rowId } ?: return emptyList()
+        if (spec.style != RowStyle.POSTER) return emptyList()
+        val items = runCatching {
+            spec.load(page)
+                .distinctBy { it.type to it.id }
+                .filter { it.posterUrl != null }
+        }.getOrDefault(emptyList())
+        items.forEach { item ->
+            itemCache.putIfAbsent("${item.type.name}_${item.id}", item)
+            if (filter == HomeFilter.ANIME || item.genres.any { it.contains("动画") || it.equals("Animation", ignoreCase = true) }) {
+                animeIds?.mark(item.id)
+            }
+        }
+        return items
+    }
 
     private suspend fun cachedFeatured(baseKey: String, load: suspend () -> List<FeaturedItem>): List<FeaturedItem> =
         cachedHome(baseKey, { c, k -> c.readFeatured(k) }, { c, k, v -> c.writeFeatured(k, v) }, load)
@@ -192,8 +219,8 @@ class CatalogRepositoryImpl @Inject constructor(
     override suspend fun getHome(filter: HomeFilter, maxItems: Int): List<CatalogRow> {
         // Modified build: always one page per row for a fast first load (extra pages are fetched on scroll).
         val pages = 1
-        return if (kids) cachedRows("home_kids_${filter.name}_p$pages") { loadHome(kidsRowsFor(filter, pages), pages) }
-        else cachedRows("home_${filter.name}_p$pages") { loadHome(rowsFor(filter), pages) }
+        return if (kids) cachedRows("home_kids_${filter.name}_p$pages", filter) { loadHome(kidsRowsFor(filter, pages), pages) }
+        else cachedRows("home_${filter.name}_p$pages", filter) { loadHome(rowsFor(filter), pages) }
     }
 
     private suspend fun loadHome(specs: List<RowSpec>, pages: Int): List<CatalogRow> = coroutineScope {
@@ -400,6 +427,9 @@ class CatalogRepositoryImpl @Inject constructor(
                 )
             }
             itemCache[cacheKey] = result.item
+            if (result.genres.any { it.contains("动画") || it.equals("Animation", ignoreCase = true) }) {
+                animeIds?.mark(result.item.id)
+            }
             detailsCache[cacheKey] = CachedDetails(System.currentTimeMillis(), result)
             result
         }

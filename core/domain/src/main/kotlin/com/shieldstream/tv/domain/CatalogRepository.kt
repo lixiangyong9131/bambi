@@ -15,6 +15,12 @@ interface CatalogRepository {
     /** Filas del Inicio con hasta [maxItems] títulos cada una (se piden las páginas de TMDB necesarias). */
     suspend fun getHome(filter: HomeFilter, maxItems: Int = SettingsRepository.DEFAULT_HOME_ROW_ITEM_LIMIT): List<CatalogRow>
 
+    /** Fills additional items for a horizontally scrollable catalog row. */
+    suspend fun loadMoreRow(filter: HomeFilter, rowId: String, page: Int): List<CatalogItem> = emptyList()
+
+    /** Whether [id] is known to be an Anime / Animation title for Anime-tab filtering. */
+    fun isAnime(id: String): Boolean = false
+
     suspend fun getFeatured(filter: HomeFilter): List<FeaturedItem>
 
     /** A partir de ahora, lo guardado con más de 30 minutos se vuelve a pedir a la red en vez de enseñarse. */

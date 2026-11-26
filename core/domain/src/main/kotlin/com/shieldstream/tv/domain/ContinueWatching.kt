@@ -13,7 +13,11 @@ data class ContinueEntry(
 )
 
 object ContinueWatching {
-    fun entries(all: Map<String, WatchProgress>, filter: HomeFilter): List<ContinueEntry> {
+    fun entries(
+        all: Map<String, WatchProgress>,
+        filter: HomeFilter,
+        isAnime: (String) -> Boolean = { false },
+    ): List<ContinueEntry> {
         val parsed = all.mapNotNull { (key, progress) -> parse(key, progress) }
         val movies = parsed.filter { it.type == MediaType.MOVIE }
         val shows = parsed
@@ -28,7 +32,7 @@ object ContinueWatching {
                     HomeFilter.ALL -> true
                     HomeFilter.MOVIES -> it.type == MediaType.MOVIE
                     HomeFilter.TV -> it.type == MediaType.TV
-                    HomeFilter.ANIME -> false
+                    HomeFilter.ANIME -> isAnime(it.id)
                 }
             }
             .sortedByDescending { it.progress.updatedAt }

@@ -69,22 +69,22 @@ class SetupScreenTest {
     }
 
     @Test
-    fun `welcome renders English text`() {
+    fun `welcome renders Chinese default text`() {
         renderStep(SetupStep.WELCOME, AppLanguage.EN)
 
-        composeRule.onNodeWithText("Let's get Bambi ready").assertExists()
-        composeRule.onNodeWithText("Language, audio & subtitles").assertExists()
-        composeRule.onNodeWithText("Start").assertExists()
-        composeRule.onNodeWithText("Later").assertExists()
+        composeRule.onNodeWithText("让我们准备好 Bambi").assertExists()
+        composeRule.onNodeWithText("语言、音频与字幕").assertExists()
+        composeRule.onNodeWithText("开始").assertExists()
+        composeRule.onNodeWithText("稍后").assertExists()
     }
 
     @Test
     fun `welcome offers the optional phone setup path`() {
         renderStep(SetupStep.WELCOME, AppLanguage.EN, onOpenPhone = {})
 
-        composeRule.onNodeWithText("Continue on phone").assertExists()
-        composeRule.onNodeWithText("Start").assertExists()
-        composeRule.onNodeWithText("Later").assertExists()
+        composeRule.onNodeWithText("在手机上继续").assertExists()
+        composeRule.onNodeWithText("开始").assertExists()
+        composeRule.onNodeWithText("稍后").assertExists()
     }
 
     @Test
@@ -100,15 +100,15 @@ class SetupScreenTest {
     }
 
     @Test
-    fun `playback preferences render English text`() {
+    fun `playback preferences render Chinese default text`() {
         renderStep(SetupStep.PLAYBACK, AppLanguage.EN)
 
-        composeRule.onNodeWithText("STEP 4 OF 4").assertExists()
-        composeRule.onNodeWithText("AUDIO & SUBTITLES").assertExists()
-        composeRule.onNodeWithText("Interface language").assertExists()
-        composeRule.onNodeWithText("Preferred audio").assertExists()
-        composeRule.onNodeWithText("Automatic subtitles").assertExists()
-        composeRule.onNodeWithText("Next").assertExists()
+        composeRule.onNodeWithText("第 4 步 / 共 4 步").assertExists()
+        composeRule.onNodeWithText("音频与字幕").assertExists()
+        composeRule.onNodeWithText("界面语言").assertExists()
+        composeRule.onNodeWithText("首选音频").assertExists()
+        composeRule.onNodeWithText("自动字幕").assertExists()
+        composeRule.onNodeWithText("下一步").assertExists()
     }
 
     @Test

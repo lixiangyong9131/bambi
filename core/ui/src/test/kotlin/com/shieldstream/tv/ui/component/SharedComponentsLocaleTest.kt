@@ -78,14 +78,14 @@ class SharedComponentsLocaleTest {
     }
 
     @Test
-    fun `episode badges use English singular plural and upcoming text`() {
+    fun `episode badges use Chinese default singular plural and upcoming text`() {
         Lang.current = AppLanguage.EN
         renderBadges()
 
-        composeRule.onNodeWithText("NEW").assertExists()
-        composeRule.onNodeWithText("3 NEW").assertExists()
-        composeRule.onNodeWithText("2 NEW EPISODES").assertExists()
-        composeRule.onNodeWithText("COMING SOON").assertExists()
+        composeRule.onNodeWithText("新").assertExists()
+        composeRule.onNodeWithText("3 集新").assertExists()
+        composeRule.onNodeWithText("2 个新剧集").assertExists()
+        composeRule.onNodeWithText("即将上线").assertExists()
     }
 
     @Test
@@ -94,20 +94,21 @@ class SharedComponentsLocaleTest {
         renderTopBar()
 
         composeRule.onNodeWithText("Inicio").assertExists()
-        composeRule.onNodeWithText("Episodios").assertExists()
+        composeRule.onNodeWithText("Películas").assertExists()
         composeRule.onNodeWithText("Series").assertExists()
         composeRule.onNodeWithText("Mi lista").assertExists()
     }
 
     @Test
-    fun `top navigation renders English labels`() {
+    fun `top navigation renders Chinese default labels`() {
         Lang.current = AppLanguage.EN
         renderTopBar()
 
-        composeRule.onNodeWithText("Home").assertExists()
-        composeRule.onNodeWithText("Episodes").assertExists()
-        composeRule.onNodeWithText("TV Shows").assertExists()
-        composeRule.onNodeWithText("My list").assertExists()
+        composeRule.onNodeWithText("首页").assertExists()
+        composeRule.onNodeWithText("电影").assertExists()
+        composeRule.onNodeWithText("电视剧").assertExists()
+        composeRule.onNodeWithText("动漫").assertExists()
+        composeRule.onNodeWithText("我的片单").assertExists()
     }
 
     @Test
@@ -120,12 +121,12 @@ class SharedComponentsLocaleTest {
     }
 
     @Test
-    fun `rail icons expose English accessibility labels`() {
+    fun `rail icons expose Chinese default accessibility labels`() {
         Lang.current = AppLanguage.EN
         renderRail()
 
-        composeRule.onNodeWithContentDescription("Home").assertExists()
-        composeRule.onNodeWithContentDescription("Settings").assertExists()
+        composeRule.onNodeWithContentDescription("首页").assertExists()
+        composeRule.onNodeWithContentDescription("设置").assertExists()
     }
 
     @Test
@@ -140,14 +141,14 @@ class SharedComponentsLocaleTest {
     }
 
     @Test
-    fun `model labels render in English`() {
+    fun `model labels render in Chinese default`() {
         Lang.current = AppLanguage.EN
         renderModelLabels()
 
-        composeRule.onNodeWithText("War & history").assertExists()
-        composeRule.onNodeWithText("New arrival").assertExists()
-        composeRule.onNodeWithText("S2:E7").assertExists()
-        composeRule.onNodeWithText("French").assertExists()
+        composeRule.onNodeWithText("战争与历史").assertExists()
+        composeRule.onNodeWithText("新上线").assertExists()
+        composeRule.onNodeWithText("第2季第7集").assertExists()
+        composeRule.onNodeWithText("法语").assertExists()
     }
 
     @Test

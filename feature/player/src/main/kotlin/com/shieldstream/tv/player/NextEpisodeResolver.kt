@@ -20,10 +20,20 @@ import com.shieldstream.tv.model.WatchProgress
 import com.shieldstream.tv.strings.R as StringsR
 import com.shieldstream.tv.strings.Texts
 import com.shieldstream.tv.strings.episodeCode
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okio.Buffer
+import com.shieldstream.tv.media.DohDns
 import java.io.File
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
 internal data class ResolvedNextEpisode(
@@ -162,6 +172,7 @@ class NextEpisodeResolver @Inject constructor(
                 eligible.takeIf { it.isNotEmpty() }
             }
             .firstOrNull()
+            ?.let { prioritizeDirectQueue(it) }
             ?: return null
 
         return ResolvedNextEpisode(
@@ -199,8 +210,60 @@ class NextEpisodeResolver @Inject constructor(
         return NextEpisode(showId, nextSeason, 1, texts.get(StringsR.string.details_next_episode_label, nextSeason))
     }
 
+    internal suspend fun prioritizeDirectQueue(
+        sources: List<StreamSource>,
+        probe: suspend (StreamSource) -> Long? = ::probeDirectSourceMs,
+    ): List<StreamSource> {
+        val candidates = sources.filter { it.directUrl?.startsWith("http") == true }.take(MAX_DIRECT_PROBES)
+        if (candidates.size < 2) return sources
+        val results = coroutineScope {
+            candidates.map { source -> async { source.id to probe(source) } }.awaitAll()
+        }
+        val latencyById = results.toMap()
+        val fastWorking = sources
+            .filter { latencyById[it.id] != null }
+            .sortedBy { latencyById.getValue(it.id) }
+        val untouched = sources.filter { it.id !in latencyById }
+        val failedDirect = sources.filter { it.id in latencyById && latencyById[it.id] == null }
+        return fastWorking + untouched + failedDirect
+    }
+
+    private suspend fun probeDirectSourceMs(source: StreamSource): Long? = withContext(Dispatchers.IO) {
+        val url = source.directUrl?.takeIf { it.startsWith("http") } ?: return@withContext null
+        val started = System.nanoTime()
+        runCatching {
+            val request = Request.Builder().url(url).get().build()
+            probeClient.newCall(request).execute().use { resp ->
+                if (resp.code >= 400) return@use null
+                val body = resp.body ?: return@use null
+                val buffer = Buffer()
+                val read = body.source().read(buffer, PROBE_READ_BYTES)
+                if (read <= 0L) return@use null
+                val head = buffer.readUtf8()
+                val playable = head.startsWith("#EXTM3U", ignoreCase = true) ||
+                    url.contains(".mp4", ignoreCase = true) ||
+                    url.contains(".m3u8", ignoreCase = true)
+                if (!playable) return@use null
+                ((System.nanoTime() - started) / 1_000_000L).coerceAtLeast(1L)
+            }
+        }.getOrNull()
+    }
+
     private companion object {
         const val TAG = "NextEpisodeResolver"
         const val MAX_QUEUE = 30
+        const val MAX_DIRECT_PROBES = 4
+        const val PROBE_TIMEOUT_MS = 1_500L
+        const val PROBE_READ_BYTES = 8 * 1024L
+
+        val probeClient: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .dns(DohDns)
+                .connectTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .readTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .callTimeout(PROBE_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .followRedirects(true)
+                .build()
+        }
     }
 }

@@ -93,7 +93,14 @@
     <string name="details_more_series">Serie</string>
     <string name="details_plays_on_play">▶ SE REPRODUCE AL PULSAR REPRODUCIR</string>
     <string name="details_picked_source_failed">Esa fuente no funciona: %1$s Elige otra.</string>
-    <string name="details_starring">主演：%1$s</string>
+    <string name="details_skip_settings">Omitir intro y créditos</string>
+    <string name="details_skip_enable">Omitir intro y créditos automáticamente</string>
+    <string name="details_skip_intro">Duración de la intro</string>
+    <string name="details_skip_outro">Duración del cierre</string>
+    <string name="details_skip_seconds">%1$d s</string>
+    <string name="details_skip_off">Desactivado</string>
+    <string name="details_skip_hint">Si lo activas, cada episodio omitirá la intro y el cierre</string>
+    <string name="details_starring">Reparto: %1$s</string>
     <string name="details_episodes_order_asc">↑ Orden</string>
     <string name="details_episodes_order_desc">↓ Inverso</string>
 </resources>

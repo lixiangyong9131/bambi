@@ -101,6 +101,11 @@
     <string name="player_video_fit_original">Original (con bandas negras)</string>
     <string name="player_video_fit_zoom">Ampliar · sin bandas, recorta los lados</string>
     <string name="player_video_fit_stretch">Estirar · sin bandas, deforma la imagen</string>
-    <string name="player_skip_intro_short">片头</string>
-    <string name="player_skip_outro_short">片尾</string>
+    <string name="player_audio">Audio</string>
+    <string name="player_set_intro_point">Marcar fin de intro aquí</string>
+    <string name="player_set_outro_point">Marcar inicio de cierre aquí</string>
+    <string name="player_intro_point_set">Intro fijada en %1$d s</string>
+    <string name="player_outro_point_set">Cierre fijado en los últimos %1$d s</string>
+    <string name="player_skip_intro_short">Intro</string>
+    <string name="player_skip_outro_short">Cierre</string>
 </resources>

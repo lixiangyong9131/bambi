@@ -98,9 +98,13 @@ internal fun RowsBrowser(
     backToTopTick: Int = 0,
     onBackToTop: () -> Unit = {},
     onEnterImmersive: () -> Unit = {},
+    onLoadMoreRow: ((String) -> Unit)? = null,
 ) {
-    val savedFocus = rememberSaveable { mutableStateOf(firstKey(rows.first())) }
-    fun validKey(key: String) = if (findByKey(rows, key) != null) key else firstKey(rows.first())
+    fun loopsFor(row: CatalogRow): Boolean =
+        shouldLoop(row.items.size) && !(onLoadMoreRow != null && row.style == RowStyle.POSTER)
+
+    val savedFocus = rememberSaveable { mutableStateOf(firstKey(rows.first(), loopsFor(rows.first()))) }
+    fun validKey(key: String) = if (findByKey(rows, key) != null) key else firstKey(rows.first(), loopsFor(rows.first()))
     var restoreKey by remember { mutableStateOf(Snapshot.withoutReadObservation { validKey(savedFocus.value) }) }
     var lastVerticalRepeat by remember { mutableStateOf(0L) }
     var pendingFocus by remember { mutableStateOf<PendingFocus?>(null) }
@@ -128,7 +132,7 @@ internal fun RowsBrowser(
     }
     LaunchedEffect(backToTopTick) {
         if (backToTopTick > 0 && rows.isNotEmpty()) {
-            val topKey = firstKey(rows.first())
+            val topKey = firstKey(rows.first(), loopsFor(rows.first()))
             savedFocus.value = topKey
             restoreKey = topKey
             heroState.value = rows.first().items.first()
@@ -204,6 +208,7 @@ internal fun RowsBrowser(
                             focusKey = restoreKey,
                             restoreRequester = restoreRequester,
                             resetScrollTick = if (rowIndex == 0) backToTopTick else 0,
+                            onLoadMore = if (row.style == RowStyle.POSTER) onLoadMoreRow else null,
                             onFocused = { virtual ->
                                 savedFocus.value = keyOf(row, virtual)
                                 onEnterImmersive()
@@ -356,6 +361,7 @@ private fun CatalogRowView(
     focusKey: String?,
     restoreRequester: FocusRequester,
     resetScrollTick: Int = 0,
+    onLoadMore: ((String) -> Unit)? = null,
     onFocused: (Int) -> Unit,
     onItemClick: (CatalogItem) -> Unit,
     onNewEpisodeClick: ((CatalogItem, Episode) -> Unit)?,
@@ -384,13 +390,25 @@ private fun CatalogRowView(
                 )
             }
         }
-        key(shouldLoop(row.items.size)) {
+        val expandable = onLoadMore != null && row.style == RowStyle.POSTER
+        val loops = !expandable && shouldLoop(row.items.size)
+        key(loops) {
             // + 6 dp: lo que crece por cada lado el póster enfocado; así su borde sigue alineado con el título.
             ProvidePivotScroll(leading = ContentStart + 6.dp) {
-                val rowState = rememberLoopingRowState(row.items.size)
+                val rowState = rememberLoopingRowState(if (loops) row.items.size else 0)
                 LaunchedEffect(resetScrollTick) {
                     if (resetScrollTick > 0) {
-                        rowState.scrollToItem(firstVirtualIndex(row.items.size))
+                        rowState.scrollToItem(if (loops) firstVirtualIndex(row.items.size) else 0)
+                    }
+                }
+                if (expandable) {
+                    LaunchedEffect(rowState, row.items.size) {
+                        snapshotFlow { rowState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+                            .collectLatest { lastVisible ->
+                                if (lastVisible >= row.items.lastIndex - 4 && row.items.isNotEmpty()) {
+                                    onLoadMore?.invoke(row.id)
+                                }
+                            }
                     }
                 }
                 LazyRow(
@@ -398,106 +416,124 @@ private fun CatalogRowView(
                     contentPadding = PaddingValues(horizontal = ContentStart, vertical = 14.dp),
                     horizontalArrangement = Arrangement.spacedBy(if (row.style == RowStyle.TOP10) 6.dp else 12.dp),
                 ) {
-                    loopingItems(row.items) { virtual, index, item ->
-                        val itemModifier = if (keyOf(row, virtual) == focusKey) Modifier.focusRequester(restoreRequester) else Modifier
-                        when (row.style) {
-                            RowStyle.POSTER -> CatalogPosterCard(
-                                item = item,
-                                onClick = { onItemClick(item) },
-                                onFocused = { onFocused(virtual) },
-                                newEpisodeCount = row.newEpisodeCounts[item.key] ?: 0,
-                                modifier = itemModifier,
-                            )
-                            RowStyle.MY_LIST -> CatalogPosterCard(
-                                item = item,
-                                onClick = { onItemClick(item) },
-                                onFocused = { onFocused(virtual) },
-                                onLongClick = { onMyListMenu(virtual, item) },
-                                newEpisodeCount = row.newEpisodeCounts[item.key] ?: 0,
-                                modifier = itemModifier,
-                            )
-                            RowStyle.CONTINUE -> {
-                                val info = row.progress[item.key]
-                                ContinueCard(
+                    if (loops) {
+                        loopingItems(row.items) { virtual, index, item ->
+                            val itemModifier = if (keyOf(row, virtual) == focusKey) Modifier.focusRequester(restoreRequester) else Modifier
+                            when (row.style) {
+                                RowStyle.POSTER -> CatalogPosterCard(
                                     item = item,
-                                    fraction = info?.fraction ?: 0f,
-                                    label = info?.label.orEmpty(),
-                                    onClick = {
-                                        if (info == null || onContinueClick == null) onItemClick(item)
-                                        else onContinueClick(item, info)
-                                    },
-                                    onLongClick = { onContinueMenu(virtual, item) },
+                                    onClick = { onItemClick(item) },
+                                    onFocused = { onFocused(virtual) },
+                                    newEpisodeCount = row.newEpisodeCounts[item.key] ?: 0,
+                                    modifier = itemModifier,
+                                )
+                                RowStyle.MY_LIST -> CatalogPosterCard(
+                                    item = item,
+                                    onClick = { onItemClick(item) },
+                                    onFocused = { onFocused(virtual) },
+                                    onLongClick = { onMyListMenu(virtual, item) },
+                                    newEpisodeCount = row.newEpisodeCounts[item.key] ?: 0,
+                                    modifier = itemModifier,
+                                )
+                                RowStyle.CONTINUE -> {
+                                    val info = row.progress[item.key]
+                                    ContinueCard(
+                                        item = item,
+                                        fraction = info?.fraction ?: 0f,
+                                        label = info?.label.orEmpty(),
+                                        onClick = {
+                                            if (info == null || onContinueClick == null) onItemClick(item)
+                                            else onContinueClick(item, info)
+                                        },
+                                        onLongClick = { onContinueMenu(virtual, item) },
+                                        onFocused = { onFocused(virtual) },
+                                        newEpisodeCount = row.newEpisodeCounts[item.key] ?: 0,
+                                        modifier = itemModifier,
+                                    )
+                                }
+                                RowStyle.NEW_EPISODES -> {
+                                    val episode = row.newEpisodes[item.key]
+                                    val episodeCode = episode?.localizedCode()
+                                    val episodeLabel = remember(row.newEpisodes, item.key, episodeCode) {
+                                        episode?.let {
+                                            listOf(episodeCode.orEmpty(), formatEpisodeDate(it.airDate)).filter { part -> part.isNotEmpty() }.joinToString(" · ")
+                                        }.orEmpty()
+                                    }
+                                    NewEpisodeCard(
+                                        item = item,
+                                        label = episodeLabel,
+                                        count = row.newEpisodeCounts[item.key] ?: 1,
+                                        onClick = {
+                                            if (episode == null || onNewEpisodeClick == null) onItemClick(item)
+                                            else onNewEpisodeClick(item, episode)
+                                        },
+                                        onFocused = { onFocused(virtual) },
+                                        modifier = itemModifier,
+                                    )
+                                }
+                                RowStyle.UP_NEXT -> {
+                                    val info = row.upNext[item.key]
+                                    val episode = info?.episode
+                                    val episodeCode = episode?.localizedCode()
+                                    val episodeLabel = remember(row.upNext, item.key, episodeCode) {
+                                        episode?.let {
+                                            listOf(episodeCode.orEmpty(), it.title).filter { part -> part.isNotEmpty() }.joinToString(" · ")
+                                        }.orEmpty()
+                                    }
+                                    val releaseLabel = remember(row.upNext, item.key) {
+                                        formatEpisodeDate(episode?.airDate)
+                                    }
+                                    val badgeText = when (upNextBadge(info)) {
+                                        UpNextBadge.NEW_SEASON -> localizedStringResource(StringsR.string.home_new_season)
+                                        UpNextBadge.NEW_EPISODE -> localizedStringResource(StringsR.string.home_new_episode)
+                                        UpNextBadge.UP_NEXT -> localizedStringResource(StringsR.string.home_up_next)
+                                    }
+                                    if (episode == null) {
+                                        CatalogPosterCard(
+                                            item = item,
+                                            onClick = { onItemClick(item) },
+                                            onFocused = { onFocused(virtual) },
+                                            modifier = itemModifier,
+                                        )
+                                    } else {
+                                        // Bambi: póster con la etiqueta (A continuación / Nuevo episodio) y el capítulo abajo.
+                                        LabeledPosterCard(
+                                            item = item,
+                                            badge = badgeText,
+                                            badgeDot = upNextBadge(info) != UpNextBadge.UP_NEXT,
+                                            label = listOf(episodeLabel, releaseLabel).filter { it.isNotEmpty() }.joinToString("\n"),
+                                            onClick = {
+                                                if (onUpNextClick == null) onItemClick(item)
+                                                else onUpNextClick(item, episode)
+                                            },
+                                            onLongClick = { onUpNextMenu(virtual, item, episode) },
+                                            onFocused = { onFocused(virtual) },
+                                            modifier = itemModifier,
+                                        )
+                                    }
+                                }
+                                RowStyle.TOP10 -> Top10Card(
+                                    rank = index + 1,
+                                    item = item,
+                                    onClick = { onItemClick(item) },
                                     onFocused = { onFocused(virtual) },
                                     newEpisodeCount = row.newEpisodeCounts[item.key] ?: 0,
                                     modifier = itemModifier,
                                 )
                             }
-                            RowStyle.NEW_EPISODES -> {
-                                val episode = row.newEpisodes[item.key]
-                                val episodeCode = episode?.localizedCode()
-                                val episodeLabel = remember(row.newEpisodes, item.key, episodeCode) {
-                                    episode?.let {
-                                        listOf(episodeCode.orEmpty(), formatEpisodeDate(it.airDate)).filter { part -> part.isNotEmpty() }.joinToString(" · ")
-                                    }.orEmpty()
-                                }
-                                NewEpisodeCard(
-                                    item = item,
-                                    label = episodeLabel,
-                                    count = row.newEpisodeCounts[item.key] ?: 1,
-                                    onClick = {
-                                        if (episode == null || onNewEpisodeClick == null) onItemClick(item)
-                                        else onNewEpisodeClick(item, episode)
-                                    },
-                                    onFocused = { onFocused(virtual) },
-                                    modifier = itemModifier,
-                                )
-                            }
-                            RowStyle.UP_NEXT -> {
-                                val info = row.upNext[item.key]
-                                val episode = info?.episode
-                                val episodeCode = episode?.localizedCode()
-                                val episodeLabel = remember(row.upNext, item.key, episodeCode) {
-                                    episode?.let {
-                                        listOf(episodeCode.orEmpty(), it.title).filter { part -> part.isNotEmpty() }.joinToString(" · ")
-                                    }.orEmpty()
-                                }
-                                val releaseLabel = remember(row.upNext, item.key) {
-                                    formatEpisodeDate(episode?.airDate)
-                                }
-                                val badgeText = when (upNextBadge(info)) {
-                                    UpNextBadge.NEW_SEASON -> localizedStringResource(StringsR.string.home_new_season)
-                                    UpNextBadge.NEW_EPISODE -> localizedStringResource(StringsR.string.home_new_episode)
-                                    UpNextBadge.UP_NEXT -> localizedStringResource(StringsR.string.home_up_next)
-                                }
-                                if (episode == null) {
-                                    CatalogPosterCard(
-                                        item = item,
-                                        onClick = { onItemClick(item) },
-                                        onFocused = { onFocused(virtual) },
-                                        modifier = itemModifier,
-                                    )
-                                } else {
-                                    // Bambi: póster con la etiqueta (A continuación / Nuevo episodio) y el capítulo abajo.
-                                    LabeledPosterCard(
-                                        item = item,
-                                        badge = badgeText,
-                                        badgeDot = upNextBadge(info) != UpNextBadge.UP_NEXT,
-                                        label = listOf(episodeLabel, releaseLabel).filter { it.isNotEmpty() }.joinToString("\n"),
-                                        onClick = {
-                                            if (onUpNextClick == null) onItemClick(item)
-                                            else onUpNextClick(item, episode)
-                                        },
-                                        onLongClick = { onUpNextMenu(virtual, item, episode) },
-                                        onFocused = { onFocused(virtual) },
-                                        modifier = itemModifier,
-                                    )
-                                }
-                            }
-                            RowStyle.TOP10 -> Top10Card(
-                                rank = index + 1,
+                        }
+                    } else {
+                        itemsIndexed(row.items, key = { _, item -> item.key }) { index, item ->
+                            val itemModifier = if (keyOf(row, index) == focusKey) Modifier.focusRequester(restoreRequester) else Modifier
+                            CatalogPosterCard(
                                 item = item,
                                 onClick = { onItemClick(item) },
-                                onFocused = { onFocused(virtual) },
+                                onFocused = {
+                                    onFocused(index)
+                                    if (expandable && index >= row.items.lastIndex - 4) {
+                                        onLoadMore?.invoke(row.id)
+                                    }
+                                },
                                 newEpisodeCount = row.newEpisodeCounts[item.key] ?: 0,
                                 modifier = itemModifier,
                             )
@@ -511,7 +547,8 @@ private fun CatalogRowView(
 
 private fun keyOf(row: CatalogRow, virtual: Int) = "${row.id}/$virtual"
 
-private fun firstKey(row: CatalogRow) = keyOf(row, firstVirtualIndex(row.items.size))
+private fun firstKey(row: CatalogRow, loops: Boolean = shouldLoop(row.items.size)) =
+    keyOf(row, if (loops) firstVirtualIndex(row.items.size) else 0)
 
 private fun findByKey(rows: List<CatalogRow>, key: String?): CatalogItem? {
     if (key == null) return null

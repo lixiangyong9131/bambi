@@ -461,6 +461,8 @@ class DetailsViewModelTest {
                 every { messages } returns kotlinx.coroutines.flow.MutableSharedFlow()
             },
             debridCache = mockk(relaxed = true),
+            manualSkip = mockk(relaxed = true),
+            sourceProber = mockk(relaxed = true),
         )
 
     private fun source(episode: Episode) = StreamSource(

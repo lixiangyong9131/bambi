@@ -42,6 +42,7 @@ class DoubanCatalogApi @Inject constructor(
     private val abstractCache = ConcurrentHashMap<String, CachedAbstract>()
     private data class CachedFeed(val at: Long, val items: List<DoubanRexxarCollectionItemDto>)
     private val feedCache = ConcurrentHashMap<String, CachedFeed>()
+    private val feedCooldownUntil = ConcurrentHashMap<String, Long>()
     private val feedLocks = ConcurrentHashMap<String, Mutex>()
 
     override suspend fun trendingAll(key: String, page: Int): TmdbPaginated<TmdbSearchResultDto> = withContext(Dispatchers.IO) {
@@ -579,13 +580,19 @@ class DoubanCatalogApi @Inject constructor(
     ): List<DoubanRexxarCollectionItemDto> {
         val now = System.currentTimeMillis()
         feedCache[cacheKey]?.takeIf { now - it.at < ABSTRACT_CACHE_MS }?.let { return it.items }
+        feedCooldownUntil[cacheKey]?.takeIf { now < it }?.let { return emptyList() }
         return feedLocks.getOrPut(cacheKey) { Mutex() }.withLock {
             val ts = System.currentTimeMillis()
             feedCache[cacheKey]?.takeIf { ts - it.at < ABSTRACT_CACHE_MS }?.let { return@withLock it.items }
-            val items = runCatching { loader() }
-                .onFailure { warn("rexxar feed $cacheKey failed: ${it.message}") }
-                .getOrDefault(emptyList())
+            feedCooldownUntil[cacheKey]?.takeIf { ts < it }?.let { return@withLock emptyList() }
+            val result = runCatching { loader() }
+            val items = result.getOrElse { e ->
+                warn("rexxar feed $cacheKey failed: ${e.message}")
+                feedCooldownUntil[cacheKey] = ts + RATE_LIMIT_COOLDOWN_MS
+                emptyList()
+            }
             if (items.isNotEmpty()) {
+                feedCooldownUntil.remove(cacheKey)
                 feedCache[cacheKey] = CachedFeed(ts, items)
             }
             items
@@ -715,6 +722,7 @@ class DoubanCatalogApi @Inject constructor(
 
     private companion object {
         const val ABSTRACT_CACHE_MS = 6 * 60 * 60 * 1000L
+        const val RATE_LIMIT_COOLDOWN_MS = 60_000L
         const val REXXAR_BASE = "https://m.douban.com/rexxar/api/v2"
         const val PAGE_SIZE = 20
         val YEAR_4_REGEX = Regex("^\\d{4}$")

@@ -122,11 +122,16 @@ class HomeViewModel @Inject constructor(
 
     private val recommendationRows = MutableStateFlow<List<CatalogRow>>(emptyList())
 
+    private val extraRowItems = MutableStateFlow<Map<Pair<HomeFilter, String>, List<CatalogItem>>>(emptyMap())
+    private val rowNextPage = java.util.concurrent.ConcurrentHashMap<Pair<HomeFilter, String>, Int>()
+    private val rowLoadingMore = java.util.Collections.synchronizedSet(HashSet<Pair<HomeFilter, String>>())
+    private val rowExhausted = java.util.Collections.synchronizedSet(HashSet<Pair<HomeFilter, String>>())
+
     private val trailingRows = combine(myListRows, recommendationRows) { listRow, recommendationRow ->
         listRow?.plus(recommendationRow)
     }
 
-    val uiState: StateFlow<HomeUiState> = combine(
+    private val baseAndPersonalState = combine(
         _uiState,
         continueRows,
         newEpisodeRows,
@@ -162,6 +167,21 @@ class HomeViewModel @Inject constructor(
                 if (row.style == RowStyle.CONTINUE) row else row.withItemLimit(maxItems)
             },
         )
+    }
+
+    val uiState: StateFlow<HomeUiState> = combine(
+        baseAndPersonalState,
+        filterFlow,
+        extraRowItems,
+    ) { state, filter, extras ->
+        if (state !is HomeUiState.Content || filter == null || extras.isEmpty()) return@combine state
+        state.copy(
+            rows = state.rows.map { row ->
+                val more = extras[filter to row.id]
+                if (more.isNullOrEmpty()) row
+                else row.copy(items = (row.items + more).distinctBy { it.key })
+            },
+        )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, HomeUiState.Loading)
 
     private var loadedFilter: HomeFilter? = null
@@ -188,7 +208,7 @@ class HomeViewModel @Inject constructor(
         }
         viewModelScope.launch {
             combine(filterFlow.filterNotNull(), watchProgress.progress) { filter, all ->
-                ContinueWatching.entries(all, filter)
+                ContinueWatching.entries(all, filter, catalogRepository::isAnime)
             }
                 .distinctUntilChanged()
                 .mapLatest { entries -> listOfNotNull(buildContinueRow(entries)) }
@@ -210,6 +230,7 @@ class HomeViewModel @Inject constructor(
                         followed,
                         maxItems = rowQuery.maxItems,
                         hiddenShowIds = hidden,
+                        isAnime = catalogRepository::isAnime,
                     ),
                     watchedKeys = progress.filterValues { it.isWatched }.keys,
                     dismissedKeys = dismissed,
@@ -227,7 +248,7 @@ class HomeViewModel @Inject constructor(
                         HomeFilter.ALL -> true
                         HomeFilter.MOVIES -> it.type == MediaType.MOVIE
                         HomeFilter.TV -> it.type == MediaType.TV
-                        HomeFilter.ANIME -> false
+                        HomeFilter.ANIME -> catalogRepository.isAnime(it.id)
                     }
                 }.take(rowQuery.maxItems)
             }
@@ -242,7 +263,7 @@ class HomeViewModel @Inject constructor(
                 tracking.dismissedEpisodeKeys,
             ) { rowQuery, progress, dismissed ->
                 UpNextQuery(
-                    candidates = UpNext.candidates(progress, rowQuery.filter, maxItems = rowQuery.maxItems),
+                    candidates = UpNext.candidates(progress, rowQuery.filter, maxItems = rowQuery.maxItems, isAnime = catalogRepository::isAnime),
                     watchedKeys = progress.filterValues { it.isWatched }.keys,
                     dismissedKeys = dismissed,
                     maxItems = rowQuery.maxItems,
@@ -531,8 +552,37 @@ class HomeViewModel @Inject constructor(
 
     private fun Throwable.logSummary() = "${javaClass.simpleName}: ${message ?: "no message"}"
 
+    fun loadMoreRow(rowId: String) {
+        val filter = loadedFilter ?: return
+        val key = filter to rowId
+        if (key in rowExhausted || !rowLoadingMore.add(key)) return
+        val nextPage = rowNextPage[key] ?: 2
+        if (nextPage > MAX_EXTRA_PAGES) {
+            rowExhausted += key
+            rowLoadingMore -= key
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val items = runCatching { catalogRepository.loadMoreRow(filter, rowId, nextPage) }.getOrDefault(emptyList())
+                if (items.isEmpty()) {
+                    rowExhausted += key
+                } else {
+                    rowNextPage[key] = nextPage + 1
+                    extraRowItems.value = extraRowItems.value.toMutableMap().apply {
+                        val existing = this[key].orEmpty()
+                        put(key, (existing + items).distinctBy { it.key })
+                    }
+                }
+            } finally {
+                rowLoadingMore -= key
+            }
+        }
+    }
+
     private companion object {
         const val TAG = "HomeRows"
+        const val MAX_EXTRA_PAGES = 5
         const val CONTINUE_ROW_ID = "continue_watching"
         const val NEW_EPISODES_ROW_ID = "new_episodes"
         const val UP_NEXT_ROW_ID = "up_next"
@@ -562,6 +612,11 @@ class HomeViewModel @Inject constructor(
         filterFlow.value = filter
         val limit = rowItemLimit.value
         if (!force && loadedFilter == filter && loadedLimit == limit && _uiState.value is HomeUiState.Content) return
+        if (force) {
+            extraRowItems.value = extraRowItems.value.filterKeys { it.first != filter }
+            rowNextPage.keys.removeAll { it.first == filter }
+            synchronized(rowExhausted) { rowExhausted.removeAll { it.first == filter } }
+        }
         prefetchJob?.cancel()
         loadedFilter = filter
         loadedLimit = limit

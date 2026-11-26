@@ -227,54 +227,62 @@ class CmsStreams @Inject constructor(
     /** Fetch the full episode list of a TV show from the CMS detail (第01集$url#第02集$url...). */
     suspend fun getEpisodes(title: String): List<EpisodeInfo> = getTitleBundle(title).episodes
 
-    /** Fetch both description and episodes in a single parallel CMS pass and cache across Details/Playback. */
+    /** Fetch both description and episodes across CMS sources and cache across Details/Playback. */
     private suspend fun getTitleBundle(title: String): TitleBundle {
-        val t = clean(title)
-        if (t.isBlank()) return TitleBundle(0L, "", emptyList())
-        return titleBundleLocks.getOrPut(t) { Mutex() }.withLock {
+        val raw = title.trim()
+        val key = clean(raw).ifBlank { raw }
+        if (key.isBlank()) return TitleBundle(0L, "", emptyList())
+        return titleBundleLocks.getOrPut(key) { Mutex() }.withLock {
             val now = System.currentTimeMillis()
-            titleBundleCache[t]?.takeIf { now - it.at < CACHE_TTL_MS }?.let { return@withLock it }
+            titleBundleCache[key]?.takeIf { now - it.at < CACHE_TTL_MS }?.let { return@withLock it }
             val loaded = withContext(Dispatchers.IO) {
                 var desc = ""
                 var eps: List<EpisodeInfo> = emptyList()
-                val fastDetails = SEARCH_SOURCES.take(2).map { base ->
-                    async { fetchDetailForTitle(base, t) }
-                }.awaitAll()
-                for (v in fastDetails) {
-                    if (v == null) continue
-                    if (desc.isBlank()) desc = parseDescription(v)
-                    if (eps.isEmpty()) eps = parseEpisodes(v)
-                }
-                if (desc.isBlank() || eps.isEmpty()) {
-                    for (base in SEARCH_SOURCES.drop(2)) {
-                        val v = fetchDetailForTitle(base, t) ?: continue
+                suspend fun probeSources(bases: List<String>) {
+                    val details = bases.map { base ->
+                        async { fetchDetailForTitle(base, raw) }
+                    }.awaitAll()
+                    for (v in details) {
+                        if (v == null) continue
                         if (desc.isBlank()) desc = parseDescription(v)
-                        if (eps.isEmpty()) eps = parseEpisodes(v)
-                        if (desc.isNotBlank() && eps.isNotEmpty()) break
+                        val candidateEps = parseEpisodes(v)
+                        if (candidateEps.size > eps.size) eps = candidateEps
                     }
+                }
+                probeSources(SEARCH_SOURCES.take(2))
+                // Fall back to remaining fast search sources when the primary two lack episode lists.
+                if (desc.isBlank() || eps.isEmpty()) {
+                    probeSources(SEARCH_SOURCES.drop(2))
                 }
                 TitleBundle(System.currentTimeMillis(), desc, eps)
             }
             if (loaded.description.isNotBlank() || loaded.episodes.isNotEmpty()) {
-                titleBundleCache[t] = loaded
+                titleBundleCache[key] = loaded
             }
             loaded
         }
     }
 
-    private suspend fun fetchDetailForTitle(base: String, cleanTitle: String): JsonObject? {
-        val cacheKey = "$base|$cleanTitle"
+    private suspend fun fetchDetailForTitle(base: String, rawTitle: String): JsonObject? {
+        val queries = queryCandidates(rawTitle)
+        if (queries.isEmpty()) return null
+        val cacheKey = "$base|${queries.first()}"
         siteDetailCache[cacheKey]?.takeIf { System.currentTimeMillis() - it.at < CACHE_TTL_MS }?.let { return it.detail }
         return siteDetailLocks.getOrPut(cacheKey) { Mutex() }.withLock {
             val now = System.currentTimeMillis()
             siteDetailCache[cacheKey]?.takeIf { now - it.at < CACHE_TTL_MS }?.let { return@withLock it.detail }
 
-            val rows = parseList(get("$base?ac=vod&wd=" + URLEncoder.encode(cleanTitle, "UTF-8"))) ?: return@withLock null
-            if (rows.isEmpty()) return@withLock null
-            val cand = rows.firstOrNull { row ->
-                val n = clean(str(row, "vod_name"))
-                n == cleanTitle || n.contains(cleanTitle.take(6), true) || cleanTitle.contains(n.take(6), true)
-            } ?: rows.first()
+            var bestMatch: JsonObject? = null
+            for (q in queries) {
+                val rows = parseList(get("$base?ac=vod&wd=" + URLEncoder.encode(q, "UTF-8"))) ?: continue
+                if (rows.isEmpty()) continue
+                val matched = pickBestMatch(rows, rawTitle)
+                if (matched != null) {
+                    bestMatch = matched
+                    break
+                }
+            }
+            val cand = bestMatch ?: return@withLock null
             val vid = str(cand, "vod_id")
             val detailRows = parseList(get("$base?ac=detail&ids=" + URLEncoder.encode(vid, "UTF-8")))
             val v = detailRows?.firstOrNull() ?: cand
@@ -313,16 +321,16 @@ class CmsStreams @Inject constructor(
 
     /** Stream CMS sources as each site responds so playback can start without waiting for slow mirrors. */
     fun findFlow(item: CatalogItem, episode: com.shieldstream.tv.model.Episode? = null): Flow<List<StreamSource>> = channelFlow {
-        val title = clean(item.title)
-        android.util.Log.i("CmsStream", "find(title=${item.title}, clean=$title)")
-        if (title.isBlank()) return@channelFlow
+        val rawTitle = item.title.trim()
+        android.util.Log.i("CmsStream", "find(title=${item.title})")
+        if (rawTitle.isBlank()) return@channelFlow
         val lock = Mutex()
         val bySite = arrayOfNulls<List<StreamSource>>(SOURCES.size)
         withContext(Dispatchers.IO) {
             SOURCES.mapIndexed { idx, (label, base) ->
                 launch {
                     val sources = kotlinx.coroutines.withTimeoutOrNull(4_500L) {
-                        runCatching { searchAndBuild(base, title, episode, label) }.getOrDefault(emptyList())
+                        runCatching { searchAndBuild(base, rawTitle, episode, label) }.getOrDefault(emptyList())
                     }.orEmpty()
                     android.util.Log.i("CmsStream", "$label -> ${sources.size} sources")
                     if (sources.isNotEmpty()) {
@@ -355,16 +363,18 @@ class CmsStreams @Inject constructor(
     private suspend fun searchAndBuild(base: String, title: String, episode: com.shieldstream.tv.model.Episode?, siteLabel: String = "CMS"): List<StreamSource> {
         val v = fetchDetailForTitle(base, title) ?: return emptyList()
         val vid = str(v, "vod_id")
-        val url = pickPlayUrl(v, episode?.number) ?: return emptyList()
-        android.util.Log.i("CmsStream", "picked url (ep=${episode?.number}): ${url.take(100)}")
+        val urls = pickPlayUrls(v, episode?.number)
+        if (urls.isEmpty()) return emptyList()
+        android.util.Log.i("CmsStream", "picked ${urls.size} urls (ep=${episode?.number}): ${urls.first().second.take(100)}")
         val name = str(v, "vod_name").ifBlank { title }
-        return listOf(
+        return urls.mapIndexed { idx, (lineLabel, url) ->
+            val tag = if (urls.size > 1 && lineLabel.isNotBlank()) "$siteLabel · $lineLabel" else siteLabel
             StreamSource(
-                id = "cms:${siteLabel}:$vid",
-                title = if (siteLabel.isNotBlank()) "$siteLabel · $name" else name,
+                id = "cms:$siteLabel:$vid:$idx",
+                title = if (tag.isNotBlank()) "$tag · $name" else name,
                 // Modified build: unique infoHash so distinctBy() doesn't collapse CMS sources,
                 // and an "ES" language tag so the "Spanish only" source filter doesn't drop them.
-                infoHash = "cms-$siteLabel-$vid",
+                infoHash = "cms-$siteLabel-$vid-$idx",
                 fileIdx = null,
                 magnet = "",
                 quality = Quality.FHD_1080,
@@ -377,18 +387,20 @@ class CmsStreams @Inject constructor(
                 languages = listOf("ES"),
                 provider = "CMS·$siteLabel",
             )
-        )
+        }
     }
 
-    /** CMS V10: vod_play_from and vod_play_url are '$$$' separated groups. Pick a direct http m3u8/mp4. */
-    private fun pickPlayUrl(v: JsonObject, episodeNumber: Int? = null): String? {
+    /** CMS V10: vod_play_from and vod_play_url are '$$$' separated groups. Expand all direct http m3u8/mp4 lines. */
+    internal fun pickPlayUrls(v: JsonObject, episodeNumber: Int? = null): List<Pair<String, String>> {
         val from = str(v, "vod_play_from")
         val play = str(v, "vod_play_url")
-        if (play.isBlank()) return null
+        if (play.isBlank()) return emptyList()
         val groups = play.split("\$\$\$")
         val names = from.split("\$\$\$")
+        val picked = ArrayList<Pair<String, String>>(groups.size)
+        val seen = HashSet<String>()
         for (i in groups.indices) {
-            val label = names.getOrNull(i).orEmpty()
+            val label = names.getOrNull(i).orEmpty().trim()
             if (label.contains("share", true) || label.equals("feifan", true)) continue
             val entries = groups[i].split("#").mapNotNull { ep ->
                 val idx = ep.lastIndexOf('$')
@@ -399,20 +411,29 @@ class CmsStreams @Inject constructor(
                 }
             }
             // Modified build: pick the URL for the selected episode (第NN集), not always the first.
-            if (episodeNumber != null) {
+            val chosenUrl = if (episodeNumber != null) {
                 entries.firstOrNull { (name, _) ->
                     Regex("\\d+").find(name)?.value?.toIntOrNull() == episodeNumber
-                }?.second?.let { return it }
+                }?.second
+            } else {
+                entries.firstOrNull()?.second
             }
-            entries.firstOrNull()?.second?.let { return it }
+            if (chosenUrl != null && seen.add(chosenUrl)) {
+                picked += label to chosenUrl
+            }
+        }
+        if (picked.isNotEmpty()) return picked
+        if (episodeNumber != null) {
+            // If requested episode isn't available yet on this source, fall back to first playable line only for movies.
+            return emptyList()
         }
         // Fallback: any http url
         for (ep in play.split("#", "\$\$\$")) {
             val idx = ep.lastIndexOf('$')
             val u = (if (idx >= 0 && idx < ep.length - 1) ep.substring(idx + 1) else ep).trim()
-            if (u.startsWith("http")) return u
+            if (u.startsWith("http") && seen.add(u)) return listOf("" to u)
         }
-        return null
+        return emptyList()
     }
 
     private fun get(url: String): String? = runCatching {
@@ -439,10 +460,90 @@ class CmsStreams @Inject constructor(
     private fun str(v: JsonObject, key: String): String =
         v[key]?.jsonPrimitive?.contentOrNull ?: ""
 
+    internal fun queryCandidates(rawTitle: String): List<String> {
+        val out = LinkedHashSet<String>()
+        val noYear = rawTitle.replace(Regex("[（(].*?[)）]"), "").trim()
+        val cjkOnly = clean(noYear)
+        if (cjkOnly.isNotBlank()) out += cjkOnly
+        val noSeason = clean(noYear.replace(Regex("(?:第[一二三四五六七八九十百\\d]+季|Season\\s*\\d+|S\\d+|年番\\s*\\d*)$", RegexOption.IGNORE_CASE), ""))
+        if (noSeason.isNotBlank()) out += noSeason
+        val beforeColon = clean(noYear.replace(Regex("[:：].*$"), ""))
+        if (beforeColon.length >= 2) out += beforeColon
+        return out.toList()
+    }
+
+    internal fun pickBestMatch(rows: List<JsonObject>, rawTitle: String): JsonObject? {
+        val targetNorm = normalizeForMatch(rawTitle)
+        val targetBase = normalizeForMatch(rawTitle.replace(Regex("(?:第[一二三四五六七八九十百\\d]+季|Season\\s*\\d+|S\\d+|年番\\s*\\d*)$", RegexOption.IGNORE_CASE), ""))
+        val targetColonBase = normalizeForMatch(rawTitle.replace(Regex("[:：].*$"), ""))
+        val targetSeason = extractSeasonNumber(rawTitle)
+
+        var bestRow: JsonObject? = null
+        var bestScore = 0
+        for (row in rows) {
+            val vodName = str(row, "vod_name")
+            val candNorm = normalizeForMatch(vodName)
+            if (candNorm.isBlank()) continue
+            val candBase = normalizeForMatch(vodName.replace(Regex("(?:第[一二三四五六七八九十百\\d]+季|Season\\s*\\d+|S\\d+|年番\\s*\\d*)$", RegexOption.IGNORE_CASE), ""))
+            val candSeason = extractSeasonNumber(vodName)
+
+            var score = when {
+                candNorm == targetNorm -> 100
+                candBase == targetBase && targetSeason != null && candSeason == targetSeason -> 95
+                candNorm == targetBase && targetSeason == 1 -> 90
+                candBase == targetBase && targetSeason == null -> 85
+                targetColonBase.length >= 2 && (candBase == targetColonBase || candNorm == targetColonBase) -> 80
+                candNorm.length >= 2 && targetNorm.contains(candNorm) -> 65
+                targetNorm.length >= 2 && candNorm.contains(targetNorm) -> 60
+                targetBase.length >= 3 && candBase.contains(targetBase) -> 55
+                else -> 0
+            }
+            if (targetSeason != null && candSeason != null && targetSeason != candSeason) {
+                score -= 50
+            }
+            if (score > bestScore) {
+                bestScore = score
+                bestRow = row
+            }
+        }
+        return if (bestScore >= 50) bestRow else null
+    }
+
+    private fun normalizeForMatch(t: String): String {
+        val noYear = t.replace(Regex("[（(].*?[)）]"), "").trim()
+        val unified = noYear
+            .replace("第一季", "1").replace("第1季", "1")
+            .replace("第二季", "2").replace("第2季", "2")
+            .replace("第三季", "3").replace("第3季", "3")
+            .replace("第四季", "4").replace("第4季", "4")
+            .replace("第五季", "5").replace("第5季", "5")
+            .replace("第六季", "6").replace("第6季", "6")
+            .replace("第七季", "7").replace("第7季", "7")
+            .replace("第八季", "8").replace("第8季", "8")
+            .replace("第九季", "9").replace("第9季", "9")
+            .replace("第十季", "10").replace("第10季", "10")
+        return clean(unified)
+    }
+
+    private fun extractSeasonNumber(t: String): Int? {
+        Regex("第([一二三四五六七八九十\\d]+)季").find(t)?.groupValues?.getOrNull(1)?.let { token ->
+            return when (token) {
+                "一" -> 1; "二" -> 2; "三" -> 3; "四" -> 4; "五" -> 5
+                "六" -> 6; "七" -> 7; "八" -> 8; "九" -> 9; "十" -> 10
+                else -> token.toIntOrNull()
+            }
+        }
+        Regex("(?:Season\\s*|S)(\\d+)", RegexOption.IGNORE_CASE).find(t)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let {
+            return it
+        }
+        return null
+    }
+
     private fun clean(t: String): String {
         var v = t
             .replace(Regex("[（(].*?[)）]"), "")
-            .replace(Regex("[:：].*$"), "")
+            .replace("：", "")
+            .replace(":", "")
             .trim()
         // Modified build: Douban titles carry the original English name; CMS sources index only the
         // Chinese title. Keep the CJK part, drop the ASCII suffix.

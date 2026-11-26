@@ -19,9 +19,11 @@ object UpNext {
         all: Map<String, WatchProgress>,
         filter: HomeFilter,
         maxItems: Int = MAX_CANDIDATES,
+        isAnime: (String) -> Boolean = { false },
     ): List<UpNextCandidate> {
-        if (filter == HomeFilter.MOVIES || filter == HomeFilter.ANIME) return emptyList()
+        if (filter == HomeFilter.MOVIES) return emptyList()
         return all.entries.mapNotNull { (key, progress) -> parse(key, progress) }
+            .filter { filter != HomeFilter.ANIME || isAnime(it.showId) }
             .groupBy { it.showId }
             .values
             .mapNotNull { episodes -> episodes.maxByOrNull { it.updatedAt } }

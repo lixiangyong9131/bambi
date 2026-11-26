@@ -73,6 +73,8 @@ internal fun DetailsActions(
     onToggleFollowing: () -> Unit,
     onRate: (TraktRatingTarget) -> Unit,
     onRandomEpisode: () -> Unit,
+    skipSummary: String? = null,
+    onOpenSkipSettings: (() -> Unit)? = null,
     downloads: List<Download>,
     onDownload: (List<Episode>, DownloadQuality) -> Unit,
     onDownloadAction: (Download) -> Unit,
@@ -156,6 +158,14 @@ internal fun DetailsActions(
             MoreRow(ratingTargetLabel(state, show) + ratingSuffix(ratings?.overallRating), LineIcons.Star, { onRate(show) })
             if (state.details.seasons.isNotEmpty()) {
                 MoreRow(localizedStringResource(StringsR.string.details_random_episode), AppIcons.Bolt, onRandomEpisode)
+            }
+            onOpenSkipSettings?.let { openSkip ->
+                MoreRow(
+                    text = localizedStringResource(StringsR.string.details_skip_settings),
+                    icon = AppIcons.FastForward,
+                    detail = skipSummary,
+                    onClick = openSkip,
+                )
             }
         } else {
             val watched = state.mainProgress?.isWatched == true

@@ -104,6 +104,7 @@ fun HomeScreen(
             onExitTop = onExitTop,
             onBackToTop = onBackToTop,
             onEnterImmersive = onEnterImmersive,
+            onLoadMoreRow = viewModel::loadMoreRow,
             categories = remember(filter, hidden) {
                 when {
                     viewModel.kidsProfile -> Category.forFilter(filter).filter { it in Category.KIDS_SAFE }
@@ -179,6 +180,7 @@ private fun HomeContent(
     onExitTop: () -> Unit = {},
     onBackToTop: () -> Unit = {},
     onEnterImmersive: () -> Unit = {},
+    onLoadMoreRow: (String) -> Unit = {},
 ) {
     // Como en Bambi: el Inicio arranca en la portada (destacados + categorías); ▼ baja a las filas.
     var inRows by rememberSaveable { mutableStateOf(true) }
@@ -224,6 +226,7 @@ private fun HomeContent(
                 backToTopTick = backToTopTick,
                 onBackToTop = onBackToTop,
                 onEnterImmersive = onEnterImmersive,
+                onLoadMoreRow = onLoadMoreRow,
             )
         }
     }

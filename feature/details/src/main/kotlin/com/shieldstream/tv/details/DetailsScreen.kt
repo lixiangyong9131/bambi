@@ -173,6 +173,7 @@ private fun DetailsContent(
     val context = androidx.compose.ui.platform.LocalContext.current
     val downloadList by viewModel.downloadList.collectAsStateWithLifecycle()
     val plannerProgress by viewModel.plannerProgress.collectAsStateWithLifecycle()
+    val skipConfig by viewModel.skipConfig.collectAsStateWithLifecycle()
     // El episodio sobre el que se estaba (enfocado), no solo el último abierto: "Más" actúa sobre ese.
     var focusedEpisode by remember { mutableStateOf<Episode?>(null) }
     val menuState = remember(state, focusedEpisode) {
@@ -189,10 +190,12 @@ private fun DetailsContent(
         }
     }
     var actionsOpen by remember { mutableStateOf(false) }
+    var skipDialogOpen by remember { mutableStateOf(false) }
     var ratingTarget by remember { mutableStateOf<TraktRatingTarget?>(null) }
     var episodeMenu by remember { mutableStateOf<Episode?>(null) }
-    BackHandler(enabled = actionsOpen || episodeMenu != null || !panelOpen) {
+    BackHandler(enabled = skipDialogOpen || actionsOpen || episodeMenu != null || !panelOpen) {
         when {
+            skipDialogOpen -> skipDialogOpen = false
             ratingTarget != null -> ratingTarget = null
             episodeMenu != null -> episodeMenu = null
             else -> when (detailsBackAction(actionsOpen, panelOpen)) {
@@ -208,8 +211,8 @@ private fun DetailsContent(
         withFrameNanos { }
         runCatching { playRequester.requestFocus() }
     }
-    LaunchedEffect(panelOpen, actionsOpen, episodeMenu) {
-        if (!panelOpen && !actionsOpen && episodeMenu == null) {
+    LaunchedEffect(panelOpen, actionsOpen, episodeMenu, skipDialogOpen) {
+        if (!panelOpen && !actionsOpen && episodeMenu == null && !skipDialogOpen) {
             withFrameNanos { }
             runCatching { playRequester.requestFocus() }
         }
@@ -423,6 +426,15 @@ private fun DetailsContent(
                         actionsOpen = false
                         viewModel.playRandomEpisode()
                     },
+                    skipSummary = if (skipConfig.enabled && (skipConfig.introSec > 0 || skipConfig.outroSec > 0)) {
+                        "${skipConfig.introSec}s / ${skipConfig.outroSec}s"
+                    } else {
+                        localizedStringResource(StringsR.string.details_skip_off)
+                    },
+                    onOpenSkipSettings = {
+                        actionsOpen = false
+                        skipDialogOpen = true
+                    },
                     downloads = downloadList,
                     onDownload = { episodes, quality ->
                         actionsOpen = false
@@ -462,6 +474,16 @@ private fun DetailsContent(
                     episodeMenu = null
                 },
                 onDismiss = { episodeMenu = null },
+            )
+        }
+
+        if (skipDialogOpen) {
+            SkipSettingsDialog(
+                enabled = skipConfig.enabled,
+                introSec = skipConfig.introSec,
+                outroSec = skipConfig.outroSec,
+                onConfig = viewModel::saveSkipConfig,
+                onDismiss = { skipDialogOpen = false },
             )
         }
     }

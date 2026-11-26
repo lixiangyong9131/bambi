@@ -631,6 +631,53 @@ class HomeViewModelsTest {
         coVerify(exactly = 0) { catalog.getHome(HomeFilter.MOVIES, any()) }
     }
 
+    @Test
+    fun `loadMoreRow appends page two items and deduplicates existing ids`() = runTest {
+        val first = item("1", MediaType.MOVIE, "One")
+        val second = item("2", MediaType.MOVIE, "Two")
+        val catalog = mockk<CatalogRepository> {
+            coEvery { getHome(HomeFilter.ALL, any()) } returns listOf(CatalogRow("hot", "Hot", listOf(first)))
+            coEvery { getHome(not(HomeFilter.ALL), any()) } returns emptyList()
+            coEvery { getFeatured(any()) } returns emptyList()
+            coEvery { loadMoreRow(HomeFilter.ALL, "hot", 2) } returns listOf(first, second)
+        }
+        val trakt = mockk<TraktRepository>(relaxed = true)
+        val vm = homeViewModel(catalog, trakt, profileFlow(traktUser = null))
+        vm.load(HomeFilter.ALL)
+        advanceUntilIdle()
+
+        vm.loadMoreRow("hot")
+        advanceUntilIdle()
+
+        val row = (vm.uiState.value as HomeUiState.Content).rows.single { it.id == "hot" }
+        assertEquals(listOf("1", "2"), row.items.map { it.id })
+    }
+
+    @Test
+    fun `anime filter keeps anime progress in continue watching`() = runTest {
+        val animeShow = item("anime-1", MediaType.TV, "Anime Show")
+        val regularShow = item("tv-1", MediaType.TV, "Regular Show")
+        val catalog = mockk<CatalogRepository> {
+            coEvery { getHome(any(), any()) } returns listOf(CatalogRow("base", "Base", listOf(animeShow)))
+            coEvery { getFeatured(any()) } returns emptyList()
+            coEvery { getItem(MediaType.TV, "anime-1") } returns animeShow
+            coEvery { getItem(MediaType.TV, "tv-1") } returns regularShow
+            every { isAnime("anime-1") } returns true
+            every { isAnime("tv-1") } returns false
+        }
+        val trakt = mockk<TraktRepository>(relaxed = true)
+        val progress = mapOf(
+            WatchProgress.episodeKey("anime-1", 1, 2) to progress(updatedAt = 200),
+            WatchProgress.episodeKey("tv-1", 1, 1) to progress(updatedAt = 300),
+        )
+        val vm = homeViewModel(catalog, trakt, profileFlow(traktUser = null), progress = progress)
+        vm.load(HomeFilter.ANIME)
+        advanceUntilIdle()
+
+        val continueRow = (vm.uiState.value as HomeUiState.Content).rows.single { it.style == RowStyle.CONTINUE }
+        assertEquals(listOf("anime-1"), continueRow.items.map { it.id })
+    }
+
     private fun MyListViewModel.content() = uiState.value as MyListUiState.Content
 
     private fun HomeViewModel.rowIds() = (uiState.value as HomeUiState.Content).rows.map { it.id }

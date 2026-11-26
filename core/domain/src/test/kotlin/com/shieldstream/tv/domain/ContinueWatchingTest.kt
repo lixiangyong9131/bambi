@@ -80,6 +80,21 @@ class ContinueWatchingTest {
         )
     }
 
+    @Test
+    fun `anime filter selects both movies and shows known as anime`() {
+        val progress = mapOf(
+            WatchProgress.episodeKey("anime-tv", 1, 3) to progress(updatedAt = 300),
+            WatchProgress.movieKey("anime-movie") to progress(updatedAt = 200),
+            WatchProgress.episodeKey("regular-tv", 1, 1) to progress(updatedAt = 400),
+            WatchProgress.movieKey("regular-movie") to progress(updatedAt = 100),
+        )
+        val animeIds = setOf("anime-tv", "anime-movie")
+
+        val entries = ContinueWatching.entries(progress, HomeFilter.ANIME) { it in animeIds }
+
+        assertEquals(listOf("tv:anime-tv:1:3", "movie:anime-movie"), entries.map { it.key })
+    }
+
     private val ContinueEntry.key: String
         get() = when (type) {
             MediaType.TV -> WatchProgress.episodeKey(id, season!!, episode!!)

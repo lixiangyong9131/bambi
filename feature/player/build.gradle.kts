@@ -56,6 +56,7 @@ dependencies {
     implementation(libs.media3.effect)
     implementation(libs.androidx.concurrent.futures)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.okhttp)
 
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
