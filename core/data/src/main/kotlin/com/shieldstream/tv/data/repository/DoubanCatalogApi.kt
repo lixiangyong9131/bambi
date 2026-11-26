@@ -40,39 +40,149 @@ class DoubanCatalogApi @Inject constructor(
     private val titleOf = ConcurrentHashMap<Int, String>()
     private data class CachedAbstract(val at: Long, val value: DoubanAbstractDto)
     private val abstractCache = ConcurrentHashMap<String, CachedAbstract>()
+    private data class CachedFeed(val at: Long, val items: List<DoubanRexxarCollectionItemDto>)
+    private val feedCache = ConcurrentHashMap<String, CachedFeed>()
+    private val feedLocks = ConcurrentHashMap<String, Mutex>()
 
-    override suspend fun trendingAll(key: String, page: Int): TmdbPaginated<TmdbSearchResultDto> = withContext(Dispatchers.IO) { moviesAll(page) }
-
-    override suspend fun trendingAllWeek(key: String, page: Int): TmdbPaginated<TmdbSearchResultDto> = withContext(Dispatchers.IO) {
-        // Mixed movie + TV so the TV tab's featured/billboard is not empty.
-        val movies = moviesAll(page).results
-        val shows = safeSubjects("tv", "热门", page).map { it.toSearchDto("tv") }
-        TmdbPaginated(page = page, results = (movies + shows).distinctBy { it.media_type + it.id })
+    override suspend fun trendingAll(key: String, page: Int): TmdbPaginated<TmdbSearchResultDto> = withContext(Dispatchers.IO) {
+        val weekly = async { safeCollection("movie_weekly_best", page) }
+        val hot = async { safeCollection("movie_hot_gaia", page) }
+        val merged = interleave(weekly.await(), hot.await())
+        if (merged.isNotEmpty()) {
+            TmdbPaginated(page = page, results = merged.map { it.toSearchDto("movie") })
+        } else {
+            moviesAll(page)
+        }
     }
 
-    override suspend fun discoverMovieQuery(key: String, params: Map<String, String>): TmdbPaginated<TmdbMovieDto> = withContext(Dispatchers.IO) { moviesByTag(params["with_genres"].orEmpty().ifBlank { "热门" }, 1) }
+    override suspend fun trendingAllWeek(key: String, page: Int): TmdbPaginated<TmdbSearchResultDto> = withContext(Dispatchers.IO) {
+        // Mixed movie + TV official weekly charts so the featured billboard stays varied.
+        val movies = async { safeCollection("movie_weekly_best", page) }
+        val tvCn = async { safeCollection("tv_chinese_best_weekly", page) }
+        val tvGlobal = async { safeCollection("tv_global_best_weekly", page) }
+        val movieDtos = movies.await().map { it.toSearchDto("movie") }
+        val tvDtos = interleave(tvCn.await(), tvGlobal.await()).map { it.toSearchDto("tv") }
+        val combined = interleaveSearch(movieDtos, tvDtos)
+        if (combined.isNotEmpty()) {
+            TmdbPaginated(page = page, results = combined)
+        } else {
+            val fallbackMovies = moviesAll(page).results
+            val fallbackShows = safeSubjects("tv", "热门", page).map { it.toSearchDto("tv") }
+            TmdbPaginated(page = page, results = (fallbackMovies + fallbackShows).distinctBy { it.media_type + it.id })
+        }
+    }
 
-    override suspend fun discoverTvQuery(key: String, params: Map<String, String>): TmdbPaginated<TmdbTvDto> = withContext(Dispatchers.IO) { tvByTag("热门", 1) }
+    override suspend fun discoverMovieQuery(key: String, params: Map<String, String>): TmdbPaginated<TmdbMovieDto> = withContext(Dispatchers.IO) {
+        val page = params["page"]?.toIntOrNull()?.coerceAtLeast(1) ?: 1
+        val sort = doubanSortFor(params["sort_by"])
+        val tags = recommendTagsForQuery(
+            genres = params["with_genres"].orEmpty(),
+            country = params["with_origin_country"].orEmpty(),
+            language = params["with_original_language"].orEmpty(),
+            isTv = false,
+        )
+        val rexxar = safeRecommend("movie", tags, sort, page)
+        if (rexxar.isNotEmpty()) {
+            TmdbPaginated(page = page, results = rexxar.map { it.toMovieDto() })
+        } else {
+            moviesByTag(genreToTag(params["with_genres"].orEmpty()), page)
+        }
+    }
+
+    override suspend fun discoverTvQuery(key: String, params: Map<String, String>): TmdbPaginated<TmdbTvDto> = withContext(Dispatchers.IO) {
+        val page = params["page"]?.toIntOrNull()?.coerceAtLeast(1) ?: 1
+        val genres = params["with_genres"].orEmpty()
+        val country = params["with_origin_country"].orEmpty()
+        val language = params["with_original_language"].orEmpty()
+        val sortBy = params["sort_by"].orEmpty()
+        val collectionId = if (genres.isBlank() && sortBy.isBlank()) {
+            when (country.uppercase()) {
+                "CN" -> "tv_domestic"
+                "US" -> "tv_american"
+                "KR" -> "tv_korean"
+                "JP" -> "tv_japanese"
+                else -> null
+            }
+        } else null
+        val rexxar = if (collectionId != null) {
+            safeCollection(collectionId, page)
+        } else {
+            val tags = recommendTagsForQuery(genres, country, language, isTv = true)
+            safeRecommend("tv", tags, doubanSortFor(sortBy), page)
+        }
+        if (rexxar.isNotEmpty()) {
+            TmdbPaginated(page = page, results = rexxar.map { it.toTvDto() })
+        } else {
+            val fallbackTag = when (country.uppercase()) {
+                "CN" -> "国产剧"
+                "US" -> "美剧"
+                "KR" -> "韩剧"
+                "JP" -> "日剧"
+                else -> genreToTvTag(genres)
+            }
+            tvByTag(fallbackTag, page)
+        }
+    }
 
     override suspend fun searchKeyword(key: String, query: String): TmdbPaginated<TmdbKeywordDto> = withContext(Dispatchers.IO) { TmdbPaginated() }
 
-    override suspend fun trendingMovies(key: String, page: Int): TmdbPaginated<TmdbMovieDto> = withContext(Dispatchers.IO) { moviesByTag("热门", page) }
+    override suspend fun trendingMovies(key: String, page: Int): TmdbPaginated<TmdbMovieDto> = withContext(Dispatchers.IO) {
+        val items = safeCollection("movie_weekly_best", page)
+        if (items.isNotEmpty()) TmdbPaginated(page = page, results = items.map { it.toMovieDto() })
+        else moviesByTag("热门", page)
+    }
 
-    override suspend fun trendingTv(key: String, page: Int): TmdbPaginated<TmdbTvDto> = withContext(Dispatchers.IO) { tvByTag("热门", page) }
+    override suspend fun trendingTv(key: String, page: Int): TmdbPaginated<TmdbTvDto> = withContext(Dispatchers.IO) {
+        val cn = async { safeCollection("tv_chinese_best_weekly", page) }
+        val global = async { safeCollection("tv_global_best_weekly", page) }
+        val items = interleave(cn.await(), global.await())
+        if (items.isNotEmpty()) TmdbPaginated(page = page, results = items.map { it.toTvDto() })
+        else tvByTag("热门", page)
+    }
 
-    override suspend fun popularMovies(key: String, page: Int): TmdbPaginated<TmdbMovieDto> = withContext(Dispatchers.IO) { moviesByTag("热门", page) }
+    override suspend fun popularMovies(key: String, page: Int): TmdbPaginated<TmdbMovieDto> = withContext(Dispatchers.IO) {
+        val items = safeCollection("movie_hot_gaia", page)
+        if (items.isNotEmpty()) TmdbPaginated(page = page, results = items.map { it.toMovieDto() })
+        else moviesByTag("热门", page)
+    }
 
-    override suspend fun popularTv(key: String, page: Int): TmdbPaginated<TmdbTvDto> = withContext(Dispatchers.IO) { tvByTag("热门", page) }
+    override suspend fun popularTv(key: String, page: Int): TmdbPaginated<TmdbTvDto> = withContext(Dispatchers.IO) {
+        val items = safeCollection("tv_hot", page)
+        if (items.isNotEmpty()) TmdbPaginated(page = page, results = items.map { it.toTvDto() })
+        else tvByTag("热门", page)
+    }
 
-    override suspend fun topRatedMovies(key: String, page: Int): TmdbPaginated<TmdbMovieDto> = withContext(Dispatchers.IO) { moviesByTag("豆瓣高分", page) }
+    override suspend fun topRatedMovies(key: String, page: Int): TmdbPaginated<TmdbMovieDto> = withContext(Dispatchers.IO) {
+        val items = safeCollection("movie_top250", page)
+        if (items.isNotEmpty()) TmdbPaginated(page = page, results = items.map { it.toMovieDto() })
+        else moviesByTag("豆瓣高分", page)
+    }
 
-    override suspend fun topRatedTv(key: String, page: Int): TmdbPaginated<TmdbTvDto> = withContext(Dispatchers.IO) { tvByTag("豆瓣高分", page) }
+    override suspend fun topRatedTv(key: String, page: Int): TmdbPaginated<TmdbTvDto> = withContext(Dispatchers.IO) {
+        val items = safeRecommend("tv", tags = "", sort = "S", page = page)
+        if (items.isNotEmpty()) TmdbPaginated(page = page, results = items.map { it.toTvDto() })
+        else tvByTag("豆瓣高分", page)
+    }
 
-    override suspend fun nowPlayingMovies(key: String, region: String, page: Int): TmdbPaginated<TmdbMovieDto> = withContext(Dispatchers.IO) { moviesByTag("最新", page) }
+    override suspend fun nowPlayingMovies(key: String, region: String, page: Int): TmdbPaginated<TmdbMovieDto> = withContext(Dispatchers.IO) {
+        val items = safeCollection("movie_showing", page)
+        if (items.isNotEmpty()) TmdbPaginated(page = page, results = items.map { it.toMovieDto() })
+        else moviesByTag("最新", page)
+    }
 
-    override suspend fun discoverMovies(key: String, genres: String, sortBy: String, minVotes: Int, page: Int): TmdbPaginated<TmdbMovieDto> = withContext(Dispatchers.IO) { moviesByTag(genreToTag(genres), page) }
+    override suspend fun discoverMovies(key: String, genres: String, sortBy: String, minVotes: Int, page: Int): TmdbPaginated<TmdbMovieDto> = withContext(Dispatchers.IO) {
+        val tag = movieGenreTag(genres)
+        val items = safeRecommend("movie", tag, doubanSortFor(sortBy), page)
+        if (items.isNotEmpty()) TmdbPaginated(page = page, results = items.map { it.toMovieDto() })
+        else moviesByTag(genreToTag(genres), page)
+    }
 
-    override suspend fun discoverTv(key: String, genres: String, sortBy: String, minVotes: Int, page: Int): TmdbPaginated<TmdbTvDto> = withContext(Dispatchers.IO) { tvByTag(genreToTvTag(genres), page) }
+    override suspend fun discoverTv(key: String, genres: String, sortBy: String, minVotes: Int, page: Int): TmdbPaginated<TmdbTvDto> = withContext(Dispatchers.IO) {
+        val tag = tvGenreTag(genres)
+        val items = safeRecommend("tv", tag, doubanSortFor(sortBy), page)
+        if (items.isNotEmpty()) TmdbPaginated(page = page, results = items.map { it.toTvDto() })
+        else tvByTag(genreToTvTag(genres), page)
+    }
 
     override suspend fun search(key: String, query: String): TmdbSearchResponse = withContext(Dispatchers.IO) { searchDouban(query) }
 
@@ -114,28 +224,103 @@ class DoubanCatalogApi @Inject constructor(
     private val TAG_POOL_MOVIE = listOf("热门", "豆瓣高分", "最新", "经典", "华语", "欧美", "动作片", "喜剧片", "爱情片", "科幻片", "悬疑片", "犯罪片", "动画")
     private val TAG_POOL_TV = listOf("热门", "国产剧", "美剧", "日剧", "韩剧", "豆瓣高分")
 
+    private fun movieGenreTag(genres: String): String {
+        val id = genres.split(',', '|').firstOrNull()?.trim().orEmpty()
+        return when (id) {
+            "28" -> "动作"
+            "35" -> "喜剧"
+            "18" -> "剧情"
+            "878" -> "科幻"
+            "80" -> "犯罪"
+            "53" -> "惊悚"
+            "27" -> "恐怖"
+            "16", "10762" -> "动画"
+            "9648" -> "悬疑"
+            "99" -> "纪录片"
+            "10749" -> "爱情"
+            "14" -> "奇幻"
+            "12" -> "冒险"
+            "10751" -> "家庭"
+            "10752", "36" -> "战争"
+            "37" -> "西部"
+            "10402" -> "音乐"
+            else -> ""
+        }
+    }
+
+    private fun tvGenreTag(genres: String): String {
+        val id = genres.split(',', '|').firstOrNull()?.trim().orEmpty()
+        return when (id) {
+            "18" -> "剧情"
+            "80" -> "犯罪"
+            "10765", "14", "878" -> "科幻"
+            "10759", "28", "12" -> "动作"
+            "35" -> "喜剧"
+            "16", "10762" -> "动画"
+            "9648", "53" -> "悬疑"
+            "27" -> "恐怖"
+            "10764" -> "真人秀"
+            "10751" -> "家庭"
+            "10768", "36", "10752" -> "历史"
+            "99" -> "悬疑"
+            else -> ""
+        }
+    }
+
+    private fun recommendTagsForQuery(
+        genres: String,
+        country: String,
+        language: String,
+        isTv: Boolean,
+    ): String {
+        val parts = ArrayList<String>(2)
+        val regionTag = when (country.uppercase()) {
+            "KR" -> "韩国"
+            "JP" -> "日本"
+            "US" -> "美国"
+            "ES" -> "西班牙"
+            "CN" -> if (isTv) "国产" else "华语"
+            else -> when (language.lowercase()) {
+                "ja" -> "日本"
+                "ko" -> "韩国"
+                "es" -> "西班牙"
+                else -> ""
+            }
+        }
+        if (regionTag.isNotEmpty()) parts += regionTag
+        val genreTag = if (isTv) tvGenreTag(genres) else movieGenreTag(genres)
+        if (genreTag.isNotEmpty() && genreTag != regionTag) parts += genreTag
+        return parts.joinToString(",")
+    }
+
+    private fun doubanSortFor(sortBy: String?): String = when {
+        sortBy.isNullOrBlank() -> "U"
+        sortBy.startsWith("vote_average") -> "S"
+        sortBy.contains("date") -> "R"
+        else -> "U"
+    }
+
     private fun genreToTag(genres: String): String {
-        val id = genres.split(",").firstOrNull()?.trim().orEmpty()
+        val id = genres.split(',', '|').firstOrNull()?.trim().orEmpty()
         return when (id) {
             "28" -> "动作片"
             "35" -> "喜剧片"
             "18" -> "经典"
             "878" -> "科幻片"
             "80" -> "犯罪片"
-            "99" -> "悬疑片"
+            "99", "9648" -> "悬疑片"
             else -> "热门"
         }
     }
 
-    /** TV genre ids -> Douban TV tags (电影 tag 用在 tv 上会返回空). */
+    /** TV genre ids -> Douban TV tags fallback when j/search_subjects is used. */
     private fun genreToTvTag(genres: String): String {
-        val id = genres.split(",").firstOrNull()?.trim().orEmpty()
+        val id = genres.split(',', '|').firstOrNull()?.trim().orEmpty()
         return when (id) {
-            "18", "80" -> "国产剧"     // 剧情/犯罪
-            "10765", "10759" -> "美剧" // 科幻/动作冒险
-            "35" -> "韩剧"            // 喜剧
-            "16" -> "日剧"            // 动画
-            "99" -> "国产剧"
+            "18", "80" -> "国产剧"
+            "10765", "10759" -> "美剧"
+            "35" -> "韩剧"
+            "16" -> "日本动画"
             else -> "热门"
         }
     }
@@ -150,13 +335,13 @@ class DoubanCatalogApi @Inject constructor(
 
     private suspend fun moviesByTag(tag: String, page: Int): TmdbPaginated<TmdbMovieDto> {
         val subs = safeSubjects("movie", tag, page)
-        android.util.Log.i("DoubanHome", "moviesByTag($tag,p$page): ${subs.size} subjects")
+        info("moviesByTag($tag,p$page): ${subs.size} subjects")
         return TmdbPaginated(page = page, results = subs.map { it.toMovieDto() })
     }
 
     private suspend fun tvByTag(tag: String, page: Int): TmdbPaginated<TmdbTvDto> {
         val subs = safeSubjects("tv", tag, page)
-        android.util.Log.i("DoubanHome", "tvByTag($tag,p$page): ${subs.size} subjects")
+        info("tvByTag($tag,p$page): ${subs.size} subjects")
         return TmdbPaginated(page = page, results = subs.map { it.toTvDto() })
     }
 
@@ -344,6 +529,83 @@ class DoubanCatalogApi @Inject constructor(
         api.subjects(type = type, tag = tag, pageStart = (page - 1) * 20).subjects
     }.getOrDefault(emptyList())
 
+    private suspend fun safeCollection(collectionId: String, page: Int, count: Int = PAGE_SIZE): List<DoubanRexxarCollectionItemDto> {
+        val cacheKey = "col_${collectionId}_p${page}_c$count"
+        return cachedFeed(cacheKey) {
+            val start = (page - 1) * count
+            api.rexxarCollection(
+                "$REXXAR_BASE/subject_collection/$collectionId/items?start=$start&count=$count",
+            ).subjectCollectionItems.filter { it.id.isNotBlank() && it.title.isNotBlank() && it.bestCoverUrl().isNotBlank() }
+        }
+    }
+
+    private suspend fun safeRecommend(
+        kind: String,
+        tags: String,
+        sort: String,
+        page: Int,
+        count: Int = PAGE_SIZE,
+    ): List<DoubanRexxarCollectionItemDto> {
+        val cacheKey = "rec_${kind}_${tags}_${sort}_p${page}_c$count"
+        return cachedFeed(cacheKey) {
+            val start = (page - 1) * count
+            val encodedTags = java.net.URLEncoder.encode(tags, "UTF-8")
+            api.rexxarRecommend(
+                "$REXXAR_BASE/$kind/recommend?refresh=0&start=$start&count=$count&tags=$encodedTags&sort=$sort",
+            ).items.filter {
+                (it.type == kind || it.type == "movie" || it.type == "tv") &&
+                    it.id.isNotBlank() &&
+                    it.title.isNotBlank() &&
+                    it.bestCoverUrl().isNotBlank()
+            }
+        }
+    }
+
+    private suspend fun cachedFeed(
+        cacheKey: String,
+        loader: suspend () -> List<DoubanRexxarCollectionItemDto>,
+    ): List<DoubanRexxarCollectionItemDto> {
+        val now = System.currentTimeMillis()
+        feedCache[cacheKey]?.takeIf { now - it.at < ABSTRACT_CACHE_MS }?.let { return it.items }
+        return feedLocks.getOrPut(cacheKey) { Mutex() }.withLock {
+            val ts = System.currentTimeMillis()
+            feedCache[cacheKey]?.takeIf { ts - it.at < ABSTRACT_CACHE_MS }?.let { return@withLock it.items }
+            val items = runCatching { loader() }
+                .onFailure { warn("rexxar feed $cacheKey failed: ${it.message}") }
+                .getOrDefault(emptyList())
+            if (items.isNotEmpty()) {
+                feedCache[cacheKey] = CachedFeed(ts, items)
+            }
+            items
+        }
+    }
+
+    private fun interleave(
+        first: List<DoubanRexxarCollectionItemDto>,
+        second: List<DoubanRexxarCollectionItemDto>,
+    ): List<DoubanRexxarCollectionItemDto> {
+        val out = ArrayList<DoubanRexxarCollectionItemDto>(first.size + second.size)
+        val seen = HashSet<String>()
+        for (i in 0 until maxOf(first.size, second.size)) {
+            first.getOrNull(i)?.takeIf { seen.add(it.id) }?.let { out += it }
+            second.getOrNull(i)?.takeIf { seen.add(it.id) }?.let { out += it }
+        }
+        return out
+    }
+
+    private fun interleaveSearch(
+        first: List<TmdbSearchResultDto>,
+        second: List<TmdbSearchResultDto>,
+    ): List<TmdbSearchResultDto> {
+        val out = ArrayList<TmdbSearchResultDto>(first.size + second.size)
+        val seen = HashSet<String>()
+        for (i in 0 until maxOf(first.size, second.size)) {
+            first.getOrNull(i)?.takeIf { seen.add("${it.media_type}:${it.id}") }?.let { out += it }
+            second.getOrNull(i)?.takeIf { seen.add("${it.media_type}:${it.id}") }?.let { out += it }
+        }
+        return out
+    }
+
     /** Modified build: fill the cover from Douban suggest when the list cache is empty
      * (e.g. Continue Watching rebuilds items by id on a cold start). */
     private suspend fun coverFor(id: Int, title: String, rexxarPic: DoubanRexxarPicDto? = null): String? {
@@ -431,11 +693,78 @@ class DoubanCatalogApi @Inject constructor(
         return resp
     }
 
+    private fun info(message: String) {
+        runCatching { android.util.Log.i("DoubanHome", message) }
+    }
+
+    private fun warn(message: String) {
+        runCatching { android.util.Log.w("DoubanHome", message) }
+    }
+
     private companion object {
         const val ABSTRACT_CACHE_MS = 6 * 60 * 60 * 1000L
+        const val REXXAR_BASE = "https://m.douban.com/rexxar/api/v2"
+        const val PAGE_SIZE = 20
+        val YEAR_4_REGEX = Regex("^\\d{4}$")
+        val YEAR_ANY_REGEX = Regex("(?:19|20)\\d{2}")
     }
 
     private fun cleanTitle(t: String) = t.replace(Regex("\\s*\\((?:19|20)\\d{2}\\)\\s*"), "").trim()
+
+    private fun DoubanRexxarCollectionItemDto.releaseYearString(): String? {
+        val y = year.takeIf { YEAR_4_REGEX.matches(it) } ?: YEAR_ANY_REGEX.find(cardSubtitle)?.value
+        return y?.let { "$it-01-01" }
+    }
+
+    private fun DoubanRexxarCollectionItemDto.toMovieDto(): TmdbMovieDto {
+        val cover = bestCoverUrl()
+        val numericId = id.toIntOrNull() ?: id.hashCode()
+        rememberCover(numericId, cover)
+        return TmdbMovieDto(
+            id = numericId,
+            title = cleanTitle(title),
+            overview = description.ifBlank { cardSubtitle },
+            poster_path = cover.ifBlank { null },
+            backdrop_path = cover.ifBlank { null },
+            release_date = releaseYearString(),
+            vote_average = rating?.value ?: 0.0,
+        )
+    }
+
+    private fun DoubanRexxarCollectionItemDto.toTvDto(): TmdbTvDto {
+        val cover = bestCoverUrl()
+        val numericId = id.toIntOrNull() ?: id.hashCode()
+        rememberCover(numericId, cover)
+        return TmdbTvDto(
+            id = numericId,
+            name = cleanTitle(title),
+            overview = description.ifBlank { cardSubtitle },
+            poster_path = cover.ifBlank { null },
+            backdrop_path = cover.ifBlank { null },
+            first_air_date = releaseYearString(),
+            vote_average = rating?.value ?: 0.0,
+        )
+    }
+
+    private fun DoubanRexxarCollectionItemDto.toSearchDto(defaultType: String): TmdbSearchResultDto {
+        val cover = bestCoverUrl()
+        val numericId = id.toIntOrNull() ?: id.hashCode()
+        rememberCover(numericId, cover)
+        val kind = if (type == "movie" || type == "tv") type else defaultType
+        val yearStr = releaseYearString()
+        return TmdbSearchResultDto(
+            id = numericId,
+            media_type = kind,
+            title = if (kind == "movie") cleanTitle(title) else null,
+            name = if (kind == "tv") cleanTitle(title) else null,
+            overview = description.ifBlank { cardSubtitle },
+            poster_path = cover.ifBlank { null },
+            backdrop_path = cover.ifBlank { null },
+            release_date = if (kind == "movie") yearStr else null,
+            first_air_date = if (kind == "tv") yearStr else null,
+            vote_average = rating?.value ?: 0.0,
+        )
+    }
 
     private fun DoubanSubjectDto.toMovieDto() = TmdbMovieDto(
         id = (id.toIntOrNull() ?: id.hashCode()).also { rememberCover(it, cover) },

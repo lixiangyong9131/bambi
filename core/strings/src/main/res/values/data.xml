@@ -119,4 +119,9 @@
     <string name="data_imdb_id_missing">找不到"%1$s"的 IMDb 编号</string>
     <string name="data_provider_unavailable">%1$s 暂时无响应，请稍后重试。</string>
     <string name="data_debrid_key_missing">缺少 %1$s 密钥，请在设置（右上角齿轮）中添加。</string>
+    <string name="data_douban_top250">豆瓣电影 Top 250</string>
+    <string name="data_tv_domestic">热播国产剧</string>
+    <string name="data_tv_american">热门美剧</string>
+    <string name="data_tv_korean">热门韩剧</string>
+    <string name="data_tv_japanese">热门日剧</string>
 </resources>

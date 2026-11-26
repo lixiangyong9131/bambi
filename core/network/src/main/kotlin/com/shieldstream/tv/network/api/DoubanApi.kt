@@ -1,6 +1,8 @@
 package com.shieldstream.tv.network.api
 
 import com.shieldstream.tv.network.dto.DoubanAbstractDto
+import com.shieldstream.tv.network.dto.DoubanRexxarCollectionResponseDto
+import com.shieldstream.tv.network.dto.DoubanRexxarRecommendResponseDto
 import com.shieldstream.tv.network.dto.DoubanSubjectsDto
 import com.shieldstream.tv.network.dto.DoubanSuggestDto
 import retrofit2.http.GET
@@ -39,4 +41,10 @@ interface DoubanApi {
 
     @GET
     suspend fun rexxarRatingStats(@Url url: String): com.shieldstream.tv.network.dto.DoubanRexxarStatsDto
+
+    @GET
+    suspend fun rexxarCollection(@Url url: String): DoubanRexxarCollectionResponseDto
+
+    @GET
+    suspend fun rexxarRecommend(@Url url: String): DoubanRexxarRecommendResponseDto
 }

@@ -119,4 +119,9 @@
     <string name="data_imdb_id_missing">No se encontró el id de IMDb de «%1$s»</string>
     <string name="data_provider_unavailable">%1$s no responde ahora mismo. Prueba en un rato.</string>
     <string name="data_debrid_key_missing">Falta la clave de %1$s. Añádela en Ajustes (rueda arriba a la derecha).</string>
+    <string name="data_douban_top250">Top 250 Douban</string>
+    <string name="data_tv_domestic">Series chinas populares</string>
+    <string name="data_tv_american">Series estadounidenses</string>
+    <string name="data_tv_korean">Series coreanas</string>
+    <string name="data_tv_japanese">Series japonesas</string>
 </resources>

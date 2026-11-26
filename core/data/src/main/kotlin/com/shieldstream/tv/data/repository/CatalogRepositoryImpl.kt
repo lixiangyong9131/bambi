@@ -233,7 +233,7 @@ class CatalogRepositoryImpl @Inject constructor(
             RowSpec("action", texts.get(StringsR.string.data_action)) { page -> tmdb.discoverMovies(key, "28", page = page).results.map { it.toCatalogItem() } },
             RowSpec("scifi", texts.get(StringsR.string.data_sci_fi)) { page -> tmdb.discoverMovies(key, "878", page = page).results.map { it.toCatalogItem() } },
             RowSpec("comedy", texts.get(StringsR.string.data_comedies)) { page -> tmdb.discoverMovies(key, "35", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("top_movies", texts.get(StringsR.string.data_acclaimed_movies)) { page -> tmdb.topRatedMovies(key, page = page).results.map { it.toCatalogItem() } },
+            RowSpec("top_movies", texts.get(StringsR.string.data_douban_top250)) { page -> tmdb.topRatedMovies(key, page = page).results.map { it.toCatalogItem() } },
             RowSpec("top_tv", texts.get(StringsR.string.data_acclaimed_tv_shows)) { page -> tmdb.topRatedTv(key, page = page).results.map { it.toCatalogItem() } },
         )
         HomeFilter.MOVIES -> listOf(
@@ -246,11 +246,15 @@ class CatalogRepositoryImpl @Inject constructor(
             RowSpec("m_horror", texts.get(StringsR.string.data_horror)) { page -> tmdb.discoverMovies(key, "27", page = page).results.map { it.toCatalogItem() } },
             RowSpec("m_comedy", texts.get(StringsR.string.data_comedies)) { page -> tmdb.discoverMovies(key, "35", page = page).results.map { it.toCatalogItem() } },
             RowSpec("m_animation", texts.get(StringsR.string.data_animation)) { page -> tmdb.discoverMovies(key, "16", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("m_top", texts.get(StringsR.string.data_critically_acclaimed)) { page -> tmdb.topRatedMovies(key, page = page).results.map { it.toCatalogItem() } },
+            RowSpec("m_top", texts.get(StringsR.string.data_douban_top250)) { page -> tmdb.topRatedMovies(key, page = page).results.map { it.toCatalogItem() } },
         )
         HomeFilter.TV -> listOf(
             RowSpec("t_top10", texts.get(StringsR.string.data_top_10_tv_shows_week), RowStyle.TOP10) { page -> tmdb.trendingTv(key, page = page).results.map { it.toCatalogItem() } },
             RowSpec("t_popular", texts.get(StringsR.string.data_popular)) { page -> tmdb.popularTv(key, page = page).results.map { it.toCatalogItem() } },
+            RowSpec("t_domestic", texts.get(StringsR.string.data_tv_domestic)) { page -> tmdb.discoverTvQuery(key, mapOf("with_origin_country" to "CN", "page" to page.toString())).results.map { it.toCatalogItem() } },
+            RowSpec("t_american", texts.get(StringsR.string.data_tv_american)) { page -> tmdb.discoverTvQuery(key, mapOf("with_origin_country" to "US", "page" to page.toString())).results.map { it.toCatalogItem() } },
+            RowSpec("t_korean", texts.get(StringsR.string.data_tv_korean)) { page -> tmdb.discoverTvQuery(key, mapOf("with_origin_country" to "KR", "page" to page.toString())).results.map { it.toCatalogItem() } },
+            RowSpec("t_japanese", texts.get(StringsR.string.data_tv_japanese)) { page -> tmdb.discoverTvQuery(key, mapOf("with_origin_country" to "JP", "page" to page.toString())).results.map { it.toCatalogItem() } },
             RowSpec("t_drama", texts.get(StringsR.string.category_dramas)) { page -> tmdb.discoverTv(key, "18", page = page).results.map { it.toCatalogItem() } },
             RowSpec("t_crime", texts.get(StringsR.string.data_crime)) { page -> tmdb.discoverTv(key, "80", page = page).results.map { it.toCatalogItem() } },
             RowSpec("t_scifi", texts.get(StringsR.string.data_sci_fi_fantasy)) { page -> tmdb.discoverTv(key, "10765", page = page).results.map { it.toCatalogItem() } },

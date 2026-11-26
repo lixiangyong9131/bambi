@@ -2,6 +2,11 @@ package com.shieldstream.tv.network.dto
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
 @Serializable
 data class DoubanSubjectDto(
@@ -81,4 +86,45 @@ data class DoubanRexxarSubjectDto(
 @Serializable
 data class DoubanRexxarStatsDto(
     val stats: List<Float> = emptyList(),
+)
+
+@Serializable
+data class DoubanRexxarCollectionItemDto(
+    val id: String = "",
+    val title: String = "",
+    val type: String = "",
+    val year: String = "",
+    val description: String = "",
+    @SerialName("card_subtitle") val cardSubtitle: String = "",
+    val pic: DoubanRexxarPicDto? = null,
+    val cover: JsonElement? = null,
+    @SerialName("cover_url") val coverUrl: String = "",
+    val rating: DoubanRexxarRatingDto? = null,
+) {
+    fun bestCoverUrl(): String {
+        pic?.large?.takeIf { it.isNotBlank() }?.let { return it }
+        pic?.normal?.takeIf { it.isNotBlank() }?.let { return it }
+        coverUrl.takeIf { it.isNotBlank() }?.let { return it }
+        return when (val c = cover) {
+            is JsonObject -> c["url"]?.jsonPrimitive?.contentOrNull.orEmpty()
+            is JsonPrimitive -> c.contentOrNull.orEmpty()
+            else -> ""
+        }
+    }
+}
+
+@Serializable
+data class DoubanRexxarCollectionResponseDto(
+    val start: Int = 0,
+    val count: Int = 0,
+    val total: Int = 0,
+    @SerialName("subject_collection_items") val subjectCollectionItems: List<DoubanRexxarCollectionItemDto> = emptyList(),
+)
+
+@Serializable
+data class DoubanRexxarRecommendResponseDto(
+    val start: Int = 0,
+    val count: Int = 0,
+    val total: Int = 0,
+    val items: List<DoubanRexxarCollectionItemDto> = emptyList(),
 )
