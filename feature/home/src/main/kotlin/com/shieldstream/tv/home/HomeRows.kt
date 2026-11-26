@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,8 +28,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -91,6 +94,8 @@ internal fun RowsBrowser(
     onBack: () -> Unit,
     header: String? = null,
     topBar: @Composable (androidx.compose.ui.Modifier) -> Unit = {},
+    topBarFocused: Boolean = false,
+    backToTopTick: Int = 0,
     onBackToTop: () -> Unit = {},
     onEnterImmersive: () -> Unit = {},
 ) {
@@ -102,6 +107,8 @@ internal fun RowsBrowser(
     var continueMenu by remember { mutableStateOf<ItemMenu?>(null) }
     var myListMenu by remember { mutableStateOf<ItemMenu?>(null) }
     var upNextMenu by remember { mutableStateOf<UpNextMenu?>(null) }
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
 
     val heroState = remember {
         MutableStateFlow(Snapshot.withoutReadObservation { findByKey(rows, restoreKey) ?: rows.first().items.first() })
@@ -119,6 +126,15 @@ internal fun RowsBrowser(
     LaunchedEffect(Unit) {
         restoreRequester.requestFocusWithRetry()
     }
+    LaunchedEffect(backToTopTick) {
+        if (backToTopTick > 0 && rows.isNotEmpty()) {
+            val topKey = firstKey(rows.first())
+            savedFocus.value = topKey
+            restoreKey = topKey
+            heroState.value = rows.first().items.first()
+            listState.scrollToItem(0)
+        }
+    }
     LaunchedEffect(rows) {
         val pending = pendingFocus ?: return@LaunchedEffect
         restoreKey = pending.itemKey
@@ -133,7 +149,7 @@ internal fun RowsBrowser(
         Modifier
             .fillMaxSize()
             .background(RowBackground)
-            .onBackKey(enabled = true) { onBackToTop() }
+            .onBackKey(enabled = !topBarFocused) { onBackToTop() }
             .onPreviewKeyEvent { e ->
                 val vertical = e.key == Key.DirectionDown || e.key == Key.DirectionUp
                 if (e.type != KeyEventType.KeyDown || !vertical || e.nativeKeyEvent.repeatCount == 0) return@onPreviewKeyEvent false
@@ -144,7 +160,21 @@ internal fun RowsBrowser(
         if (!LocalLightweightUi.current) HeroBackdropSlot(heroState)
         Column(Modifier.fillMaxSize()) {
             // Modified build: top navigation is always visible (no separate banner page).
-            topBar(Modifier)
+            topBar(
+                Modifier.onPreviewKeyEvent { event ->
+                    if (topBarFocused && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && rows.isNotEmpty()) {
+                        scope.launch {
+                            if (listState.firstVisibleItemIndex != 0 || listState.firstVisibleItemScrollOffset != 0) {
+                                listState.scrollToItem(0)
+                            }
+                            restoreRequester.requestFocusWithRetry()
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                },
+            )
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -164,6 +194,7 @@ internal fun RowsBrowser(
             }
             ProvidePivotScroll(leading = 51.dp) {
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.fillMaxWidth().weight(1f),
                     contentPadding = PaddingValues(bottom = 260.dp),
                 ) {
@@ -172,6 +203,7 @@ internal fun RowsBrowser(
                             row = row,
                             focusKey = restoreKey,
                             restoreRequester = restoreRequester,
+                            resetScrollTick = if (rowIndex == 0) backToTopTick else 0,
                             onFocused = { virtual ->
                                 savedFocus.value = keyOf(row, virtual)
                                 onEnterImmersive()
@@ -323,6 +355,7 @@ private fun CatalogRowView(
     row: CatalogRow,
     focusKey: String?,
     restoreRequester: FocusRequester,
+    resetScrollTick: Int = 0,
     onFocused: (Int) -> Unit,
     onItemClick: (CatalogItem) -> Unit,
     onNewEpisodeClick: ((CatalogItem, Episode) -> Unit)?,
@@ -354,8 +387,14 @@ private fun CatalogRowView(
         key(shouldLoop(row.items.size)) {
             // + 6 dp: lo que crece por cada lado el póster enfocado; así su borde sigue alineado con el título.
             ProvidePivotScroll(leading = ContentStart + 6.dp) {
+                val rowState = rememberLoopingRowState(row.items.size)
+                LaunchedEffect(resetScrollTick) {
+                    if (resetScrollTick > 0) {
+                        rowState.scrollToItem(firstVirtualIndex(row.items.size))
+                    }
+                }
                 LazyRow(
-                    state = rememberLoopingRowState(row.items.size),
+                    state = rowState,
                     contentPadding = PaddingValues(horizontal = ContentStart, vertical = 14.dp),
                     horizontalArrangement = Arrangement.spacedBy(if (row.style == RowStyle.TOP10) 6.dp else 12.dp),
                 ) {

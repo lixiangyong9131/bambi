@@ -59,6 +59,7 @@ fun MainScreen(
     var focusMenuAfterSwitch by remember { mutableStateOf(false) }
     var topBarFocused by remember { mutableStateOf(false) }
     var showExitConfirmation by remember { mutableStateOf(false) }
+    var backToTopTick by remember { mutableStateOf(0) }
     val topBarRequester = remember { FocusRequester() }
     val filter = when (tab) {
         TopTab.TV -> HomeFilter.TV
@@ -72,13 +73,17 @@ fun MainScreen(
     LaunchedEffect(tab) { if (tab == TopTab.EPISODES) episodeCenter?.activate() }
     val focusTopBar: () -> Unit = { runCatching { topBarRequester.requestFocus() } }
     val scope = rememberCoroutineScope()
-    val onBackToTop: () -> Unit = {
+    val showTopBarAndFocus: () -> Unit = {
         if (immersive) { immersive = false }
         // Retry focus after recomposition so the restored top bar can take focus.
         scope.launch {
             kotlinx.coroutines.delay(80)
             runCatching { topBarRequester.requestFocusWithRetry() }
         }
+    }
+    val onBackToTop: () -> Unit = {
+        backToTopTick++
+        showTopBarAndFocus()
     }
     val onEnterImmersive: () -> Unit = { if (immersiveArmed) immersive = true }
     val topBar: @Composable (Modifier) -> Unit = { modifier ->
@@ -149,6 +154,9 @@ fun MainScreen(
                     preferTopBarFocus = focusMenuAfterSwitch,
                     onTopBarFocusConsumed = { focusMenuAfterSwitch = false },
                     immersive = immersive,
+                    topBarFocused = topBarFocused,
+                    backToTopTick = backToTopTick,
+                    onExitTop = showTopBarAndFocus,
                     onBackToTop = onBackToTop,
                     onEnterImmersive = onEnterImmersive,
                 )
