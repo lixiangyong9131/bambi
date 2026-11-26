@@ -134,6 +134,66 @@ class SourceProberTest {
         }
     }
 
+    @Test
+    fun `segment timeout falls back gracefully within follow timeout budget`() = runBlocking {
+        val server = ServerSocket(0)
+        val port = server.localPort
+        val worker = Thread {
+            runCatching {
+                repeat(3) {
+                    val sock = server.accept()
+                    val req = sock.getInputStream().bufferedReader().readLine().orEmpty()
+                    val path = req.split(" ").getOrNull(1).orEmpty()
+                    val out = sock.getOutputStream()
+                    when {
+                        path.endsWith("/master.m3u8") -> {
+                            val body = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=1280x720\nsub/index.m3u8\n"
+                            writeHttp(out, "application/vnd.apple.mpegurl", body.toByteArray())
+                            sock.close()
+                        }
+                        path.endsWith("/sub/index.m3u8") -> {
+                            val body = "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:4.0,\nseg0.ts\n"
+                            writeHttp(out, "application/vnd.apple.mpegurl", body.toByteArray())
+                            sock.close()
+                        }
+                        else -> {
+                            // Simulate hung segment CDN (> FOLLOW_TIMEOUT_MS = 1800ms)
+                            Thread.sleep(2_500L)
+                            runCatching { sock.close() }
+                        }
+                    }
+                }
+            }
+        }
+        worker.isDaemon = true
+        worker.start()
+
+        try {
+            val startedMs = System.currentTimeMillis()
+            val result = SourceProber().probe(
+                StreamSource(
+                    id = "cms:3",
+                    title = "Test",
+                    infoHash = "h3",
+                    fileIdx = null,
+                    magnet = "",
+                    quality = Quality.HD_720,
+                    hdrType = HdrType.SDR,
+                    sizeBytes = 0L,
+                    seeders = null,
+                    isCached = true,
+                    directUrl = "http://127.0.0.1:$port/master.m3u8",
+                ),
+            )
+            val elapsedMs = System.currentTimeMillis() - startedMs
+            assertTrue(result.ok)
+            assertEquals("720p", result.quality)
+            assertTrue("Expected fast timeout fallback (<3500ms), was ${elapsedMs}ms", elapsedMs < 3_500L)
+        } finally {
+            server.close()
+        }
+    }
+
     private fun writeHttp(out: java.io.OutputStream, contentType: String, body: ByteArray) {
         val header = "HTTP/1.1 200 OK\r\nContent-Type: $contentType\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n"
         out.write(header.toByteArray())

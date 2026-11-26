@@ -4,6 +4,7 @@ import com.shieldstream.tv.media.DohDns
 import com.shieldstream.tv.model.StreamSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -57,19 +58,27 @@ class SourceProber @Inject constructor() {
 
     private val client = OkHttpClient.Builder()
         .dns(DohDns)
-        .connectTimeout(TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
-        .readTimeout(TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
-        .callTimeout(TIMEOUT_MS.toLong(), TimeUnit.MILLISECONDS)
+        .connectTimeout(ENTRY_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .readTimeout(ENTRY_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .callTimeout(ENTRY_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         .followRedirects(true)
+        .build()
+
+    // Shares client's ConnectionPool for zero-handshake Keep-Alive reuse while capping slow CDNs.
+    private val followClient = client.newBuilder()
+        .connectTimeout(FOLLOW_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .readTimeout(FOLLOW_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .callTimeout(FOLLOW_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         .build()
 
     suspend fun probe(source: StreamSource): Result = withContext(Dispatchers.IO) {
         val url = source.directUrl?.takeIf { it.startsWith("http") }
             ?: return@withContext Result(null, "", "", false)
+        val probeStartedNs = System.nanoTime()
         try {
             // Modified build: probe with GET only. Many CMS m3u8 CDNs reject HEAD (502/405)
             // while serving GET fine - a HEAD failure must NOT mark a good source unusable.
-            val entry = fetchSample(url, MAX_PLAYLIST_BYTES) ?: return@withContext Result(null, "", "", false)
+            val entry = fetchSample(client, url, MAX_PLAYLIST_BYTES) ?: return@withContext Result(null, "", "", false)
             if (entry.httpCode >= 400 || entry.bytes.isEmpty()) return@withContext Result(null, "", "", false)
 
             val entryText = entry.bytes.toString(Charsets.UTF_8)
@@ -83,60 +92,77 @@ class SourceProber @Inject constructor() {
 
             // Capture RESOLUTION=WxH from master playlist as fallback metadata (width-aware!).
             val declaredQuality = qualityFromManifestTags(entryText)
+            val fallbackResult = Result(
+                pingMs = entry.firstByteMs,
+                quality = declaredQuality,
+                speed = formatSpeed(entry.bytes.size.toLong(), entry.elapsedMs),
+                ok = true,
+            )
 
-            // Follow highest-bandwidth variant if this is a master playlist.
-            val variantUrl = bestVariantUrl(url, entryText)
-            val (mediaUrl, mediaSample, mediaText) = if (variantUrl != null) {
-                val sub = fetchSample(variantUrl, MAX_PLAYLIST_BYTES) ?: return@withContext Result(null, "", "", false)
-                if (sub.httpCode >= 400 || sub.bytes.isEmpty()) return@withContext Result(null, "", "", false)
-                val subText = sub.bytes.toString(Charsets.UTF_8)
-                if (!subText.startsWith("#EXTM3U", ignoreCase = true)) {
-                    return@withContext Result(null, "", "", false)
-                }
-                Triple(variantUrl, sub, subText)
-            } else {
-                Triple(url, entry, entryText)
-            }
+            val remainingMs = (PROBE_BUDGET_MS - (System.nanoTime() - probeStartedNs) / 1_000_000L)
+            if (remainingMs < MIN_FOLLOW_BUDGET_MS) return@withContext fallbackResult
 
-            // Sample first video segment for real throughput and (when unencrypted) true H.264 SPS resolution.
-            val encrypted = mediaText.contains("#EXT-X-KEY", ignoreCase = true) &&
-                !mediaText.contains("METHOD=NONE", ignoreCase = true)
-            val segmentUrl = firstSegmentUrl(mediaUrl, mediaText)
-            var speedSample: FetchSample = mediaSample
-            var detectedQuality = ""
-
-            if (segmentUrl != null) {
-                val seg = fetchSample(segmentUrl, MAX_SEGMENT_BYTES)
-                if (seg != null) {
-                    if (seg.httpCode == 404 || seg.httpCode == 410 || seg.httpCode >= 500) {
-                        return@withContext Result(null, "", "", false)
+            withTimeoutOrNull(remainingMs) {
+                // Follow highest-bandwidth variant if this is a master playlist.
+                val variantUrl = bestVariantUrl(url, entryText)
+                val (mediaUrl, mediaSample, mediaText) = if (variantUrl != null) {
+                    val sub = fetchSample(followClient, variantUrl, MAX_PLAYLIST_BYTES)
+                        ?: return@withTimeoutOrNull fallbackResult
+                    if (sub.httpCode >= 400 || sub.bytes.isEmpty()) {
+                        return@withTimeoutOrNull Result(null, "", "", false)
                     }
-                    if (seg.httpCode < 400 && seg.bytes.isNotEmpty()) {
-                        speedSample = seg
-                        if (!encrypted) {
-                            detectedQuality = parseTsH264Resolution(seg.bytes)
-                                ?.let { (w, h) -> labelForDimensions(w, h) }
-                                .orEmpty()
+                    val subText = sub.bytes.toString(Charsets.UTF_8)
+                    if (!subText.startsWith("#EXTM3U", ignoreCase = true)) {
+                        return@withTimeoutOrNull Result(null, "", "", false)
+                    }
+                    Triple(variantUrl, sub, subText)
+                } else {
+                    Triple(url, entry, entryText)
+                }
+
+                // Sample first video segment (up to 32 KB) for real throughput and unencrypted H.264 SPS resolution.
+                val encrypted = mediaText.contains("#EXT-X-KEY", ignoreCase = true) &&
+                    !mediaText.contains("METHOD=NONE", ignoreCase = true)
+                val segmentUrl = firstSegmentUrl(mediaUrl, mediaText)
+                var speedSample: FetchSample = mediaSample
+                var detectedQuality = ""
+
+                if (segmentUrl != null && remainingBudgetMs(probeStartedNs) >= MIN_FOLLOW_BUDGET_MS) {
+                    val seg = fetchSample(followClient, segmentUrl, MAX_SEGMENT_BYTES)
+                    if (seg != null) {
+                        if (seg.httpCode == 404 || seg.httpCode == 410 || seg.httpCode >= 500) {
+                            return@withTimeoutOrNull Result(null, "", "", false)
+                        }
+                        if (seg.httpCode < 400 && seg.bytes.isNotEmpty()) {
+                            speedSample = seg
+                            if (!encrypted) {
+                                detectedQuality = parseTsH264Resolution(seg.bytes)
+                                    ?.let { (w, h) -> labelForDimensions(w, h) }
+                                    .orEmpty()
+                            }
                         }
                     }
                 }
-            }
 
-            val quality = detectedQuality.ifBlank {
-                qualityFromManifestTags(mediaText).ifBlank { declaredQuality }
-            }
-            val speed = formatSpeed(speedSample.bytes.size.toLong(), speedSample.elapsedMs)
-            Result(entry.firstByteMs, quality, speed, true)
+                val quality = detectedQuality.ifBlank {
+                    qualityFromManifestTags(mediaText).ifBlank { declaredQuality }
+                }
+                val speed = formatSpeed(speedSample.bytes.size.toLong(), speedSample.elapsedMs)
+                Result(entry.firstByteMs, quality, speed, true)
+            } ?: fallbackResult
         } catch (_: Throwable) {
             Result(null, "", "", false)
         }
     }
 
-    private fun fetchSample(url: String, maxBytes: Long): FetchSample? {
+    private fun remainingBudgetMs(startedNs: Long): Long =
+        PROBE_BUDGET_MS - (System.nanoTime() - startedNs) / 1_000_000L
+
+    private fun fetchSample(httpClient: OkHttpClient, url: String, maxBytes: Long): FetchSample? {
         val started = System.nanoTime()
         return try {
             val req = Request.Builder().url(url).get().build()
-            client.newCall(req).execute().use { resp ->
+            httpClient.newCall(req).execute().use { resp ->
                 if (resp.code >= 400) {
                     return FetchSample(resp.code, ByteArray(0), null, 1L)
                 }
@@ -171,10 +197,13 @@ class SourceProber @Inject constructor() {
     }
 
     internal companion object {
-        private const val TIMEOUT_MS = 3_500
+        private const val ENTRY_TIMEOUT_MS = 3_500L
+        private const val FOLLOW_TIMEOUT_MS = 1_800L
+        private const val PROBE_BUDGET_MS = 4_000L
+        private const val MIN_FOLLOW_BUDGET_MS = 350L
         private const val READ_CHUNK_BYTES = 4_096L
         private const val MAX_PLAYLIST_BYTES = 128 * 1024L
-        private const val MAX_SEGMENT_BYTES = 64 * 1024L
+        private const val MAX_SEGMENT_BYTES = 32 * 1024L
         private const val MIN_SPEED_BYTES = 4 * 1024L
 
         internal fun qualityFromManifestTags(text: String): String {
