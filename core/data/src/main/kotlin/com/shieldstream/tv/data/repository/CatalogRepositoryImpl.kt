@@ -245,7 +245,6 @@ class CatalogRepositoryImpl @Inject constructor(
             RowSpec("m_thriller", texts.get(StringsR.string.category_thrillers)) { page -> tmdb.discoverMovies(key, "53", page = page).results.map { it.toCatalogItem() } },
             RowSpec("m_horror", texts.get(StringsR.string.data_horror)) { page -> tmdb.discoverMovies(key, "27", page = page).results.map { it.toCatalogItem() } },
             RowSpec("m_comedy", texts.get(StringsR.string.data_comedies)) { page -> tmdb.discoverMovies(key, "35", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("m_animation", texts.get(StringsR.string.data_animation)) { page -> tmdb.discoverMovies(key, "16", page = page).results.map { it.toCatalogItem() } },
             RowSpec("m_top", texts.get(StringsR.string.data_douban_top250)) { page -> tmdb.topRatedMovies(key, page = page).results.map { it.toCatalogItem() } },
         )
         HomeFilter.TV -> listOf(
@@ -260,7 +259,6 @@ class CatalogRepositoryImpl @Inject constructor(
             RowSpec("t_scifi", texts.get(StringsR.string.data_sci_fi_fantasy)) { page -> tmdb.discoverTv(key, "10765", page = page).results.map { it.toCatalogItem() } },
             RowSpec("t_action", texts.get(StringsR.string.data_action_adventure)) { page -> tmdb.discoverTv(key, "10759", page = page).results.map { it.toCatalogItem() } },
             RowSpec("t_comedy", texts.get(StringsR.string.data_comedies)) { page -> tmdb.discoverTv(key, "35", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("t_animation", texts.get(StringsR.string.data_animation)) { page -> tmdb.discoverTv(key, "16", page = page).results.map { it.toCatalogItem() } },
             RowSpec("t_top", texts.get(StringsR.string.data_critically_acclaimed)) { page -> tmdb.topRatedTv(key, page = page).results.map { it.toCatalogItem() } },
         )
         HomeFilter.ANIME -> listOf(

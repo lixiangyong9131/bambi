@@ -139,6 +139,6 @@ class HomeDiskCache @Inject constructor(@ApplicationContext context: Context) {
 
     private companion object {
         const val TAG = "HomeDiskCache"
-        const val VERSION = 2
+        const val VERSION = 3
     }
 }
