@@ -57,6 +57,8 @@ class CmsStreams @Inject constructor(
         private const val RYI = "http://cj.rycjapi.com/api.php/provide/vod"                    // 如意资源
         private const val JISU = "https://www.jisuzy.com/api.php/provide/vod"             // 速播资源(备域名)
         private const val HONGNIU = "https://www.hongniuzy2.com/api.php/provide/vod"      // 红牛资源
+        private const val IKUN = "https://ikunzyapi.com/api.php/provide/vod"              // iKun资源
+        private const val ZY360 = "https://360zy.com/api.php/provide/vod"                 // 360资源
         // Put consistently low-latency direct sources first; optional/region-sensitive mirrors stay at the tail
         // with automatic per-device cooldown so blocked/poisoned devices pay zero ongoing cost.
         internal val SOURCES = listOf(
@@ -66,6 +68,8 @@ class CmsStreams @Inject constructor(
             "速播资源" to JISU,
             "如意资源" to RYI,
             "电影天堂" to DYTT,
+            "iKun资源" to IKUN,
+            "360资源" to ZY360,
         )
         // Metadata & search use fast responsive endpoints first so Details/Search never stall on blocked edges.
         private val SEARCH_SOURCES = listOf(API, IQIYI, HONGNIU, JISU)
