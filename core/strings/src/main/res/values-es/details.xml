@@ -94,4 +94,6 @@
     <string name="details_plays_on_play">▶ SE REPRODUCE AL PULSAR REPRODUCIR</string>
     <string name="details_picked_source_failed">Esa fuente no funciona: %1$s Elige otra.</string>
     <string name="details_starring">主演：%1$s</string>
+    <string name="details_episodes_order_asc">↑ Orden</string>
+    <string name="details_episodes_order_desc">↓ Inverso</string>
 </resources>

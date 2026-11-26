@@ -20,6 +20,7 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener
 import com.shieldstream.tv.domain.ResolveState
 import com.shieldstream.tv.domain.ResolveStreamUseCase
 import com.shieldstream.tv.domain.SelectedContentHolder
+import com.shieldstream.tv.domain.SeriesPlaybackContext
 import com.shieldstream.tv.domain.SkipSegments
 import com.shieldstream.tv.domain.SkipSegmentsRepository
 import com.shieldstream.tv.domain.ProfileRepository
@@ -36,11 +37,14 @@ import com.shieldstream.tv.media.PlaybackPolicyProvider
 import com.shieldstream.tv.media.VideoFormatInspector
 import androidx.media3.common.PlaybackException
 import com.shieldstream.tv.model.ExternalSubtitle
+import com.shieldstream.tv.model.PlaybackMedia
 import com.shieldstream.tv.model.PlaybackVideoInfo
 import com.shieldstream.tv.model.SubtitleAppearance
 import com.shieldstream.tv.model.SubtitlePreference
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -95,8 +99,14 @@ class PlayerViewModel @Inject constructor(
     private val skipSegmentsRepository: SkipSegmentsRepository,
     private val manualSkip: com.shieldstream.tv.domain.ManualSkipRepository,
     private val trackMemory: TrackMemoryRepository,
+    private val nextEpisodeResolver: NextEpisodeResolver,
     private val texts: Texts,
 ) : ViewModel() {
+
+    private var playbackSnapshot = holder.playback.value
+    private var queueSnapshot = playbackSnapshot?.sources.orEmpty()
+    private val _media = MutableStateFlow(playbackSnapshot?.media)
+    private val mediaSnapshot: PlaybackMedia? get() = _media.value
 
     private val _player = MutableStateFlow<ExoPlayer?>(null)
     val player: StateFlow<ExoPlayer?> = _player.asStateFlow()
@@ -109,8 +119,7 @@ class PlayerViewModel @Inject constructor(
 
     /** Modified build: current show's manual skip config, exposed for the player bottom bar. */
     val skipConfig: StateFlow<com.shieldstream.tv.domain.ManualSkipRepository.Config> =
-        manualSkip.changes.map { _ ->
-            val m = mediaSnapshot
+        combine(_media, manualSkip.changes) { m, _ ->
             if (m != null) manualSkip.get(
                 com.shieldstream.tv.domain.ManualSkipRepository.keyFor(m.title, m.type.name)
             ) else com.shieldstream.tv.domain.ManualSkipRepository.Config()
@@ -119,10 +128,8 @@ class PlayerViewModel @Inject constructor(
     private val _notice = MutableStateFlow<String?>(null)
     val notice: StateFlow<String?> = _notice.asStateFlow()
 
-    private val playbackSnapshot = holder.playback.value
-    private val queueSnapshot = playbackSnapshot?.sources.orEmpty()
-    private val mediaSnapshot = playbackSnapshot?.media
-    val title: StateFlow<String> = MutableStateFlow(playbackSnapshot?.label.orEmpty()).asStateFlow()
+    private val _title = MutableStateFlow(playbackSnapshot?.label.orEmpty())
+    val title: StateFlow<String> = _title.asStateFlow()
 
     val seekThumbnails: StateFlow<Boolean> = combine(
         settings.deviceOptimization,
@@ -132,18 +139,23 @@ class PlayerViewModel @Inject constructor(
         playbackPolicies.resolve(optimization, buffer, thumbnails).seekThumbnails
     }.stateIn(viewModelScope, SharingStarted.Eagerly, playbackPolicies.automatic().seekThumbnails)
 
-    private val progressKey: String? = playbackSnapshot?.progressKey
+    private var progressKey: String? = playbackSnapshot?.progressKey
 
     private var segments: SkipSegments = SkipSegments.NONE
     private var manualSkipConfig: com.shieldstream.tv.domain.ManualSkipRepository.Config =
         com.shieldstream.tv.domain.ManualSkipRepository.Config()
     private var segmentsJob: Job? = null
+    private var segmentsLoadJob: Job? = null
+    private var playFromJob: Job? = null
+    private var nextEpisodeJob: Job? = null
+    private var nextPrefetchTarget: com.shieldstream.tv.domain.NextEpisode? = null
+    private var nextPrefetchDeferred: Deferred<ResolvedNextEpisode?>? = null
     private val autoSkipped = mutableSetOf<String>()
     private var prefetched = false
     private var nextUpShownAt = -1L
     private val _skipPrompt = MutableStateFlow<SkipPromptUiState>(SkipPromptUiState.Hidden)
     val skipPrompt: StateFlow<SkipPromptUiState> = _skipPrompt.asStateFlow()
-    private val nextSnapshot = playbackSnapshot?.next
+    private var nextSnapshot = playbackSnapshot?.next
     private val _nextUp = MutableStateFlow<NextUpUiState>(NextUpUiState.Hidden)
     val nextUp: StateFlow<NextUpUiState> = _nextUp.asStateFlow()
     private val _goNext = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
@@ -217,13 +229,16 @@ class PlayerViewModel @Inject constructor(
 
     private var saverJob: Job? = null
 
-    private val sourceFailover = SourceFailoverController(
-        queue = queueSnapshot,
-        resolveStreamUseCase = resolveStreamUseCase,
-        texts = texts,
-        spanishOnly = spanishOnly,
-        spanishFirst = spanishFirst,
-    )
+    private var sourceFailover = createSourceFailover(queueSnapshot)
+
+    private fun createSourceFailover(queue: List<com.shieldstream.tv.model.StreamSource>) =
+        SourceFailoverController(
+            queue = queue,
+            resolveStreamUseCase = resolveStreamUseCase,
+            texts = texts,
+            spanishOnly = spanishOnly,
+            spanishFirst = spanishFirst,
+        )
 
     private val subtitleCoordinator = SubtitleCoordinator(
         scope = viewModelScope,
@@ -271,6 +286,7 @@ class PlayerViewModel @Inject constructor(
         val updated = c.copy(enabled = true, introSec = seconds)
         manualSkip.save(key, updated)
         manualSkipConfig = updated
+        autoSkipped -= "intro"
         segments = if (seconds > 0) segments.copy(intro = com.shieldstream.tv.domain.TimeRange(0, seconds * 1000L)) else segments.copy(intro = null)
         _notice.value = texts.get(StringsR.string.player_intro_point_set, seconds)
     }
@@ -282,6 +298,7 @@ class PlayerViewModel @Inject constructor(
         val updated = c.copy(enabled = true, outroSec = seconds)
         manualSkip.save(key, updated)
         manualSkipConfig = updated
+        autoSkipped -= "outro"
         _notice.value = texts.get(StringsR.string.player_outro_point_set, seconds)
     }
 
@@ -289,29 +306,48 @@ class PlayerViewModel @Inject constructor(
     fun toggleSkip() {
         val m = mediaSnapshot ?: return
         val key = com.shieldstream.tv.domain.ManualSkipRepository.keyFor(m.title, m.type.name)
-        val c = manualSkip.get(key)
-        manualSkip.save(key, c.copy(enabled = !c.enabled))
+        val updated = manualSkip.get(key).let { it.copy(enabled = !it.enabled) }
+        manualSkip.save(key, updated)
+        manualSkipConfig = updated
+        if (updated.active) {
+            autoSkipped -= "intro"
+            autoSkipped -= "outro"
+            if (updated.introSec > 0) {
+                segments = segments.copy(intro = com.shieldstream.tv.domain.TimeRange(0, updated.introSec * 1000L))
+            }
+        } else if (updated.introSec > 0 && segments.intro?.endMs == updated.introSec * 1000L) {
+            segments = segments.copy(intro = null)
+        }
     }
 
     private fun loadSegments() {
         val m = mediaSnapshot ?: return
-        viewModelScope.launch {
+        segmentsLoadJob?.cancel()
+        autoSkipped.clear()
+        _skipPrompt.value = SkipPromptUiState.Hidden
+        val skipKey = com.shieldstream.tv.domain.ManualSkipRepository.keyFor(m.title, m.type.name)
+        manualSkipConfig = manualSkip.get(skipKey)
+        segments = if (manualSkipConfig.active && manualSkipConfig.introSec > 0) {
+            SkipSegments(intro = com.shieldstream.tv.domain.TimeRange(0, manualSkipConfig.introSec * 1000L))
+        } else {
+            SkipSegments.NONE
+        }
+        segmentsLoadJob = viewModelScope.launch {
             val auto = if (m.imdbId != null && m.season != null && m.episode != null) {
                 skipSegmentsRepository.episode(m.imdbId!!, m.season!!, m.episode!!)
             } else SkipSegments.NONE
-            manualSkipConfig = manualSkip.get(
-                com.shieldstream.tv.domain.ManualSkipRepository.keyFor(m.title, m.type.name),
-            )
+            if (_media.value !== m) return@launch
+            manualSkipConfig = manualSkip.get(skipKey)
             // Modified build: manual intro length applies even without IMDb / chapter data.
             segments = if (manualSkipConfig.active && manualSkipConfig.introSec > 0) {
                 auto.copy(intro = com.shieldstream.tv.domain.TimeRange(0, manualSkipConfig.introSec * 1000L))
             } else auto
-            autoSkipped.clear()
         }
     }
 
-    private fun playFrom(from: Int) {
-        viewModelScope.launch {
+    private fun playFrom(from: Int, cancelPrevious: Boolean = true) {
+        if (cancelPrevious) playFromJob?.cancel()
+        playFromJob = viewModelScope.launch {
             sourceFailover.resolve(from).collect { event ->
                 when (event) {
                     is SourceResolutionEvent.Resolving -> {
@@ -320,7 +356,7 @@ class PlayerViewModel @Inject constructor(
                     is SourceResolutionEvent.Ready -> onSourceReady(event)
                     is SourceResolutionEvent.Fallback -> {
                         _notice.value = event.notice
-                        playFrom(event.index)
+                        playFrom(event.index, cancelPrevious = false)
                     }
                     is SourceResolutionEvent.Error -> sourceFailed(event.message)
                 }
@@ -495,7 +531,7 @@ class PlayerViewModel @Inject constructor(
         // playback enters the outro zone, which triggers the "next episode" prompt.
         if (manualSkipConfig.active && manualSkipConfig.outroSec > 0 && duration > 0) {
             val outroStart = duration - manualSkipConfig.outroSec * 1000L
-            if (pos_in_outro(position, outroStart, duration) && "outro" !in autoSkipped) {
+            if (outroStart > 0 && pos_in_outro(position, outroStart, duration) && "outro" !in autoSkipped) {
                 autoSkipped += "outro"
                 _player.value?.seekTo(duration - 1_000L)
                 return
@@ -503,7 +539,7 @@ class PlayerViewModel @Inject constructor(
         }
         val recap = segments.recap
         val intro = segments.intro
-        if (autoSkipIntro.value) {
+        if (manualSkipConfig.active || autoSkipIntro.value) {
             // Cada tramo se salta solo una vez: si alguien vuelve atrás a propósito, se le deja verlo.
             val auto = listOfNotNull(recap?.let { "recap" to it }, intro?.let { "intro" to it })
                 .firstOrNull { (name, seg) -> position in seg && seg.endMs - position > 2_000 && name !in autoSkipped }
@@ -566,7 +602,24 @@ class PlayerViewModel @Inject constructor(
         _nextUp.value = NextUpUiState.Showing(next.label, secondsLeft)
         if (!prefetched) {
             prefetched = true
-            holder.prefetchNext(next)
+            val ctx = playbackSnapshot?.seriesContext
+            if (ctx != null) {
+                startNextEpisodePrefetch(ctx, next)
+            } else {
+                holder.prefetchNext(next)
+            }
+        }
+    }
+
+    private fun startNextEpisodePrefetch(
+        ctx: SeriesPlaybackContext,
+        next: com.shieldstream.tv.domain.NextEpisode,
+    ) {
+        if (nextPrefetchTarget == next && nextPrefetchDeferred?.isCancelled == false) return
+        nextPrefetchDeferred?.cancel()
+        nextPrefetchTarget = next
+        nextPrefetchDeferred = viewModelScope.async {
+            nextEpisodeResolver.resolve(ctx, next)
         }
     }
 
@@ -625,9 +678,84 @@ class PlayerViewModel @Inject constructor(
         wentNext = true
         markCurrentFinished()
         scrobble(ScrobbleAction.STOP, fraction = 1f)
-        holder.requestNext(next)
         _nextUp.value = NextUpUiState.Hidden
-        _goNext.tryEmit(Unit)
+        val ctx = playbackSnapshot?.seriesContext
+        if (ctx == null) {
+            holder.requestNext(next)
+            _goNext.tryEmit(Unit)
+            return
+        }
+        switchToNextEpisodeDirect(ctx, next)
+    }
+
+    private fun switchToNextEpisodeDirect(
+        ctx: SeriesPlaybackContext,
+        next: com.shieldstream.tv.domain.NextEpisode,
+    ) {
+        playFromJob?.cancel()
+        playFromJob = null
+        segmentsLoadJob?.cancel()
+        segmentsLoadJob = null
+        saverJob?.cancel()
+        saverJob = null
+        audioSwitchJob?.cancel()
+        audioSwitchJob = null
+        playerGeneration++
+        playerCreationJob?.cancel()
+        playerCreationJob = null
+        earlyPreparationPending = null
+        _player.value?.release()
+        _player.value = null
+        _videoInfo.value = null
+        resolvedUrl = null
+        playingFileName = null
+        currentSourceId = null
+        resumePositionMs = 0L
+        trackSelectionToRestore = null
+        playbackRetries = 0
+        rememberedTracksApplied = false
+        lastScrobble = null
+        _skipPrompt.value = SkipPromptUiState.Hidden
+        subtitleCoordinator.onNewSource()
+        _title.value = "${ctx.item.title} · ${next.label}"
+        _uiState.value = PlayerUiState.Resolving(texts.get(StringsR.string.player_preparing), 1, 1)
+
+        val cachedPrefetch = nextPrefetchDeferred.takeIf { nextPrefetchTarget == next && it?.isCancelled == false }
+        nextPrefetchDeferred = null
+        nextPrefetchTarget = null
+
+        nextEpisodeJob?.cancel()
+        nextEpisodeJob = viewModelScope.launch {
+            val resolved = cachedPrefetch?.await() ?: nextEpisodeResolver.resolve(ctx, next)
+            if (resolved == null || resolved.queue.isEmpty()) {
+                _uiState.value = PlayerUiState.Error(texts.get(StringsR.string.player_no_source_selected))
+                return@launch
+            }
+            holder.rememberDirectUrl(resolved.progressKey, resolved.queue.firstOrNull()?.directUrl)
+            holder.playQueue(
+                sources = resolved.queue,
+                label = resolved.label,
+                progressKey = resolved.progressKey,
+                fromStart = false,
+                media = resolved.media,
+                next = resolved.next,
+                manualPick = false,
+                seriesContext = resolved.seriesContext,
+            )
+            playbackSnapshot = holder.playback.value
+            queueSnapshot = resolved.queue
+            progressKey = resolved.progressKey
+            nextSnapshot = resolved.next
+            _media.value = resolved.media
+            _title.value = resolved.label
+            sourceFailover = createSourceFailover(resolved.queue)
+            wentNext = false
+            prefetched = false
+            nextUpDismissed = false
+            nextUpShownAt = -1L
+            loadSegments()
+            playFrom(0)
+        }
     }
 
     fun dismissNextUp() {
@@ -911,6 +1039,13 @@ class PlayerViewModel @Inject constructor(
         sleepTimerControl.cancel()
         playerGeneration++
         playerCreationJob?.cancel()
+        playFromJob?.cancel()
+        segmentsLoadJob?.cancel()
+        segmentsJob?.cancel()
+        nextEpisodeJob?.cancel()
+        nextPrefetchDeferred?.cancel()
+        saverJob?.cancel()
+        audioSwitchJob?.cancel()
         earlyPreparationPending = null
         saveProgress()
         scrobble(ScrobbleAction.STOP)

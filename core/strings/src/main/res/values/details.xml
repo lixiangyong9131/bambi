@@ -102,4 +102,6 @@
     <string name="details_skip_off">关闭</string>
     <string name="details_skip_hint">设置后每集自动跳过片头和片尾</string>
     <string name="details_starring">主演：%1$s</string>
+    <string name="details_episodes_order_asc">↑ 正序</string>
+    <string name="details_episodes_order_desc">↓ 倒序</string>
 </resources>

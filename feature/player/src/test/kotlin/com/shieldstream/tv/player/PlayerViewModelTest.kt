@@ -8,11 +8,13 @@ import androidx.media3.common.TrackGroup
 import androidx.media3.common.TrackSelectionParameters
 import androidx.media3.common.Tracks
 import androidx.media3.exoplayer.ExoPlayer
+import com.shieldstream.tv.domain.ManualSkipRepository
 import com.shieldstream.tv.domain.NextEpisode
 import com.shieldstream.tv.domain.ProfileRepository
 import com.shieldstream.tv.domain.ResolveState
 import com.shieldstream.tv.domain.ResolveStreamUseCase
 import com.shieldstream.tv.domain.SelectedContentHolder
+import com.shieldstream.tv.domain.SeriesPlaybackContext
 import com.shieldstream.tv.domain.SettingsRepository
 import com.shieldstream.tv.domain.SkipSegmentsRepository
 import com.shieldstream.tv.domain.SubtitleRepository
@@ -22,6 +24,7 @@ import com.shieldstream.tv.media.Media3Factory
 import com.shieldstream.tv.media.PlaybackPolicyProvider
 import com.shieldstream.tv.model.CatalogItem
 import com.shieldstream.tv.model.DeviceOptimization
+import com.shieldstream.tv.model.Episode
 import com.shieldstream.tv.model.HdrType
 import com.shieldstream.tv.model.MediaType
 import com.shieldstream.tv.model.PlaybackMedia
@@ -33,6 +36,7 @@ import com.shieldstream.tv.model.SubtitleAppearance
 import com.shieldstream.tv.model.SubtitleColor
 import com.shieldstream.tv.model.SubtitlePreference
 import com.shieldstream.tv.strings.Texts
+import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
@@ -244,11 +248,122 @@ class PlayerViewModelTest {
         coVerify(exactly = 1) { fixture.settings.setSubtitleAppearance(expected) }
     }
 
+    @Test
+    fun `direct next episode switches in place and keeps show manual skip active`() = runBlocking {
+        val players = FakePlayers(Tracks.EMPTY)
+        val show = CatalogItem(
+            id = "show1",
+            imdbId = "tt100",
+            type = MediaType.TV,
+            title = "Breaking Bad",
+            overview = "",
+            posterUrl = null,
+            backdropUrl = null,
+            year = 2008,
+            rating = null,
+        )
+        val ep1 = Episode(season = 1, number = 1, title = "Pilot", overview = "", runtimeMinutes = 58, airDate = null, stillUrl = null)
+        val ep2 = Episode(season = 1, number = 2, title = "Cat's in the Bag", overview = "", runtimeMinutes = 48, airDate = null, stillUrl = null)
+        val ep3 = Episode(season = 1, number = 3, title = "...And the Bag's in the River", overview = "", runtimeMinutes = 48, airDate = null, stillUrl = null)
+        val ctx = SeriesPlaybackContext(
+            item = show,
+            originalTitle = "Breaking Bad",
+            episodes = listOf(ep1, ep2, ep3),
+        )
+        val ep2Next = NextEpisode("show1", 1, 2, "S01E02 · Cat's in the Bag")
+        val ep3Next = NextEpisode("show1", 1, 3, "S01E03 · ...And the Bag's in the River")
+        val ep2Media = PlaybackMedia(MediaType.TV, "tt100", "Breaking Bad", "Breaking Bad", 2008, season = 1, episode = 2)
+        val nextResolver = mockk<NextEpisodeResolver>()
+        coEvery { nextResolver.resolve(any(), ep2Next) } returns ResolvedNextEpisode(
+            queue = listOf(source()),
+            label = "Breaking Bad · S01E02 · Cat's in the Bag",
+            progressKey = "series:show1:1:2",
+            media = ep2Media,
+            next = ep3Next,
+            seriesContext = ctx,
+        )
+        val fixture = fixture(
+            players = players,
+            bufferSecondsFlow = flowOf(40),
+            subtitlePreference = SubtitlePreference.OFF,
+            media = PlaybackMedia(MediaType.TV, "tt100", "Breaking Bad", "Breaking Bad", 2008, season = 1, episode = 1),
+            progressKey = "series:show1:1:1",
+            label = "Breaking Bad · S01E01 · Pilot",
+            next = ep2Next,
+            seriesContext = ctx,
+            nextEpisodeResolver = nextResolver,
+        )
+        fixture.viewModel.start()
+        yield()
+
+        fixture.viewModel.setIntroPoint(90)
+        fixture.viewModel.setOutroPoint(60)
+        assertEquals(ManualSkipRepository.Config(enabled = true, introSec = 90, outroSec = 60), fixture.viewModel.skipConfig.value)
+
+        fixture.viewModel.playNextNow()
+        yield()
+
+        assertNull(fixture.holder.consumeNextRequest())
+        assertEquals("Breaking Bad · S01E02 · Cat's in the Bag", fixture.viewModel.title.value)
+        assertEquals(ManualSkipRepository.Config(enabled = true, introSec = 90, outroSec = 60), fixture.viewModel.skipConfig.value)
+
+        every { players.player(1).duration } returns 2_700_000L
+        every { players.player(1).currentPosition } returns 10_000L
+        mainDispatcher.dispatcher.scheduler.advanceTimeBy(600)
+        mainDispatcher.dispatcher.scheduler.runCurrent()
+        verify { players.player(1).seekTo(90_000L) }
+
+        every { players.player(1).currentPosition } returns 2_650_000L
+        mainDispatcher.dispatcher.scheduler.advanceTimeBy(600)
+        mainDispatcher.dispatcher.scheduler.runCurrent()
+        verify { players.player(1).seekTo(2_699_000L) }
+        fixture.viewModel.onStop()
+    }
+
+    @Test
+    fun `toggleSkip immediately enables intro auto skip without global setting`() = runBlocking {
+        val players = FakePlayers(Tracks.EMPTY)
+        val media = PlaybackMedia(MediaType.TV, "tt200", "Dark", "Dark", 2017, season = 1, episode = 1)
+        val manualSkip = FakeManualSkipRepository().apply {
+            save(
+                ManualSkipRepository.keyFor(media.title, media.type.name),
+                ManualSkipRepository.Config(enabled = false, introSec = 80, outroSec = 0),
+            )
+        }
+        val fixture = fixture(
+            players = players,
+            bufferSecondsFlow = flowOf(40),
+            subtitlePreference = SubtitlePreference.OFF,
+            media = media,
+            progressKey = "series:dark:1:1",
+            label = "Dark · S01E01",
+            manualSkip = manualSkip,
+        )
+        fixture.viewModel.start()
+        yield()
+        every { players.player(0).duration } returns 1_000_000L
+        every { players.player(0).currentPosition } returns 5_000L
+
+        fixture.viewModel.toggleSkip()
+        mainDispatcher.dispatcher.scheduler.advanceTimeBy(600)
+        mainDispatcher.dispatcher.scheduler.runCurrent()
+
+        assertTrue(fixture.viewModel.skipConfig.value.enabled)
+        verify { players.player(0).seekTo(80_000L) }
+        fixture.viewModel.onStop()
+    }
+
     private fun fixture(
         players: FakePlayers,
         bufferSecondsFlow: Flow<Int>,
         subtitlePreference: SubtitlePreference,
         next: NextEpisode? = null,
+        media: PlaybackMedia = PlaybackMedia(MediaType.MOVIE, "tt1", "Movie", "Movie", 2020),
+        progressKey: String = "movie:1",
+        label: String = "Movie",
+        seriesContext: SeriesPlaybackContext? = null,
+        manualSkip: ManualSkipRepository = FakeManualSkipRepository(),
+        nextEpisodeResolver: NextEpisodeResolver = mockk(relaxed = true),
     ): Fixture {
         val policy = PlaybackPolicy.automatic(512L * 1024 * 1024)
         val media3Factory = mockk<Media3Factory>()
@@ -283,27 +398,31 @@ class PlayerViewModelTest {
             every { active } returns MutableStateFlow(profile)
         }
         val item = CatalogItem(
-            id = "1",
-            imdbId = "tt1",
-            type = MediaType.MOVIE,
-            title = "Movie",
+            id = seriesContext?.item?.id ?: "1",
+            imdbId = media.imdbId,
+            type = media.type,
+            title = media.title,
             overview = "",
             posterUrl = null,
             backdropUrl = null,
-            year = 2020,
+            year = media.year,
             rating = null,
         )
         val holder = SelectedContentHolder().apply {
             selectItem(item)
             playQueue(
                 sources = listOf(source()),
-                label = "Movie",
-                progressKey = "movie:1",
-                media = PlaybackMedia(MediaType.MOVIE, "tt1", "Movie", "Movie", 2020),
+                label = label,
+                progressKey = progressKey,
+                media = media,
                 next = next,
+                seriesContext = seriesContext,
             )
         }
         val watchProgress = mockk<WatchProgressRepository>(relaxed = true)
+        val skipSegments = mockk<SkipSegmentsRepository>(relaxed = true) {
+            coEvery { episode(any(), any(), any()) } returns com.shieldstream.tv.domain.SkipSegments.NONE
+        }
         return Fixture(
             settings = settings,
             watchProgress = watchProgress,
@@ -319,11 +438,26 @@ class PlayerViewModelTest {
                 watchProgress = watchProgress,
                 subtitles = mockk<SubtitleRepository>(relaxed = true),
                 trakt = mockk<TraktRepository>(relaxed = true),
-                skipSegmentsRepository = mockk<SkipSegmentsRepository>(relaxed = true),
+                skipSegmentsRepository = skipSegments,
+                manualSkip = manualSkip,
                 trackMemory = mockk(relaxed = true),
+                nextEpisodeResolver = nextEpisodeResolver,
                 texts = mockk<Texts>(relaxed = true),
             ),
         )
+    }
+
+    private class FakeManualSkipRepository : ManualSkipRepository {
+        private val configs = mutableMapOf<String, ManualSkipRepository.Config>()
+        private val _changes = MutableStateFlow(0)
+        override val changes = _changes
+
+        override fun get(key: String): ManualSkipRepository.Config = configs[key] ?: ManualSkipRepository.Config()
+
+        override fun save(key: String, config: ManualSkipRepository.Config) {
+            configs[key] = config
+            _changes.value += 1
+        }
     }
 
     private fun source() = StreamSource(

@@ -1,13 +1,22 @@
 package com.shieldstream.tv.domain
 
 import com.shieldstream.tv.model.CatalogItem
+import com.shieldstream.tv.model.Episode
 import com.shieldstream.tv.model.PlaybackMedia
+import com.shieldstream.tv.model.Season
 import com.shieldstream.tv.model.StreamSource
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 data class NextEpisode(val showId: String, val season: Int, val episode: Int, val label: String)
+
+data class SeriesPlaybackContext(
+    val item: CatalogItem,
+    val originalTitle: String? = null,
+    val seasons: List<Season> = emptyList(),
+    val episodes: List<Episode> = emptyList(),
+)
 
 data class EpisodeTarget(val season: Int, val number: Int)
 
@@ -28,6 +37,7 @@ data class PlaybackRequest(
     val requestedAtNs: Long = System.nanoTime(),
     /** Fuente elegida a mano sin cambio automático: si falla, el reproductor no prueba otra y vuelve a la lista. */
     val manualPick: Boolean = false,
+    val seriesContext: SeriesPlaybackContext? = null,
 )
 
 class SelectedContentHolder {
@@ -84,7 +94,18 @@ class SelectedContentHolder {
         next: NextEpisode? = null,
         requestedAtNs: Long = System.nanoTime(),
         manualPick: Boolean = false,
+        seriesContext: SeriesPlaybackContext? = null,
     ) {
-        _playback.value = PlaybackRequest(sources, label, progressKey, fromStart, media, next, requestedAtNs, manualPick)
+        _playback.value = PlaybackRequest(
+            sources = sources,
+            label = label,
+            progressKey = progressKey,
+            fromStart = fromStart,
+            media = media,
+            next = next,
+            requestedAtNs = requestedAtNs,
+            manualPick = manualPick,
+            seriesContext = seriesContext,
+        )
     }
 }

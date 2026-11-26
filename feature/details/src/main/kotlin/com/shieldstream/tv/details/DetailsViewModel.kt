@@ -933,6 +933,14 @@ class DetailsViewModel @Inject constructor(
         // Modified build: remember the first playable direct URL for instant "continue watching".
         holder.rememberDirectUrl(key, queue.firstOrNull()?.directUrl)
         trace("player_handoff", "queue=${queue.size}")
+        val seriesContext = if (c.isSeries && episode != null) {
+            com.shieldstream.tv.domain.SeriesPlaybackContext(
+                item = item,
+                originalTitle = c.details.originalTitle,
+                seasons = c.details.seasons,
+                episodes = (c.episodes as? EpisodesState.Ready)?.episodes.orEmpty(),
+            )
+        } else null
         holder.playQueue(
             queue,
             label,
@@ -942,6 +950,7 @@ class DetailsViewModel @Inject constructor(
             next = episode?.let { nextEpisodeAfter(c, it) },
             requestedAtNs = requestedAtNs,
             manualPick = manualPick,
+            seriesContext = seriesContext,
         )
         _events.tryEmit(DetailsEvent.OpenPlayer)
     }

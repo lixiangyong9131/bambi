@@ -30,8 +30,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,6 +77,9 @@ internal fun seasonAllWatched(state: DetailsUiState.Content): Boolean {
     return episodes.isNotEmpty() && episodes.all { state.progressOf(it)?.isWatched == true }
 }
 
+internal fun orderEpisodes(episodes: List<Episode>, descending: Boolean): List<Episode> =
+    if (descending) episodes.asReversed() else episodes
+
 /** What the long-press modal's toggle will do: unwatched episodes get marked, watched ones unmarked. */
 internal fun episodeMenuTogglesToWatched(state: DetailsUiState.Content, episode: Episode): Boolean =
     state.progressOf(episode)?.isWatched != true
@@ -109,6 +114,10 @@ internal fun SeasonsAndEpisodes(
     val seasons = state.details.seasons
     val loadedEpisodes = (state.episodes as? EpisodesState.Ready)?.episodes.orEmpty()
     val watched = loadedEpisodes.count { state.progressOf(it)?.isWatched == true }
+    var descending by rememberSaveable(state.details.item.id) { mutableStateOf(false) }
+    val orderLabel = localizedStringResource(
+        if (descending) StringsR.string.details_episodes_order_desc else StringsR.string.details_episodes_order_asc,
+    )
     Column {
         if (seasons.size > 1) {
             Row(
@@ -150,16 +159,38 @@ internal fun SeasonsAndEpisodes(
                         style = MaterialTheme.typography.bodyMedium,
                     )
                 }
+                if (loadedEpisodes.size > 1) {
+                    Spacer(Modifier.width(14.dp))
+                    SeasonChip(
+                        label = orderLabel,
+                        selected = descending,
+                        enabled = interactive,
+                        onClick = { descending = !descending },
+                    )
+                }
             }
         }
         if (seasons.size > 1 && loadedEpisodes.isNotEmpty()) {
             // Con varias temporadas el recuento va aquí: al lado de las pestañas lo tapaban al desplazarlas.
-            Text(
-                text = localizedStringResource(StringsR.string.details_watched_count_short, watched, loadedEpisodes.size),
-                color = WatchedCountColor,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(start = 56.dp, bottom = 2.dp),
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(start = 56.dp, bottom = 4.dp),
+            ) {
+                Text(
+                    text = localizedStringResource(StringsR.string.details_watched_count_short, watched, loadedEpisodes.size),
+                    color = WatchedCountColor,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                if (loadedEpisodes.size > 1) {
+                    Spacer(Modifier.width(14.dp))
+                    SeasonChip(
+                        label = orderLabel,
+                        selected = descending,
+                        enabled = interactive,
+                        onClick = { descending = !descending },
+                    )
+                }
+            }
         }
         Text(
             text = if (loadedEpisodes.isNotEmpty()) localizedStringResource(StringsR.string.details_hold_ok_for_episode_options) else "",
@@ -196,6 +227,9 @@ internal fun SeasonsAndEpisodes(
                     modifier = Modifier.padding(start = 56.dp, top = 12.dp),
                 )
             } else ProvidePivotScroll(leading = 56.dp) {
+                val displayedEpisodes = remember(eps.episodes, descending) {
+                    orderEpisodes(eps.episodes, descending)
+                }
                 // Modified build: FlowRow folds episodes left-to-right (1 2 3 4 5 ...) with no
                 // fixed height / infinite-constraint issues from a nested LazyVerticalGrid.
                 FlowRow(
@@ -203,17 +237,19 @@ internal fun SeasonsAndEpisodes(
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                     modifier = Modifier.padding(horizontal = 56.dp, vertical = 12.dp),
                 ) {
-                    eps.episodes.forEach { ep ->
-                        EpisodeCard(
-                            episode = ep,
-                            progress = state.progressOf(ep),
-                            selected = ep == state.selectedEpisode,
-                            loading = ep == state.selectedEpisode && state.pendingPlay,
-                            enabled = interactive,
-                            onClick = { onEpisode(ep) },
-                            onLongClick = { onEpisodeLongPress(ep) },
-                            onFocused = { onEpisodeFocused(ep) },
-                        )
+                    displayedEpisodes.forEach { ep ->
+                        key(ep.season, ep.number) {
+                            EpisodeCard(
+                                episode = ep,
+                                progress = state.progressOf(ep),
+                                selected = ep == state.selectedEpisode,
+                                loading = ep == state.selectedEpisode && state.pendingPlay,
+                                enabled = interactive,
+                                onClick = { onEpisode(ep) },
+                                onLongClick = { onEpisodeLongPress(ep) },
+                                onFocused = { onEpisodeFocused(ep) },
+                            )
+                        }
                     }
                 }
             }
