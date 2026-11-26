@@ -40,13 +40,18 @@ object VideoFormatInspector {
         )
     }
 
-    private fun resolutionLabel(width: Int, height: Int): String? = when {
-        width >= 3800 || height >= 2000 -> "4K"
-        height >= 1440 -> "1440p"
-        height >= 1080 -> "1080p"
-        height >= 720 -> "720p"
-        height > 0 -> "${height}p"
-        else -> null
+    private fun resolutionLabel(width: Int, height: Int): String? {
+        if (width <= 0 && height <= 0) return null
+        val longSide = maxOf(width, height)
+        val shortSide = minOf(width, height)
+        return when {
+            longSide >= 3800 || shortSide >= 2000 -> "4K"
+            longSide >= 2500 || shortSide >= 1440 -> "1440p"
+            longSide >= 1900 || shortSide >= 1080 -> "1080p"
+            longSide >= 1260 || shortSide >= 720 -> "720p"
+            height > 0 -> "${height}p"
+            else -> null
+        }
     }
 
     private fun isSoftwareDecoder(name: String): Boolean {

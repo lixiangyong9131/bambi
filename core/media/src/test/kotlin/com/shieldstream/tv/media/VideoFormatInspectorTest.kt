@@ -99,4 +99,21 @@ class VideoFormatInspectorTest {
         assertEquals(HdrType.HLG, info.hdrType)
         assertEquals(null, info.hardwareDecode)
     }
+
+    @Test
+    fun `widescreen and portrait dimensions map accurately without downranking`() {
+        val wide1080 = VideoFormatInspector.inspect(
+            Format.Builder().setWidth(1920).setHeight(960).build(),
+        )
+        val wide720 = VideoFormatInspector.inspect(
+            Format.Builder().setWidth(1280).setHeight(534).build(),
+        )
+        val portrait720 = VideoFormatInspector.inspect(
+            Format.Builder().setWidth(720).setHeight(1280).build(),
+        )
+
+        assertEquals("1080p", wide1080.resolutionLabel)
+        assertEquals("720p", wide720.resolutionLabel)
+        assertEquals("720p", portrait720.resolutionLabel)
+    }
 }
