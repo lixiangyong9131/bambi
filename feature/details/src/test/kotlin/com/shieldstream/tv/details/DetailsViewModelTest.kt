@@ -410,6 +410,58 @@ class DetailsViewModelTest {
         )
     }
 
+    @Test
+    fun `empty episodes settle sources to terminal empty Ready state instead of Idle`() = runTest {
+        val item = CatalogItem(
+            id = "42",
+            imdbId = null,
+            type = MediaType.TV,
+            title = "Empty Show",
+            overview = "",
+            posterUrl = null,
+            backdropUrl = null,
+            year = 2026,
+            rating = null,
+        )
+        val catalog = mockk<CatalogRepository>()
+        coEvery { catalog.getDetails(item) } returns CatalogDetails(
+            item = item,
+            seasons = listOf(Season(1, "Season 1", 0)),
+        )
+        coEvery { catalog.getEpisodes(item, 1) } returns emptyList()
+        val viewModel = viewModel(catalog, SelectedContentHolder().apply { selectItem(item) })
+        testScheduler.advanceUntilIdle()
+
+        val state = viewModel.uiState.value as DetailsUiState.Content
+        assertEquals(SourcesState.Ready(emptyList()), state.sources)
+        assertTrue(state.probingDone)
+    }
+
+    @Test
+    fun `empty stream flow settles sources to terminal empty Ready state`() = runTest {
+        val item = CatalogItem(
+            id = "43",
+            imdbId = null,
+            type = MediaType.MOVIE,
+            title = "No Source Movie",
+            overview = "",
+            posterUrl = null,
+            backdropUrl = null,
+            year = 2026,
+            rating = null,
+        )
+        val catalog = mockk<CatalogRepository>()
+        coEvery { catalog.getDetails(item) } returns CatalogDetails(item)
+        every { catalog.getStreams(item, null) } returns kotlinx.coroutines.flow.emptyFlow()
+        val viewModel = viewModel(catalog, SelectedContentHolder().apply { selectItem(item) })
+        testScheduler.advanceUntilIdle()
+
+        val state = viewModel.uiState.value as DetailsUiState.Content
+        assertEquals(SourcesState.Ready(emptyList()), state.sources)
+        assertTrue(state.probingDone)
+        assertEquals(false, state.pendingPlay)
+    }
+
     private fun viewModel(
         catalog: CatalogRepository,
         holder: SelectedContentHolder,

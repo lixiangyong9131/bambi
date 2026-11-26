@@ -76,9 +76,11 @@ fun FeatheredBackdropStage(
     heroWidthFraction: Float = 0.62f,
     leftScrimAlpha: Float = 0.74f,
     topPadding: Dp = 0.dp,
-    verticalBias: Float = 0.12f,
+    endPadding: Dp = 0.dp,
+    verticalBias: Float = -0.05f,
     fadeBottomToBlack: Boolean = true,
 ) {
+    val context = LocalContext.current
     Box(
         modifier
             .fillMaxWidth()
@@ -91,33 +93,51 @@ fun FeatheredBackdropStage(
             )
         }
         if (heroUrl != null) {
+            val heroRequest = remember(heroUrl, context) {
+                ImageRequest.Builder(context)
+                    .data(heroUrl)
+                    .size(960, 720)
+                    .crossfade(false)
+                    .build()
+            }
             AsyncImage(
-                model = heroUrl,
+                model = heroRequest,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 alignment = BiasAlignment(0f, verticalBias),
                 modifier = Modifier
                     .align(Alignment.TopEnd)
-                    .padding(top = topPadding)
+                    .padding(top = topPadding, end = endPadding)
                     .fillMaxWidth(heroWidthFraction)
                     .fillMaxHeight()
                     .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
                     .drawWithContent {
                         drawContent()
                         drawRect(
-                            brush = Brush.horizontalGradient(
-                                0f to Color.Transparent,
-                                0.30f to Color.White.copy(alpha = 0.85f),
-                                0.48f to Color.White,
-                            ),
+                            brush = if (endPadding > 0.dp) {
+                                Brush.horizontalGradient(
+                                    0f to Color.Transparent,
+                                    0.18f to Color.White.copy(alpha = 0.85f),
+                                    0.32f to Color.White,
+                                    0.84f to Color.White,
+                                    0.95f to Color.White.copy(alpha = 0.55f),
+                                    1f to Color.Transparent,
+                                )
+                            } else {
+                                Brush.horizontalGradient(
+                                    0f to Color.Transparent,
+                                    0.18f to Color.White.copy(alpha = 0.85f),
+                                    0.34f to Color.White,
+                                )
+                            },
                             blendMode = BlendMode.DstIn,
                         )
                         drawRect(
                             brush = Brush.verticalGradient(
                                 0f to if (topPadding > 0.dp) Color.Transparent else Color.White,
-                                0.08f to Color.White,
-                                0.56f to Color.White,
-                                0.96f to Color.Transparent,
+                                0.06f to Color.White,
+                                0.70f to Color.White,
+                                0.97f to Color.Transparent,
                                 1f to Color.Transparent,
                             ),
                             blendMode = BlendMode.DstIn,

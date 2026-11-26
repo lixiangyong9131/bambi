@@ -13,25 +13,32 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Dns
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import okhttp3.dnsoverhttps.DnsOverHttps
+import java.io.IOException
 import java.net.InetAddress
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.coroutines.resume
 
 /**
  * Direct m3u8 source backed by a standard CMS V10 collection API (e.g. ffzy/taopian).
@@ -123,6 +130,7 @@ class CmsStreams @Inject constructor(
             .connectTimeout(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
             .readTimeout(3500, java.util.concurrent.TimeUnit.MILLISECONDS)
             .writeTimeout(3500, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .callTimeout(4000, java.util.concurrent.TimeUnit.MILLISECONDS)
             .build()
     }
 
@@ -362,32 +370,34 @@ class CmsStreams @Inject constructor(
         val lock = Mutex()
         val bySite = arrayOfNulls<List<StreamSource>>(SOURCES.size)
         withContext(Dispatchers.IO) {
-            SOURCES.mapIndexed { idx, (label, base) ->
-                launch {
-                    val probed = kotlinx.coroutines.withTimeoutOrNull(4_500L) {
-                        runCatching { searchAndBuild(base, rawTitle, episode, label) }.getOrDefault(emptyList())
-                    }
-                    if (probed == null) markSiteUnavailable(base)
-                    val sources = probed.orEmpty()
-                    android.util.Log.i("CmsStream", "$label -> ${sources.size} sources")
-                    if (sources.isNotEmpty()) {
-                        val snapshot = lock.withLock {
-                            bySite[idx] = sources
-                            val all = mutableListOf<StreamSource>()
-                            val seenUrls = HashSet<String>()
-                            for (siteList in bySite) {
-                                if (siteList == null) continue
-                                for (src in siteList) {
-                                    val key = src.directUrl.orEmpty()
-                                    if (key.isNotBlank() && seenUrls.add(key)) all += src
-                                }
-                            }
-                            all
+            withTimeoutOrNull(8_000L) {
+                SOURCES.mapIndexed { idx, (label, base) ->
+                    launch {
+                        val probed = withTimeoutOrNull(4_500L) {
+                            runCatching { searchAndBuild(base, rawTitle, episode, label) }.getOrDefault(emptyList())
                         }
-                        if (snapshot.isNotEmpty()) send(snapshot)
+                        if (probed == null) markSiteUnavailable(base)
+                        val sources = probed.orEmpty()
+                        android.util.Log.i("CmsStream", "$label -> ${sources.size} sources")
+                        if (sources.isNotEmpty()) {
+                            val snapshot = lock.withLock {
+                                bySite[idx] = sources
+                                val all = mutableListOf<StreamSource>()
+                                val seenUrls = HashSet<String>()
+                                for (siteList in bySite) {
+                                    if (siteList == null) continue
+                                    for (src in siteList) {
+                                        val key = src.directUrl.orEmpty()
+                                        if (key.isNotBlank() && seenUrls.add(key)) all += src
+                                    }
+                                }
+                                all
+                            }
+                            if (snapshot.isNotEmpty()) send(snapshot)
+                        }
                     }
-                }
-            }.joinAll()
+                }.joinAll()
+            }
         }
     }
 
@@ -473,26 +483,37 @@ class CmsStreams @Inject constructor(
         return emptyList()
     }
 
-    private fun getForSite(base: String, url: String): SiteResponse {
+    private suspend fun getForSite(base: String, url: String): SiteResponse {
         if (isSiteCoolingDown(base)) return SiteResponse.Unavailable
-        return try {
+        return suspendCancellableCoroutine { cont ->
             val req = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
-            cmsClient.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    android.util.Log.w("CmsStream", "GET $url -> HTTP ${resp.code}")
-                    if (resp.code >= 500 || resp.code == 403 || resp.code == 404) {
+            val call = cmsClient.newCall(req)
+            cont.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (!call.isCanceled()) {
+                        android.util.Log.w("CmsStream", "GET $url failed: ${e.javaClass.simpleName}: ${e.message}")
                         markSiteUnavailable(base)
                     }
-                    SiteResponse.Unavailable
-                } else {
-                    siteCooldownUntil.remove(base)
-                    SiteResponse.Ok(resp.body?.string().orEmpty())
+                    if (cont.isActive) cont.resume(SiteResponse.Unavailable)
                 }
-            }
-        } catch (e: Throwable) {
-            android.util.Log.w("CmsStream", "GET $url failed: ${e.javaClass.simpleName}: ${e.message}")
-            markSiteUnavailable(base)
-            SiteResponse.Unavailable
+
+                override fun onResponse(call: Call, response: Response) {
+                    response.use { resp ->
+                        val result = if (!resp.isSuccessful) {
+                            android.util.Log.w("CmsStream", "GET $url -> HTTP ${resp.code}")
+                            if (resp.code >= 500 || resp.code == 403 || resp.code == 404) {
+                                markSiteUnavailable(base)
+                            }
+                            SiteResponse.Unavailable
+                        } else {
+                            siteCooldownUntil.remove(base)
+                            SiteResponse.Ok(resp.body?.string().orEmpty())
+                        }
+                        if (cont.isActive) cont.resume(result)
+                    }
+                }
+            })
         }
     }
 

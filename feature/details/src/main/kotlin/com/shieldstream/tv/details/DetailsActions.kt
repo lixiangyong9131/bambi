@@ -136,18 +136,20 @@ internal fun DetailsActions(
                 MoreRow(label, if (all) AppIcons.Check else LineIcons.Eye, onToggleSeasonWatched, highlighted = all, modifier = first())
             }
             MoreRow(
-                text = if (state.inMyList) localizedStringResource(StringsR.string.details_in_my_list) else localizedStringResource(StringsR.string.details_my_list),
-                icon = if (state.inMyList) AppIcons.Check else AppIcons.Add,
-                highlighted = state.inMyList,
-                onClick = onToggleMyList,
-                modifier = first(),
-            )
-            MoreRow(
                 text = if (state.following) localizedStringResource(StringsR.string.details_following) else localizedStringResource(StringsR.string.details_follow),
                 icon = if (state.following) AppIcons.Check else LineIcons.Bookmark,
                 highlighted = state.following,
                 onClick = onToggleFollowing,
+                modifier = first(),
             )
+            onOpenSkipSettings?.let { openSkip ->
+                MoreRow(
+                    text = localizedStringResource(StringsR.string.details_skip_settings),
+                    icon = AppIcons.FastForward,
+                    detail = skipSummary,
+                    onClick = openSkip,
+                )
+            }
             MoreRow(
                 text = localizedStringResource(StringsR.string.downloads_download_several),
                 icon = LineIcons.Download,
@@ -159,14 +161,6 @@ internal fun DetailsActions(
             if (state.details.seasons.isNotEmpty()) {
                 MoreRow(localizedStringResource(StringsR.string.details_random_episode), AppIcons.Bolt, onRandomEpisode)
             }
-            onOpenSkipSettings?.let { openSkip ->
-                MoreRow(
-                    text = localizedStringResource(StringsR.string.details_skip_settings),
-                    icon = AppIcons.FastForward,
-                    detail = skipSummary,
-                    onClick = openSkip,
-                )
-            }
         } else {
             val watched = state.mainProgress?.isWatched == true
             MoreRow(
@@ -176,15 +170,17 @@ internal fun DetailsActions(
                 onClick = onToggleMovieWatched,
                 modifier = first(),
             )
-            MoreRow(
-                text = if (state.inMyList) localizedStringResource(StringsR.string.details_in_my_list) else localizedStringResource(StringsR.string.details_my_list),
-                icon = if (state.inMyList) AppIcons.Check else AppIcons.Add,
-                highlighted = state.inMyList,
-                onClick = onToggleMyList,
-            )
             DownloadMoreRow(download, onOpenOptions = { downloadMenu = true }, onDownloadAction = onDownloadAction)
             val movie = TraktRatingTarget.Movie(item.id)
             MoreRow(ratingTargetLabel(state, movie) + ratingSuffix(ratings?.overallRating), LineIcons.Star, { onRate(movie) })
+            onOpenSkipSettings?.let { openSkip ->
+                MoreRow(
+                    text = localizedStringResource(StringsR.string.details_skip_settings),
+                    icon = AppIcons.FastForward,
+                    detail = skipSummary,
+                    onClick = openSkip,
+                )
+            }
         }
     }
 }

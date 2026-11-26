@@ -94,7 +94,8 @@ class DoubanCatalogApi @Inject constructor(
         if (rexxar.isNotEmpty()) {
             TmdbPaginated(page = page, results = rexxar.map { it.toMovieDto() })
         } else {
-            moviesByTag(genreToTag(params["with_genres"].orEmpty()), page)
+            val fallbackTag = explicitTags?.takeIf { it.isNotBlank() } ?: genreToTag(params["with_genres"].orEmpty())
+            moviesByTag(fallbackTag, page)
         }
     }
 
@@ -126,7 +127,7 @@ class DoubanCatalogApi @Inject constructor(
         if (rexxar.isNotEmpty()) {
             TmdbPaginated(page = page, results = rexxar.map { it.toTvDto() })
         } else {
-            val fallbackTag = when (country.uppercase()) {
+            val fallbackTag = explicitTags?.takeIf { it.isNotBlank() } ?: when (country.uppercase()) {
                 "CN" -> "国产剧"
                 "US" -> "美剧"
                 "KR" -> "韩剧"

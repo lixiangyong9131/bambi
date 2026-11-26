@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -34,6 +35,7 @@ fun TvButton(
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
     enabled: Boolean = true,
+    loading: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
     val duration = if (LocalLightweightUi.current) 0 else 150
@@ -53,7 +55,14 @@ fun TvButton(
             .padding(horizontal = 22.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        if (icon != null) {
+        if (loading) {
+            CircularProgressIndicator(
+                color = content,
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(10.dp))
+        } else if (icon != null) {
             Icon(icon, contentDescription = null, tint = content, modifier = Modifier.size(22.dp))
             Spacer(Modifier.width(10.dp))
         }

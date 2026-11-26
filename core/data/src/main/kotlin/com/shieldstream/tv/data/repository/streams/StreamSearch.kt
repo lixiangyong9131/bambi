@@ -69,12 +69,19 @@ internal class StreamSearch(
         val providers = SourceProvider.entries.filter {
             it in enabled && (it != SourceProvider.AIOSTREAMS || aioConfigured)
         }
-        val imdbId = item.imdbId ?: resolveImdb(item) ?: error(texts.get(StringsR.string.data_imdb_id_missing, item.title))
+        val imdbId = item.imdbId ?: resolveImdb(item)
+        if (imdbId == null) {
+            if (cms != null) {
+                send(StreamResults(emptyList()))
+                return@channelFlow
+            }
+            error(texts.get(StringsR.string.data_imdb_id_missing, item.title))
+        }
         val (type, streamId) = if (item.type == MediaType.TV) {
             val ep = episode ?: error(texts.get(StringsR.string.data_pick_an_episode))
             "series" to "$imdbId:${ep.season}:${ep.number}"
         } else {
-            "movie" to imdbId.orEmpty()
+            "movie" to imdbId
         }
         val done = LinkedHashMap<SourceProvider, Result<List<StreamSource>>>()
         val lock = Mutex()
@@ -158,6 +165,6 @@ internal class StreamSearch(
     }
 
     private companion object {
-        const val PROVIDER_TIMEOUT_MS = 25_000L
+        const val PROVIDER_TIMEOUT_MS = 10_000L
     }
 }

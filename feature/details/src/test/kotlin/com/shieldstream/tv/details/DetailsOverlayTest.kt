@@ -91,6 +91,16 @@ class DetailsOverlayTest {
         assertFalse(episodeMenuTogglesToWatched(content, second))
     }
 
+    @Test
+    fun `orderEpisodes sorts ascending and descending cleanly`() {
+        val ep3 = Episode(1, 3, "Three", "", null, 45)
+        val ep1 = Episode(1, 1, "One", "", null, 45)
+        val ep2 = Episode(1, 2, "Two", "", null, 45)
+
+        assertEquals(listOf(ep1, ep2, ep3), orderEpisodes(listOf(ep3, ep1, ep2), descending = false))
+        assertEquals(listOf(ep3, ep2, ep1), orderEpisodes(listOf(ep3, ep1, ep2), descending = true))
+    }
+
     private fun seriesContent(
         selectedEpisode: Episode?,
         watchedEpisodes: Set<Pair<Int, Int>> = emptySet(),

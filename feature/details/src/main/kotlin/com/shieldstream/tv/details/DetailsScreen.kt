@@ -234,11 +234,12 @@ private fun DetailsContent(
         FeatheredBackdropStage(
             heroUrl = artworkUrl,
             ambientUrl = null,
-            stageHeight = 500.dp,
-            heroWidthFraction = 0.56f,
+            stageHeight = 520.dp,
+            heroWidthFraction = 0.43f,
             leftScrimAlpha = 0f,
-            topPadding = 22.dp,
-            verticalBias = 0.12f,
+            topPadding = 16.dp,
+            endPadding = 72.dp,
+            verticalBias = -0.05f,
             fadeBottomToBlack = false,
             modifier = Modifier.align(Alignment.TopCenter),
         )
@@ -246,8 +247,8 @@ private fun DetailsContent(
             Modifier.fillMaxSize().background(
                 Brush.horizontalGradient(
                     0f to Color.Black.copy(alpha = 0.78f),
-                    0.42f to Color.Black.copy(alpha = 0.36f),
-                    0.75f to Color.Transparent,
+                    0.32f to Color.Black.copy(alpha = 0.32f),
+                    0.56f to Color.Transparent,
                 ),
             ),
         )
@@ -281,15 +282,13 @@ private fun DetailsContent(
                 InfoBlock(
                     details = state.details,
                     state = state,
+                    skipConfig = skipConfig,
                     interactive = !panelOpen && !actionsOpen && episodeMenu == null,
                     playRequester = playRequester,
                     onPlay = { viewModel.play() },
                     onPlaySource = { source -> viewModel.playSource(source) },
                     onPlayFromStart = { viewModel.play(fromStart = true) },
-                    onOpenSources = {
-                        viewModel.ensureSources()
-                        panelOpen = true
-                    },
+                    onToggleMyList = { viewModel.toggleMyList() },
                     onOpenActions = { actionsOpen = true },
                     onTrailer = state.details.trailerKey?.let { first -> { onOpenTrailer(state.details.trailerKeys.ifEmpty { listOf(first) }) } },
                     // Al volver a los botones desde abajo, la página sube del todo: si no, la sinopsis quedaba cortada.
@@ -365,116 +364,117 @@ private fun DetailsContent(
             )
         }
 
-        AnimatedVisibility(
-            visible = detailsSourcesVisible(panelOpen, actionsOpen),
-            enter = fadeIn() + slideInHorizontally { it / 3 },
-            exit = fadeOut() + slideOutHorizontally { it / 3 },
-            modifier = Modifier.zIndex(2f),
-        ) {
-            SourcesPanel(
-                state = state,
-                onPick = { source ->
-                    panelOpen = false
-                    viewModel.playSource(source)
-                },
-                isBlocked = viewModel::isBlocked,
-                onToggleSpanishOnly = viewModel::toggleSpanishOnly,
-                onMarkBroken = viewModel::markSourceBroken,
-                autoPick = remember(state.sources, state.selectedEpisode, state.sourceExclusions, state.brokenSources, state.spanishOnly) {
-                    viewModel.autoPlaySource()
-                },
-            )
-        }
-        if (actionsOpen) {
-            val target = ratingTarget
-            when {
-                target != null -> RatingPickerDialog(
+        Box(Modifier.fillMaxSize().zIndex(10f)) {
+            AnimatedVisibility(
+                visible = detailsSourcesVisible(panelOpen, actionsOpen),
+                enter = fadeIn() + slideInHorizontally { it / 3 },
+                exit = fadeOut() + slideOutHorizontally { it / 3 },
+            ) {
+                SourcesPanel(
                     state = state,
-                    target = target,
-                    ratings = state.ratings,
-                    onSave = { viewModel.setRating(target, it) },
-                    onRetry = viewModel::loadRatings,
-                    onDismiss = { ratingTarget = null },
-                )
-                else -> DetailsActions(
-                    state = menuState,
-                    onToggleSeasonWatched = {
-                        viewModel.toggleSeasonWatched()
-                        actionsOpen = false
+                    onPick = { source ->
+                        panelOpen = false
+                        viewModel.playSource(source)
                     },
-                    onToggleMovieWatched = {
-                        viewModel.toggleMovieWatched()
-                        actionsOpen = false
+                    isBlocked = viewModel::isBlocked,
+                    onToggleSpanishOnly = viewModel::toggleSpanishOnly,
+                    onMarkBroken = viewModel::markSourceBroken,
+                    autoPick = remember(state.sources, state.selectedEpisode, state.sourceExclusions, state.brokenSources, state.spanishOnly) {
+                        viewModel.autoPlaySource()
                     },
-                    onToggleEpisodeWatched = { episode ->
-                        viewModel.toggleEpisodeWatched(episode)
-                        actionsOpen = false
-                    },
-                    onToggleMyList = {
-                        viewModel.toggleMyList()
-                        actionsOpen = false
-                    },
-                    onToggleFollowing = {
-                        viewModel.toggleFollowing()
-                        actionsOpen = false
-                    },
-                    onRate = {
-                        ratingTarget = it
-                        viewModel.loadRatings()
-                    },
-                    onRandomEpisode = {
-                        actionsOpen = false
-                        viewModel.playRandomEpisode()
-                    },
-                    skipSummary = if (skipConfig.enabled && (skipConfig.introSec > 0 || skipConfig.outroSec > 0)) {
-                        "${skipConfig.introSec}s / ${skipConfig.outroSec}s"
-                    } else {
-                        localizedStringResource(StringsR.string.details_skip_off)
-                    },
-                    onOpenSkipSettings = {
-                        actionsOpen = false
-                        skipDialogOpen = true
-                    },
-                    downloads = downloadList,
-                    onDownload = { episodes, quality ->
-                        actionsOpen = false
-                        viewModel.download(episodes, quality)
-                    },
-                    onDownloadAction = { d ->
-                        actionsOpen = false
-                        when {
-                            d.isDone -> viewModel.deleteDownload(d.id)
-                            d.isActive -> viewModel.pauseDownload(d.id)
-                            else -> viewModel.resumeDownload(d.id)
-                        }
-                    },
-                    onDismiss = { actionsOpen = false },
                 )
             }
-        }
+            if (actionsOpen) {
+                val target = ratingTarget
+                when {
+                    target != null -> RatingPickerDialog(
+                        state = state,
+                        target = target,
+                        ratings = state.ratings,
+                        onSave = { viewModel.setRating(target, it) },
+                        onRetry = viewModel::loadRatings,
+                        onDismiss = { ratingTarget = null },
+                    )
+                    else -> DetailsActions(
+                        state = menuState,
+                        onToggleSeasonWatched = {
+                            viewModel.toggleSeasonWatched()
+                            actionsOpen = false
+                        },
+                        onToggleMovieWatched = {
+                            viewModel.toggleMovieWatched()
+                            actionsOpen = false
+                        },
+                        onToggleEpisodeWatched = { episode ->
+                            viewModel.toggleEpisodeWatched(episode)
+                            actionsOpen = false
+                        },
+                        onToggleMyList = {
+                            viewModel.toggleMyList()
+                            actionsOpen = false
+                        },
+                        onToggleFollowing = {
+                            viewModel.toggleFollowing()
+                            actionsOpen = false
+                        },
+                        onRate = {
+                            ratingTarget = it
+                            viewModel.loadRatings()
+                        },
+                        onRandomEpisode = {
+                            actionsOpen = false
+                            viewModel.playRandomEpisode()
+                        },
+                        skipSummary = if (skipConfig.enabled && (skipConfig.introSec > 0 || skipConfig.outroSec > 0)) {
+                            "${skipConfig.introSec}s / ${skipConfig.outroSec}s"
+                        } else {
+                            localizedStringResource(StringsR.string.details_skip_off)
+                        },
+                        onOpenSkipSettings = {
+                            actionsOpen = false
+                            skipDialogOpen = true
+                        },
+                        downloads = downloadList,
+                        onDownload = { episodes, quality ->
+                            actionsOpen = false
+                            viewModel.download(episodes, quality)
+                        },
+                        onDownloadAction = { d ->
+                            actionsOpen = false
+                            when {
+                                d.isDone -> viewModel.deleteDownload(d.id)
+                                d.isActive -> viewModel.pauseDownload(d.id)
+                                else -> viewModel.resumeDownload(d.id)
+                            }
+                        },
+                        onDismiss = { actionsOpen = false },
+                    )
+                }
+            }
 
-        episodeMenu?.let { episode ->
-            val episodeDownload = downloadList.firstOrNull {
-                it.id == WatchProgress.episodeKey(state.details.item.id, episode.season, episode.number)
+            episodeMenu?.let { episode ->
+                val episodeDownload = downloadList.firstOrNull {
+                    it.id == WatchProgress.episodeKey(state.details.item.id, episode.season, episode.number)
+                }
+                EpisodeActions(
+                    state = state,
+                    episode = episode,
+                    download = episodeDownload,
+                    onDownload = {
+                        episodeMenu = null
+                        if (episodeDownload?.isDone == true) viewModel.deleteDownload(episodeDownload.id) else viewModel.download(listOf(episode))
+                    },
+                    onPlay = {
+                        episodeMenu = null
+                        viewModel.playEpisode(episode)
+                    },
+                    onToggleWatched = {
+                        viewModel.toggleEpisodeWatched(episode)
+                        episodeMenu = null
+                    },
+                    onDismiss = { episodeMenu = null },
+                )
             }
-            EpisodeActions(
-                state = state,
-                episode = episode,
-                download = episodeDownload,
-                onDownload = {
-                    episodeMenu = null
-                    if (episodeDownload?.isDone == true) viewModel.deleteDownload(episodeDownload.id) else viewModel.download(listOf(episode))
-                },
-                onPlay = {
-                    episodeMenu = null
-                    viewModel.playEpisode(episode)
-                },
-                onToggleWatched = {
-                    viewModel.toggleEpisodeWatched(episode)
-                    episodeMenu = null
-                },
-                onDismiss = { episodeMenu = null },
-            )
         }
 
         if (skipDialogOpen) {
@@ -500,11 +500,12 @@ private fun DetailsContent(
 private fun InfoBlock(
     details: CatalogDetails,
     state: DetailsUiState.Content,
+    skipConfig: com.shieldstream.tv.domain.ManualSkipRepository.Config,
     interactive: Boolean,
     playRequester: FocusRequester,
     onPlay: () -> Unit,
     onPlayFromStart: () -> Unit,
-    onOpenSources: () -> Unit,
+    onToggleMyList: () -> Unit,
     onOpenActions: () -> Unit,
     onTrailer: (() -> Unit)?,
     onPlaySource: (com.shieldstream.tv.model.StreamSource) -> Unit,
@@ -534,7 +535,7 @@ private fun InfoBlock(
         }
         Spacer(Modifier.height(14.dp))
 
-        MetaRow(details, state)
+        MetaRow(details, state, skipConfig)
         val tags = buildList {
             details.genres.take(4).forEach { add(it) }
             item.year?.let { add(it.toString()) }
@@ -669,6 +670,16 @@ private fun InfoBlock(
         }
         Spacer(Modifier.height(18.dp))
 
+        val sourcesReady = state.sources as? SourcesState.Ready
+        val eligibleCount = remember(sourcesReady, state.sourceExclusions, state.brokenSources, state.spanishOnly) {
+            if (sourcesReady != null) state.eligibleSources(sourcesReady.sources).size else 0
+        }
+        val sourcesLoading = state.sources is SourcesState.Idle ||
+            state.sources is SourcesState.Loading ||
+            (sourcesReady != null && eligibleCount == 0 && sourcesReady.pending.isNotEmpty())
+        val noSourcesTerminal = (sourcesReady != null && eligibleCount == 0 && sourcesReady.pending.isEmpty()) ||
+            state.sources is SourcesState.Error
+
         Row(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -679,15 +690,26 @@ private fun InfoBlock(
             val episodeCode = state.selectedEpisode?.takeIf { state.isSeries }?.let { " ${it.localizedCode()}" }.orEmpty()
             val playLabel = when {
                 state.pendingPlay -> localizedStringResource(StringsR.string.details_preparing)
+                sourcesLoading -> localizedStringResource(StringsR.string.details_finding_sources)
+                noSourcesTerminal -> localizedStringResource(StringsR.string.details_no_sources)
                 resumable -> localizedStringResource(StringsR.string.details_resume_episode, episodeCode)
                 else -> localizedStringResource(StringsR.string.details_play_episode, episodeCode)
             }
             TvButton(
                 text = playLabel,
                 icon = AppIcons.Play,
+                loading = state.pendingPlay || sourcesLoading,
                 onClick = onPlay,
                 enabled = interactive,
                 modifier = Modifier.focusRequester(playRequester),
+            )
+            TvButton(
+                text = localizedStringResource(
+                    if (state.inMyList) StringsR.string.details_in_my_list else StringsR.string.details_my_list,
+                ),
+                icon = if (state.inMyList) AppIcons.Check else AppIcons.Add,
+                onClick = onToggleMyList,
+                enabled = interactive,
             )
             if (resumable && !state.pendingPlay) {
                 TvButton(
@@ -696,12 +718,6 @@ private fun InfoBlock(
                     enabled = interactive,
                 )
             }
-            TvButton(
-                text = localizedStringResource(StringsR.string.details_sources),
-                icon = AppIcons.List,
-                onClick = onOpenSources,
-                enabled = interactive,
-            )
             if (onTrailer != null) {
                 TvButton(
                     text = localizedStringResource(StringsR.string.details_trailer),
@@ -721,11 +737,10 @@ private fun InfoBlock(
         // Modified build: probed sources shown right under the play buttons, one card per
         // completed probe. Always show either probed cards, pulsing skeletons while checking,
         // or a clear fallback message if nothing could be probed.
-        val probedSources = (state.sources as? SourcesState.Ready)?.sources.orEmpty()
+        val probedSources = sourcesReady?.sources.orEmpty()
             .filter { state.sourceProbes.containsKey(it.id) }
-        val probingInFlight = state.sources is SourcesState.Idle ||
-            state.sources is SourcesState.Loading ||
-            (state.sources is SourcesState.Ready && !state.probingDone && probedSources.isEmpty())
+        val probingInFlight = sourcesLoading ||
+            (sourcesReady != null && !state.probingDone && probedSources.isEmpty() && eligibleCount > 0)
         Column(Modifier.fillMaxWidth().heightIn(min = 96.dp)) {
             Spacer(Modifier.height(14.dp))
             Text(
@@ -733,7 +748,7 @@ private fun InfoBlock(
                     probedSources.isNotEmpty() ->
                         "已检测片源 · 点击直接播放" + if (!state.probingDone) " · 检测中…" else ""
                     probingInFlight -> "正在检测可用片源…"
-                    else -> "暂未检测到可用线路"
+                    else -> "暂无可用片源"
                 },
                 color = Grey,
                 style = MaterialTheme.typography.labelMedium,
@@ -773,7 +788,7 @@ private fun InfoBlock(
                     }
                 }
                 else -> Text(
-                    text = "请点击上方「片源」按钮查看或手动选择播放线路",
+                    text = "暂无可用播放线路，可点击「播放」重试",
                     color = Color.White.copy(alpha = 0.45f),
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(top = 6.dp),
@@ -1006,7 +1021,11 @@ private fun rememberDetailsSkeletonPulse(): Float {
 }
 
 @Composable
-private fun MetaRow(details: CatalogDetails, state: DetailsUiState.Content) {
+private fun MetaRow(
+    details: CatalogDetails,
+    state: DetailsUiState.Content,
+    skipConfig: com.shieldstream.tv.domain.ManualSkipRepository.Config,
+) {
     val item = details.item
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.heightIn(min = 24.dp)) {
         item.rating?.takeIf { it > 0f }?.let {
@@ -1037,6 +1056,19 @@ private fun MetaRow(details: CatalogDetails, state: DetailsUiState.Content) {
             if (best.hdrType != HdrType.SDR) {
                 Spacer(Modifier.width(8.dp))
                 Badge(best.hdrType.label)
+            }
+        }
+        if (skipConfig.active) {
+            val skipLabel = buildString {
+                if (skipConfig.introSec > 0) append("片头 ").append(skipConfig.introSec).append('s')
+                if (skipConfig.outroSec > 0) {
+                    if (isNotEmpty()) append(" / ")
+                    append("片尾 -").append(skipConfig.outroSec).append('s')
+                }
+            }
+            if (skipLabel.isNotEmpty()) {
+                Spacer(Modifier.width(8.dp))
+                Badge(skipLabel)
             }
         }
     }

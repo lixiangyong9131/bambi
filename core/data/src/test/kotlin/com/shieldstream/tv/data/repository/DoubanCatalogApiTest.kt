@@ -248,6 +248,50 @@ class DoubanCatalogApiTest {
         assertEquals(listOf("时光代理人 第三季"), mysteryAnime.map { it.name })
     }
 
+    @Test
+    fun `explicit douban_tags category filter forwards sort modes U S R cleanly`() = runTest {
+        val api = mockk<DoubanApi>()
+        coEvery {
+            api.rexxarRecommend(match { it.contains("/tv/recommend") && it.contains("sort=S") })
+        } returns DoubanRexxarRecommendResponseDto(
+            items = listOf(
+                DoubanRexxarCollectionItemDto(
+                    id = "801",
+                    title = "高分悬疑剧",
+                    type = "tv",
+                    year = "2024",
+                    pic = DoubanRexxarPicDto(large = "https://img3.doubanio.com/s.jpg"),
+                ),
+            ),
+        )
+        coEvery {
+            api.rexxarRecommend(match { it.contains("/movie/recommend") && it.contains("sort=R") })
+        } returns DoubanRexxarRecommendResponseDto(
+            items = listOf(
+                DoubanRexxarCollectionItemDto(
+                    id = "802",
+                    title = "最新科幻片",
+                    type = "movie",
+                    year = "2026",
+                    pic = DoubanRexxarPicDto(large = "https://img3.doubanio.com/r.jpg"),
+                ),
+            ),
+        )
+        val catalogApi = newCatalogApi(api)
+
+        val topRatedTv = catalogApi.discoverTvQuery(
+            "douban",
+            mapOf("douban_tags" to "悬疑", "sort_by" to "vote_average.desc", "page" to "1"),
+        ).results
+        val latestMovies = catalogApi.discoverMovieQuery(
+            "douban",
+            mapOf("douban_tags" to "科幻", "sort_by" to "primary_release_date.desc", "page" to "1"),
+        ).results
+
+        assertEquals(listOf("高分悬疑剧"), topRatedTv.map { it.name })
+        assertEquals(listOf("最新科幻片"), latestMovies.map { it.title })
+    }
+
     private fun newCatalogApi(api: DoubanApi): DoubanCatalogApi {
         val cms = mockk<CmsStreams>()
         val prefsEditor = mockk<SharedPreferences.Editor>(relaxed = true) {

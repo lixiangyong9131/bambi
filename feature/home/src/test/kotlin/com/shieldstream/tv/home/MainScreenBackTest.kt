@@ -28,10 +28,18 @@ class MainScreenBackTest {
     }
 
     @Test
-    fun `content focus returns to top bar instead of exiting`() {
+    fun `content focus opens rail in place while non-home rail returns to home before exit`() {
         assertEquals(
-            MainBackOutcome.BACK_TO_TOP,
-            resolveMainBackOutcome(categoryOpen = false, topBarFocused = false, exitArmed = false),
+            MainBackOutcome.OPEN_RAIL_IN_PLACE,
+            resolveMainBackOutcome(categoryOpen = false, topBarFocused = false, onHomeSection = false, exitArmed = false),
+        )
+        assertEquals(
+            MainBackOutcome.BACK_TO_HOME,
+            resolveMainBackOutcome(categoryOpen = false, topBarFocused = true, onHomeSection = false, exitArmed = false),
+        )
+        assertEquals(
+            MainBackOutcome.CLOSE_SEARCH,
+            resolveMainBackOutcome(categoryOpen = false, searchOpen = true, topBarFocused = false, onHomeSection = false, exitArmed = false),
         )
         assertEquals(
             MainBackOutcome.CLOSE_CATEGORY,

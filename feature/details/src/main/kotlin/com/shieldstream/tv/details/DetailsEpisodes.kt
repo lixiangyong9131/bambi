@@ -78,7 +78,11 @@ internal fun seasonAllWatched(state: DetailsUiState.Content): Boolean {
 }
 
 internal fun orderEpisodes(episodes: List<Episode>, descending: Boolean): List<Episode> =
-    if (descending) episodes.asReversed() else episodes
+    if (descending) {
+        episodes.sortedWith(compareByDescending<Episode> { it.season }.thenByDescending { it.number })
+    } else {
+        episodes.sortedWith(compareBy<Episode> { it.season }.thenBy { it.number })
+    }
 
 /** What the long-press modal's toggle will do: unwatched episodes get marked, watched ones unmarked. */
 internal fun episodeMenuTogglesToWatched(state: DetailsUiState.Content, episode: Episode): Boolean =
@@ -221,7 +225,7 @@ internal fun SeasonsAndEpisodes(
             is EpisodesState.Error -> Text(eps.message, color = Grey, modifier = Modifier.padding(start = 56.dp, top = 12.dp))
             is EpisodesState.Ready -> if (eps.episodes.isEmpty()) {
                 Text(
-                    text = "暂无可用剧集信息，可点击「播放」或「片源」尝试查找",
+                    text = "暂无可用剧集信息，可点击「播放」尝试查找",
                     color = Grey,
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(start = 56.dp, top = 12.dp),
@@ -237,8 +241,8 @@ internal fun SeasonsAndEpisodes(
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                     modifier = Modifier.padding(horizontal = 56.dp, vertical = 12.dp),
                 ) {
-                    displayedEpisodes.forEach { ep ->
-                        key(ep.season, ep.number) {
+                    displayedEpisodes.forEachIndexed { idx, ep ->
+                        key(descending, idx, ep.season, ep.number) {
                             EpisodeCard(
                                 episode = ep,
                                 progress = state.progressOf(ep),

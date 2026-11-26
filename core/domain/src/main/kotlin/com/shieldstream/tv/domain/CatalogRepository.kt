@@ -18,6 +18,14 @@ interface CatalogRepository {
     /** Fills additional items for a horizontally scrollable catalog row. */
     suspend fun loadMoreRow(filter: HomeFilter, rowId: String, page: Int): List<CatalogItem> = emptyList()
 
+    /** Fetches Douban-backed items for a Netflix-style section genre/region filter. */
+    suspend fun browseCategoryFilter(
+        filter: HomeFilter,
+        tag: String,
+        sort: String = "U",
+        page: Int = 1,
+    ): List<CatalogItem> = emptyList()
+
     /** Whether [id] is known to be an Anime / Animation title for Anime-tab filtering. */
     fun isAnime(id: String): Boolean = false
 

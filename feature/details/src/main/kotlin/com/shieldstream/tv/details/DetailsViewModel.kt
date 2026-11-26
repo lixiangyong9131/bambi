@@ -45,8 +45,10 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 
 @HiltViewModel
@@ -415,6 +417,8 @@ class DetailsViewModel @Inject constructor(
                     updateContent {
                         it.copy(
                             episodes = EpisodesState.Error(texts.get(StringsR.string.details_no_seasons_available)),
+                            sources = if (it.sources == SourcesState.Idle) SourcesState.Ready(emptyList()) else it.sources,
+                            probingDone = true,
                         )
                     }
                 }
@@ -483,6 +487,8 @@ class DetailsViewModel @Inject constructor(
                     if (episodeToPlay == null && selectedNow != null &&
                         content()?.sources == SourcesState.Idle && !prefetchSources) {
                         loadSources(selectedNow)
+                    } else if (selectedNow == null && content()?.sources == SourcesState.Idle && !prefetchSources) {
+                        updateContent { it.copy(sources = SourcesState.Ready(emptyList()), probingDone = true) }
                     }
                     episodeToPlay?.let { episode ->
                         if (content()?.sources == SourcesState.Idle) {
@@ -734,8 +740,20 @@ class DetailsViewModel @Inject constructor(
                     updateContent {
                         it.copy(
                             sources = SourcesState.Error(texts.get(StringsR.string.details_sources_load_error, e.message ?: e.javaClass.simpleName)),
+                            probingDone = true,
                             pendingPlay = false,
                         )
+                    }
+                }
+                .onCompletion { cause ->
+                    if (cause == null && content()?.sources == SourcesState.Loading) {
+                        updateContent {
+                            it.copy(
+                                sources = SourcesState.Ready(emptyList()),
+                                probingDone = true,
+                                pendingPlay = false,
+                            )
+                        }
                     }
                 }
                 .collect { (result, sorted) ->
@@ -772,19 +790,21 @@ class DetailsViewModel @Inject constructor(
         if (pending.isEmpty()) return
         probeJob = viewModelScope.launch {
             val gate = Semaphore(3)
-            coroutineScope {
-                pending.map { src ->
-                    launch {
-                        val result = gate.withPermit {
-                            if (!isActive) return@withPermit null
-                            sourceProber.probe(src)
-                        } ?: return@launch
-                        if (!isActive) return@launch
-                        updateContent { ui ->
-                            ui.copy(sourceProbes = ui.sourceProbes + (src.id to result))
+            withTimeoutOrNull(12_000L) {
+                coroutineScope {
+                    pending.map { src ->
+                        launch {
+                            val result = gate.withPermit {
+                                if (!isActive) return@withPermit null
+                                sourceProber.probe(src)
+                            } ?: return@launch
+                            if (!isActive) return@launch
+                            updateContent { ui ->
+                                ui.copy(sourceProbes = ui.sourceProbes + (src.id to result))
+                            }
                         }
-                    }
-                }.forEach { it.join() }
+                    }.forEach { it.join() }
+                }
             }
             if (isActive) updateContent { it.copy(probingDone = true) }
         }

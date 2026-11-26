@@ -1,15 +1,15 @@
 package com.shieldstream.tv.home
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -27,21 +27,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.shieldstream.tv.domain.EpisodeTarget
 import com.shieldstream.tv.model.CatalogItem
-import com.shieldstream.tv.model.Category
 import com.shieldstream.tv.model.ContinueInfo
 import com.shieldstream.tv.model.Episode
-import com.shieldstream.tv.model.HomeFilter
 import com.shieldstream.tv.strings.R as StringsR
 import com.shieldstream.tv.strings.localizedStringResource
-import com.shieldstream.tv.ui.component.TopBar
-import com.shieldstream.tv.ui.component.TopTab
+import com.shieldstream.tv.ui.component.DownloadIndicator
+import com.shieldstream.tv.ui.component.NavRail
+import com.shieldstream.tv.ui.component.RailDestination
 import com.shieldstream.tv.ui.component.downloadIndicatorState
 import com.shieldstream.tv.ui.component.onBackKey
 import com.shieldstream.tv.ui.component.requestFocusWithRetry
@@ -55,76 +55,91 @@ fun MainScreen(
     onContinue: (CatalogItem, ContinueInfo) -> Unit,
     onOpenNewEpisode: (CatalogItem, Episode) -> Unit,
     onUpNext: (CatalogItem, Episode) -> Unit,
-    onPlaySomething: (CatalogItem, EpisodeTarget?) -> Unit,
+    @Suppress("UNUSED_PARAMETER") onPlaySomething: (CatalogItem, EpisodeTarget?) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenDownloads: () -> Unit = {},
-    profileInitial: String? = null,
-    profileAvatar: Int = 0,
-    profileImage: String? = null,
-    onSwitchProfile: () -> Unit = {},
+    @Suppress("UNUSED_PARAMETER") profileInitial: String? = null,
+    @Suppress("UNUSED_PARAMETER") profileAvatar: Int = 0,
+    @Suppress("UNUSED_PARAMETER") profileImage: String? = null,
+    @Suppress("UNUSED_PARAMETER") onSwitchProfile: () -> Unit = {},
 ) {
-    var tab by rememberSaveable { mutableStateOf(TopTab.HOME) }
-    var category by rememberSaveable { mutableStateOf<Category?>(null) }
-    // Modified build: immersive browsing - top bar hides after a tab is chosen, Back restores it.
-    var immersive by rememberSaveable { mutableStateOf(false) }
-    // Ignore the automatic initial card focus; only real DPAD navigation arms immersive mode.
-    var immersiveArmed by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { delay(900); immersiveArmed = true }
-    var focusMenuAfterSwitch by remember { mutableStateOf(false) }
-    var topBarFocused by remember { mutableStateOf(false) }
+    var activeSection by rememberSaveable { mutableStateOf(RailDestination.HOME) }
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
+    var railOpen by rememberSaveable { mutableStateOf(false) }
     var exitPromptVisible by remember { mutableStateOf(false) }
     var backToTopTick by remember { mutableStateOf(0) }
-    val topBarRequester = remember { FocusRequester() }
-    val filter = when (tab) {
-        TopTab.TV -> HomeFilter.TV
-        TopTab.MOVIES -> HomeFilter.MOVIES
-        TopTab.ANIME -> HomeFilter.ANIME
-        else -> HomeFilter.ALL
-    }
-    val episodeCenter: EpisodeCenterViewModel? = if (tab == TopTab.EPISODES) hiltViewModel() else null
+    var scrollJumpTick by remember { mutableStateOf(0) }
+    var scrollToSectionRequest by remember { mutableStateOf<Pair<RailDestination, Int>?>(null) }
+
+    val railRequester = remember { FocusRequester() }
+    val feedRequester = remember { FocusRequester() }
+    val searchRequester = remember { FocusRequester() }
     val downloadsViewModel: DownloadsViewModel = hiltViewModel()
     val downloadList by downloadsViewModel.downloads.collectAsState()
-    val episodeState by (episodeCenter?.uiState?.collectAsState() ?: remember { mutableStateOf<EpisodeCenterUiState>(EpisodeCenterUiState.Loading) })
-    LaunchedEffect(tab) { if (tab == TopTab.EPISODES) episodeCenter?.activate() }
+    val scope = rememberCoroutineScope()
 
+    val selectedRail = if (searchOpen) RailDestination.SEARCH else activeSection
+
+    LaunchedEffect(railOpen) {
+        if (railOpen) {
+            railRequester.requestFocusWithRetry()
+        }
+    }
     LaunchedEffect(exitPromptVisible) {
         if (exitPromptVisible) {
             delay(EXIT_PROMPT_TIMEOUT_MS)
             exitPromptVisible = false
         }
     }
-    LaunchedEffect(topBarFocused, category, tab) {
-        if (!topBarFocused || category != null) {
+    LaunchedEffect(railOpen, searchOpen) {
+        if (!railOpen || searchOpen) {
             exitPromptVisible = false
         }
     }
 
-    val scope = rememberCoroutineScope()
-    val focusTopBar: () -> Unit = {
-        scope.launch { topBarRequester.requestFocusWithRetry() }
-    }
-    val showTopBarAndFocus: () -> Unit = {
-        if (immersive) {
-            immersive = false
-        }
-        focusTopBar()
-    }
-    val onBackToTop: () -> Unit = {
+    val openRail: () -> Unit = {
         exitPromptVisible = false
-        backToTopTick++
-        showTopBarAndFocus()
+        railOpen = true
     }
-    val onEnterImmersive: () -> Unit = { if (immersiveArmed) immersive = true }
+
+    val closeRailToContent: () -> Unit = {
+        railOpen = false
+        scope.launch {
+            if (searchOpen) {
+                searchRequester.requestFocusWithRetry()
+            } else {
+                feedRequester.requestFocusWithRetry()
+            }
+        }
+    }
+
     val handleRootBack: () -> Unit = {
-        when (resolveMainBackOutcome(category != null, topBarFocused, exitPromptVisible)) {
-            MainBackOutcome.CLOSE_CATEGORY -> category = null
-            MainBackOutcome.BACK_TO_TOP -> {
+        when (
+            resolveMainBackOutcome(
+                categoryOpen = false,
+                searchOpen = searchOpen,
+                topBarFocused = railOpen,
+                onHomeSection = activeSection == RailDestination.HOME,
+                exitArmed = exitPromptVisible,
+            )
+        ) {
+            MainBackOutcome.CLOSE_CATEGORY -> Unit
+            MainBackOutcome.CLOSE_SEARCH -> {
+                searchOpen = false
+                railOpen = false
                 exitPromptVisible = false
-                if (tab == TopTab.SEARCH || tab == TopTab.MY_LIST || tab == TopTab.EPISODES) {
-                    showTopBarAndFocus()
-                } else {
-                    onBackToTop()
-                }
+                scope.launch { feedRequester.requestFocusWithRetry() }
+            }
+            MainBackOutcome.OPEN_RAIL_IN_PLACE -> {
+                exitPromptVisible = false
+                railOpen = true
+            }
+            MainBackOutcome.BACK_TO_HOME -> {
+                exitPromptVisible = false
+                railOpen = false
+                activeSection = RailDestination.HOME
+                scrollJumpTick++
+                scrollToSectionRequest = RailDestination.HOME to scrollJumpTick
             }
             MainBackOutcome.ARM_EXIT_PROMPT -> exitPromptVisible = true
             MainBackOutcome.EXIT_APP -> {
@@ -134,96 +149,117 @@ fun MainScreen(
         }
     }
 
-    val topBar: @Composable (Modifier) -> Unit = { modifier ->
-        TopBar(
-            selected = tab,
-            onSelect = { selected ->
-                exitPromptVisible = false
-                if (selected != tab) {
-                    tab = selected
-                    focusMenuAfterSwitch = selected != TopTab.SEARCH && selected != TopTab.MY_LIST && selected != TopTab.EPISODES
-                    immersive = true
-                }
-            },
-            onSettings = onOpenSettings,
-            selectedRequester = topBarRequester,
-            newEpisodeCount = (episodeState as? EpisodeCenterUiState.Content)?.newEpisodeCount ?: 0,
-            modifier = modifier.onFocusChanged { topBarFocused = it.hasFocus },
-            profileInitial = profileInitial,
-            profileAvatar = profileAvatar,
-            profileImage = profileImage,
-            onProfile = onSwitchProfile,
-            downloads = downloadIndicatorState(downloadList),
-            onDownloads = onOpenDownloads,
-        )
-    }
-
-    // Fallback for system back / predictive back gestures or unfocused loading states.
-    BackHandler(enabled = true) {
-        handleRootBack()
-    }
-
     val saveable = rememberSaveableStateHolder()
     Box(
         Modifier
             .fillMaxSize()
             .background(Color.Black)
-            // Catch Key.Back / Key.Escape directly inside the Compose focus tree so TV remotes
-            // always trigger back-to-top / double-back exit even when TopBar holds focus.
-            .onBackKey(enabled = category == null) { handleRootBack() },
+            .onBackKey(enabled = true) { handleRootBack() },
     ) {
-        val openCategory = category
-        when {
-            openCategory != null -> CategoryScreen(
-                category = openCategory,
-                filter = filter,
-                onItemClick = onOpenItem,
-                onBack = { category = null },
-            )
-            tab == TopTab.SEARCH || tab == TopTab.MY_LIST || tab == TopTab.EPISODES -> {
-                Column(Modifier.fillMaxSize().onBackKey(enabled = !topBarFocused) { focusTopBar() }) {
-                    topBar(Modifier)
-                    Box(Modifier.fillMaxWidth().weight(1f)) {
-                        when (tab) {
-                            TopTab.SEARCH -> saveable.SaveableStateProvider("tab_${tab.name}") { SearchScreen(onItemClick = onOpenItem) }
-                            TopTab.EPISODES -> EpisodeCenterScreen(onOpenEpisode = onOpenNewEpisode, viewModel = episodeCenter!!)
-                            else -> saveable.SaveableStateProvider("tab_${tab.name}") { MyListScreen(onItemClick = onOpenItem) }
-                        }
-                    }
+        Box(
+            Modifier
+                .fillMaxSize()
+                .focusProperties { canFocus = !railOpen },
+        ) {
+            if (searchOpen) {
+                saveable.SaveableStateProvider("tab_search") {
+                    SearchScreen(
+                        onItemClick = onOpenItem,
+                        initialFocusRequester = searchRequester,
+                        onOpenRail = openRail,
+                    )
+                }
+            } else {
+                saveable.SaveableStateProvider("unified_feed") {
+                    UnifiedHomeScreen(
+                        onItemClick = onOpenItem,
+                        onContinueClick = onContinue,
+                        onNewEpisodeClick = onOpenNewEpisode,
+                        onUpNextClick = onUpNext,
+                        onBackToTop = openRail,
+                        contentFocusRequester = feedRequester,
+                        onOpenRail = openRail,
+                        railFocused = railOpen,
+                        backToTopTick = backToTopTick,
+                        onActiveSectionChange = { section ->
+                            if (section != activeSection) {
+                                activeSection = section
+                            }
+                        },
+                        scrollToSectionRequest = scrollToSectionRequest,
+                        onScrollToSectionConsumed = { scrollToSectionRequest = null },
+                    )
                 }
             }
-            else -> saveable.SaveableStateProvider("tab_${tab.name}") {
-                HomeScreen(
-                    filter = filter,
-                    onItemClick = onOpenItem,
-                    onContinueClick = onContinue,
-                    onNewEpisodeClick = onOpenNewEpisode,
-                    onUpNextClick = onUpNext,
-                    onPlaySomething = onPlaySomething,
-                    onOpenCategory = { category = it },
-                    topBar = topBar,
-                    topBarRequester = topBarRequester,
-                    focusTopBar = focusTopBar,
-                    preferTopBarFocus = focusMenuAfterSwitch,
-                    onTopBarFocusConsumed = { focusMenuAfterSwitch = false },
-                    immersive = immersive,
-                    topBarFocused = topBarFocused,
-                    backToTopTick = backToTopTick,
-                    onExitTop = showTopBarAndFocus,
-                    onBackToTop = onBackToTop,
-                    onEnterImmersive = onEnterImmersive,
+        }
+
+        AnimatedVisibility(
+            visible = railOpen,
+            enter = fadeIn(tween(140)) + slideInHorizontally(tween(180)) { -it / 2 },
+            exit = fadeOut(tween(120)) + slideOutHorizontally(tween(160)) { -it / 2 },
+            modifier = Modifier
+                .fillMaxSize()
+                .zIndex(5f),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.45f)),
+            ) {
+                NavRail(
+                    selected = selectedRail,
+                    onSelect = { dest ->
+                        exitPromptVisible = false
+                        when (dest) {
+                            RailDestination.SETTINGS -> {
+                                railOpen = false
+                                onOpenSettings()
+                            }
+                            RailDestination.SEARCH -> {
+                                searchOpen = true
+                                railOpen = false
+                                scope.launch { searchRequester.requestFocusWithRetry() }
+                            }
+                            RailDestination.HOME,
+                            RailDestination.TV,
+                            RailDestination.MOVIES,
+                            RailDestination.ANIME,
+                            -> {
+                                searchOpen = false
+                                railOpen = false
+                                activeSection = dest
+                                scrollJumpTick++
+                                scrollToSectionRequest = dest to scrollJumpTick
+                            }
+                        }
+                    },
+                    selectedRequester = railRequester,
+                    onRightExit = closeRailToContent,
+                    modifier = Modifier.align(Alignment.CenterStart),
                 )
             }
         }
+
+        downloadIndicatorState(downloadList)?.let { indicator ->
+            DownloadIndicator(
+                state = indicator,
+                onClick = onOpenDownloads,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 20.dp, end = 28.dp)
+                    .zIndex(6f),
+            )
+        }
+
         AnimatedVisibility(
             visible = exitPromptVisible,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 44.dp),
+                .padding(bottom = 44.dp)
+                .zIndex(6f),
         ) {
-            // Keep non-focusable so TopBar stays focused and a second Back immediately exits.
             Box(
                 Modifier
                     .background(Color(0xE6141414), RoundedCornerShape(50))
@@ -244,18 +280,24 @@ private const val EXIT_PROMPT_TIMEOUT_MS = 2_500L
 
 internal enum class MainBackOutcome {
     CLOSE_CATEGORY,
-    BACK_TO_TOP,
+    CLOSE_SEARCH,
+    OPEN_RAIL_IN_PLACE,
+    BACK_TO_HOME,
     ARM_EXIT_PROMPT,
     EXIT_APP,
 }
 
 internal fun resolveMainBackOutcome(
     categoryOpen: Boolean,
+    searchOpen: Boolean = false,
     topBarFocused: Boolean,
+    onHomeSection: Boolean = true,
     exitArmed: Boolean,
 ): MainBackOutcome = when {
     categoryOpen -> MainBackOutcome.CLOSE_CATEGORY
-    !topBarFocused -> MainBackOutcome.BACK_TO_TOP
+    searchOpen -> MainBackOutcome.CLOSE_SEARCH
+    !topBarFocused -> MainBackOutcome.OPEN_RAIL_IN_PLACE
+    !onHomeSection -> MainBackOutcome.BACK_TO_HOME
     exitArmed -> MainBackOutcome.EXIT_APP
     else -> MainBackOutcome.ARM_EXIT_PROMPT
 }

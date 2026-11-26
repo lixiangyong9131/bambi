@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -45,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.shieldstream.tv.model.CatalogItem
 import com.shieldstream.tv.strings.R
 import com.shieldstream.tv.strings.localizedPluralResource
@@ -59,7 +61,7 @@ private fun focusScale(focused: Boolean, target: Float): Float =
     if (LocalLightweightUi.current) {
         if (focused) target else 1f
     } else {
-        animateFloatAsState(if (focused) target else 1f, tween(110), label = "posterScale").value
+        animateFloatAsState(if (focused) target else 1f, tween(90), label = "posterScale").value
     }
 
 /**
@@ -80,7 +82,17 @@ fun PosterCard(
     overlay: @Composable BoxScope.() -> Unit = {},
 ) {
     var focused by remember { mutableStateOf(false) }
-    val scale = focusScale(focused, 1.1f)
+    val scale = focusScale(focused, 1.05f)
+    val context = LocalContext.current
+    val posterRequest = remember(item.posterUrl, context) {
+        item.posterUrl?.let { url ->
+            ImageRequest.Builder(context)
+                .data(url)
+                .size(260, 390)
+                .crossfade(false)
+                .build()
+        }
+    }
 
     Box(
         modifier = modifier
@@ -102,9 +114,9 @@ fun PosterCard(
             .background(Color(0xFF232327))
             .then(if (focused) Modifier.border(2.dp, Color.White, CardShape) else Modifier),
     ) {
-        if (item.posterUrl != null) {
+        if (posterRequest != null) {
             AsyncImage(
-                model = item.posterUrl,
+                model = posterRequest,
                 contentDescription = item.title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),

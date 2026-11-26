@@ -2,8 +2,10 @@ package com.shieldstream.tv.home
 
 import com.shieldstream.tv.strings.R as StringsR
 import com.shieldstream.tv.strings.localizedStringResource
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -86,6 +88,8 @@ private val QWERTY_ROWS = listOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
 @Composable
 fun SearchScreen(
     onItemClick: (CatalogItem) -> Unit,
+    initialFocusRequester: FocusRequester? = null,
+    onOpenRail: (() -> Unit)? = null,
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
     val query by viewModel.query.collectAsStateWithLifecycle()
@@ -115,7 +119,7 @@ fun SearchScreen(
     val composing by viewModel.composing.collectAsStateWithLifecycle()
     val candidates by viewModel.candidates.collectAsStateWithLifecycle()
 
-    val firstKey = remember { FocusRequester() }
+    val firstKey = initialFocusRequester ?: remember { FocusRequester() }
     val layoutKey = remember { FocusRequester() }
     val cardRequester = remember { FocusRequester() }
     var lastCardKey by rememberSaveable { mutableStateOf<String?>(null) }
@@ -164,7 +168,23 @@ fun SearchScreen(
         runCatching { layoutKey.requestFocus() }
     }
 
+    BackHandler(enabled = lockedPick != null || systemKeyboard) {
+        when {
+            lockedPick != null -> lockedPick = null
+            systemKeyboard -> closeSystemKeyboard()
+        }
+    }
+
     Row(Modifier.fillMaxSize().background(Color.Black)) {
+        if (onOpenRail != null) {
+            Box(
+                Modifier
+                    .width(1.dp)
+                    .fillMaxHeight()
+                    .onFocusChanged { if (it.isFocused) onOpenRail() }
+                    .focusable(),
+            )
+        }
         Column(
             Modifier
                 .width(if (qwerty) 452.dp else 330.dp)

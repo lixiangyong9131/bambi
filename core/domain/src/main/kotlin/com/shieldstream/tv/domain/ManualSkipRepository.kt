@@ -17,6 +17,11 @@ interface ManualSkipRepository {
     fun save(key: String, config: Config)
 
     companion object {
-        fun keyFor(title: String, type: String): String = "${type}:${title}"
+        private val INVISIBLE_CHARS = Regex("[\\p{Cf}\\u200B-\\u200F\\uFEFF]")
+
+        fun normalizeTitle(title: String): String =
+            title.replace(INVISIBLE_CHARS, "").trim()
+
+        fun keyFor(title: String, type: String): String = "${type}:${normalizeTitle(title)}"
     }
 }

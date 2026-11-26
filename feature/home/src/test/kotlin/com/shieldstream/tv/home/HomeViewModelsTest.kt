@@ -678,6 +678,156 @@ class HomeViewModelsTest {
         assertEquals(listOf("anime-1"), continueRow.items.map { it.id })
     }
 
+    @Test
+    fun `unified feed keeps only continue watching and my list under HOME followed by TV Movies and Anime`() = runTest {
+        val show = item("tv-1", MediaType.TV, "Show")
+        val movie = item("mv-1", MediaType.MOVIE, "Movie")
+        val anime = item("an-1", MediaType.TV, "Anime")
+        val catalog = mockk<CatalogRepository> {
+            coEvery { getHome(HomeFilter.TV, any()) } returns listOf(CatalogRow("t_pop", "Popular TV", listOf(show)))
+            coEvery { getHome(HomeFilter.MOVIES, any()) } returns listOf(CatalogRow("m_pop", "Popular Movies", listOf(movie)))
+            coEvery { getHome(HomeFilter.ANIME, any()) } returns listOf(CatalogRow("a_pop", "Popular Anime", listOf(anime)))
+            coEvery { loadMoreRow(HomeFilter.TV, "t_pop", 2) } returns listOf(item("tv-2", MediaType.TV, "Show 2"))
+            coEvery { getFeatured(any()) } returns emptyList()
+            coEvery { getItem(MediaType.TV, "tv-1") } returns show
+            coEvery { getItem(MediaType.MOVIE, "mv-1") } returns movie
+            every { isAnime(any()) } returns false
+        }
+        val myList = mockk<MyListRepository> {
+            every { entries } returns MutableStateFlow(listOf(MyListEntry(MediaType.MOVIE, "mv-1", addedAt = 100)))
+        }
+        val progress = mapOf(WatchProgress.episodeKey("tv-1", 1, 1) to progress(updatedAt = 200))
+        val vm = homeViewModel(
+            catalog = catalog,
+            trakt = mockk(relaxed = true),
+            active = profileFlow(traktUser = null),
+            progress = progress,
+            myList = myList,
+        )
+
+        vm.loadUnified()
+        advanceUntilIdle()
+
+        val state = vm.unifiedState.value as UnifiedHomeUiState.Content
+        assertEquals(
+            listOf(
+                com.shieldstream.tv.ui.component.RailDestination.HOME to "continue_watching",
+                com.shieldstream.tv.ui.component.RailDestination.HOME to "my_list",
+                com.shieldstream.tv.ui.component.RailDestination.TV to "t_pop",
+                com.shieldstream.tv.ui.component.RailDestination.MOVIES to "m_pop",
+                com.shieldstream.tv.ui.component.RailDestination.ANIME to "a_pop",
+            ),
+            state.sections.map { it.section to it.row.id },
+        )
+
+        vm.loadMoreSectionRow(HomeFilter.TV, "t_pop")
+        advanceUntilIdle()
+        val updatedTvRow = (vm.unifiedState.value as UnifiedHomeUiState.Content).sections
+            .single { it.row.id == "t_pop" }.row
+        assertEquals(listOf("tv-1", "tv-2"), updatedTvRow.items.map { it.id })
+    }
+
+    @Test
+    fun `unified feed waits for continue watching so it lands on row zero before TV`() = runTest {
+        val show = item("tv-1", MediaType.TV, "Show")
+        val continueHydrate = CompletableDeferred<CatalogItem>()
+        val catalog = mockk<CatalogRepository> {
+            coEvery { getHome(HomeFilter.TV, any()) } returns listOf(CatalogRow("t_pop", "Popular TV", listOf(show)))
+            coEvery { getHome(HomeFilter.MOVIES, any()) } returns emptyList()
+            coEvery { getHome(HomeFilter.ANIME, any()) } returns emptyList()
+            coEvery { getFeatured(any()) } returns emptyList()
+            coEvery { getItem(MediaType.TV, "tv-1") } coAnswers { continueHydrate.await() }
+            every { isAnime(any()) } returns false
+        }
+        val progress = mapOf(WatchProgress.episodeKey("tv-1", 1, 1) to progress(updatedAt = 200))
+        val vm = homeViewModel(
+            catalog = catalog,
+            trakt = mockk(relaxed = true),
+            active = profileFlow(traktUser = null),
+            progress = progress,
+        )
+
+        vm.loadUnified()
+        runCurrent()
+        assertEquals(UnifiedHomeUiState.Loading, vm.unifiedState.value)
+
+        continueHydrate.complete(show)
+        advanceUntilIdle()
+        val content = vm.unifiedState.value as UnifiedHomeUiState.Content
+        assertEquals("continue_watching", content.sections.first().row.id)
+    }
+
+    @Test
+    fun `category filter swaps section to Douban sorted rows, paginates, and resets to default`() = runTest {
+        val defaultTv = item("tv-1", MediaType.TV, "Default TV")
+        val comboItem1 = item("tv-m1", MediaType.TV, "Hot Mystery 1")
+        val comboItem2 = item("tv-m2", MediaType.TV, "Hot Mystery 2")
+        val comboTop = item("tv-m3", MediaType.TV, "Top Mystery")
+        val comboLatest = item("tv-m4", MediaType.TV, "Latest Mystery")
+        val movieItem = item("mv-1", MediaType.MOVIE, "Top 250")
+        val catalog = mockk<CatalogRepository> {
+            coEvery { getHome(HomeFilter.TV, any()) } returns listOf(CatalogRow("t_top10", "Top 10", listOf(defaultTv)))
+            coEvery { getHome(HomeFilter.MOVIES, any()) } returns listOf(CatalogRow("m_top", "Top 250", listOf(movieItem)))
+            coEvery { getHome(HomeFilter.ANIME, any()) } returns emptyList()
+            coEvery { getFeatured(any()) } returns emptyList()
+            coEvery { browseCategoryFilter(HomeFilter.TV, "韩国,悬疑,犯罪,2020年代", "U", 1) } returns listOf(comboItem1)
+            coEvery { browseCategoryFilter(HomeFilter.TV, "韩国,悬疑,犯罪,2020年代", "U", 2) } returns listOf(comboItem2)
+            coEvery { browseCategoryFilter(HomeFilter.TV, "韩国,悬疑,犯罪,2020年代", "S", 1) } returns listOf(comboTop)
+            coEvery { browseCategoryFilter(HomeFilter.TV, "韩国,悬疑,犯罪,2020年代", "R", 1) } returns listOf(comboLatest)
+            every { isAnime(any()) } returns false
+        }
+        val vm = homeViewModel(catalog, mockk(relaxed = true), profileFlow(traktUser = null))
+        vm.loadUnified()
+        advanceUntilIdle()
+
+        val combo = CategoryFilterSelection(
+            genres = linkedSetOf("悬疑", "犯罪"),
+            region = "韩国",
+            era = "2020年代",
+        )
+        vm.selectCategoryFilter(HomeFilter.TV, combo)
+        advanceUntilIdle()
+
+        val filteredState = vm.unifiedState.value as UnifiedHomeUiState.Content
+        assertEquals(combo, filteredState.activeFilters[HomeFilter.TV])
+        val expectedHash = combo.toDoubanTags().hashCode()
+        val tvRows = filteredState.sections
+            .filter { it.section == com.shieldstream.tv.ui.component.RailDestination.TV }
+            .map { it.row.id }
+        assertEquals(
+            listOf(
+                "filtered_TV_${expectedHash}_U",
+                "filtered_TV_${expectedHash}_S",
+                "filtered_TV_${expectedHash}_R",
+            ),
+            tvRows,
+        )
+        // Movies section remains untouched
+        assertEquals(
+            listOf("m_top"),
+            filteredState.sections
+                .filter { it.section == com.shieldstream.tv.ui.component.RailDestination.MOVIES }
+                .map { it.row.id },
+        )
+
+        vm.loadMoreSectionRow(HomeFilter.TV, "filtered_TV_${expectedHash}_U")
+        advanceUntilIdle()
+        val paged = (vm.unifiedState.value as UnifiedHomeUiState.Content).sections
+            .single { it.row.id == "filtered_TV_${expectedHash}_U" }.row.items.map { it.id }
+        assertEquals(listOf("tv-m1", "tv-m2"), paged)
+
+        vm.selectCategoryFilter(HomeFilter.TV, CategoryFilterSelection())
+        advanceUntilIdle()
+        val restored = vm.unifiedState.value as UnifiedHomeUiState.Content
+        assertTrue(restored.activeFilters.isEmpty())
+        assertEquals(
+            listOf("t_top10"),
+            restored.sections
+                .filter { it.section == com.shieldstream.tv.ui.component.RailDestination.TV }
+                .map { it.row.id },
+        )
+    }
+
     private fun MyListViewModel.content() = uiState.value as MyListUiState.Content
 
     private fun HomeViewModel.rowIds() = (uiState.value as HomeUiState.Content).rows.map { it.id }

@@ -163,11 +163,12 @@ internal fun HeroBackdrop(item: CatalogItem) {
         FeatheredBackdropStage(
             heroUrl = artworkUrl,
             ambientUrl = null,
-            stageHeight = 395.dp,
-            heroWidthFraction = 0.54f,
+            stageHeight = 420.dp,
+            heroWidthFraction = 0.40f,
             leftScrimAlpha = 0f,
-            topPadding = 16.dp,
-            verticalBias = 0.12f,
+            topPadding = 12.dp,
+            endPadding = 72.dp,
+            verticalBias = -0.05f,
             fadeBottomToBlack = false,
             modifier = Modifier.align(Alignment.TopCenter),
         )
@@ -175,8 +176,8 @@ internal fun HeroBackdrop(item: CatalogItem) {
             Modifier.fillMaxSize().background(
                 Brush.horizontalGradient(
                     0f to Color.Black.copy(alpha = 0.78f),
-                    0.42f to Color.Black.copy(alpha = 0.36f),
-                    0.75f to Color.Transparent,
+                    0.32f to Color.Black.copy(alpha = 0.32f),
+                    0.56f to Color.Transparent,
                 ),
             ),
         )
