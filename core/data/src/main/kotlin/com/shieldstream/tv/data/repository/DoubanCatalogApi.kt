@@ -75,13 +75,21 @@ class DoubanCatalogApi @Inject constructor(
     override suspend fun discoverMovieQuery(key: String, params: Map<String, String>): TmdbPaginated<TmdbMovieDto> = withContext(Dispatchers.IO) {
         val page = params["page"]?.toIntOrNull()?.coerceAtLeast(1) ?: 1
         val sort = doubanSortFor(params["sort_by"])
-        val tags = recommendTagsForQuery(
-            genres = params["with_genres"].orEmpty(),
-            country = params["with_origin_country"].orEmpty(),
-            language = params["with_original_language"].orEmpty(),
-            isTv = false,
-        )
-        val rexxar = safeRecommend("movie", tags, sort, page)
+        val explicitCollection = params["douban_collection"]
+        val explicitTags = params["douban_tags"]
+        val rexxar = when {
+            !explicitCollection.isNullOrBlank() -> safeCollection(explicitCollection, page)
+            !explicitTags.isNullOrBlank() -> safeRecommend("movie", explicitTags, sort, page)
+            else -> {
+                val tags = recommendTagsForQuery(
+                    genres = params["with_genres"].orEmpty(),
+                    country = params["with_origin_country"].orEmpty(),
+                    language = params["with_original_language"].orEmpty(),
+                    isTv = false,
+                )
+                safeRecommend("movie", tags, sort, page)
+            }
+        }
         if (rexxar.isNotEmpty()) {
             TmdbPaginated(page = page, results = rexxar.map { it.toMovieDto() })
         } else {
@@ -95,7 +103,9 @@ class DoubanCatalogApi @Inject constructor(
         val country = params["with_origin_country"].orEmpty()
         val language = params["with_original_language"].orEmpty()
         val sortBy = params["sort_by"].orEmpty()
-        val collectionId = if (genres.isBlank() && sortBy.isBlank()) {
+        val explicitCollection = params["douban_collection"]
+        val explicitTags = params["douban_tags"]
+        val collectionId = explicitCollection ?: if (genres.isBlank() && sortBy.isBlank() && explicitTags.isNullOrBlank()) {
             when (country.uppercase()) {
                 "CN" -> "tv_domestic"
                 "US" -> "tv_american"
@@ -104,11 +114,13 @@ class DoubanCatalogApi @Inject constructor(
                 else -> null
             }
         } else null
-        val rexxar = if (collectionId != null) {
-            safeCollection(collectionId, page)
-        } else {
-            val tags = recommendTagsForQuery(genres, country, language, isTv = true)
-            safeRecommend("tv", tags, doubanSortFor(sortBy), page)
+        val rexxar = when {
+            collectionId != null -> safeCollection(collectionId, page)
+            !explicitTags.isNullOrBlank() -> safeRecommend("tv", explicitTags, doubanSortFor(sortBy), page)
+            else -> {
+                val tags = recommendTagsForQuery(genres, country, language, isTv = true)
+                safeRecommend("tv", tags, doubanSortFor(sortBy), page)
+            }
         }
         if (rexxar.isNotEmpty()) {
             TmdbPaginated(page = page, results = rexxar.map { it.toTvDto() })

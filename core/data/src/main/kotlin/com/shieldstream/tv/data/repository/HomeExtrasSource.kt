@@ -100,6 +100,12 @@ class HomeExtrasSource @Inject constructor(
                 add(ss.next(), FeaturedBadge.SERIES_NOW)
                 add(ss.next(), FeaturedBadge.RISING)
             }
+            HomeFilter.ANIME -> {
+                add(ss.next(), FeaturedBadge.POPULAR)
+                add(mm.next(), FeaturedBadge.MOVIE_NOW)
+                add(ss.next(), FeaturedBadge.SERIES_NOW)
+                add(best.toMutableList().next(), FeaturedBadge.ACCLAIMED)
+            }
         }
         picks.map { pick -> async { runCatching { loadFeatured(pick) }.getOrNull() } }.awaitAll().filterNotNull()
     }
@@ -110,7 +116,7 @@ class HomeExtrasSource @Inject constructor(
             .filter { it.backdrop_path != null && it.poster_path != null }
             .filter {
                 when (filter) {
-                    HomeFilter.ALL -> true
+                    HomeFilter.ALL, HomeFilter.ANIME -> true
                     HomeFilter.MOVIES -> it.media_type == "movie"
                     HomeFilter.TV -> it.media_type == "tv"
                 }
@@ -304,6 +310,10 @@ class HomeExtrasSource @Inject constructor(
             texts.get(StringsR.string.data_more_acclaimed_tv_shows) to suspend { series(Query(), acclaimed(150), page = 2) },
             texts.get(StringsR.string.data_gems_to_discover) to suspend { series(Query(), acclaimed(150), page = 3) },
         )
+        HomeFilter.ANIME -> listOf(
+            texts.get(StringsR.string.data_acclaimed_tv_shows) to suspend { series(Query("16"), acclaimed(150)) },
+            texts.get(StringsR.string.data_acclaimed_movies) to suspend { movies(Query("16"), acclaimed(500)) },
+        )
     }
 
     private fun classicRows(filter: HomeFilter): List<Pair<String, suspend () -> List<CatalogItem>>> {
@@ -359,7 +369,7 @@ class HomeExtrasSource @Inject constructor(
                 when (filter) {
                     HomeFilter.MOVIES -> movies(movie, POPULAR)
                     HomeFilter.TV -> series(tv, POPULAR)
-                    HomeFilter.ALL -> mix(movies(movie, POPULAR), series(tv, POPULAR))
+                    HomeFilter.ALL, HomeFilter.ANIME -> mix(movies(movie, POPULAR), series(tv, POPULAR))
                 }
             }
         }

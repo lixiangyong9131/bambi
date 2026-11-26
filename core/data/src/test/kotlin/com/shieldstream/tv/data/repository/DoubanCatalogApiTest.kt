@@ -210,6 +210,44 @@ class DoubanCatalogApiTest {
         assertEquals("Fallback Movie", movies.first().title)
     }
 
+    @Test
+    fun `anime queries route to tv_animation collection and composite anime tags`() = runTest {
+        val api = mockk<DoubanApi>()
+        coEvery {
+            api.rexxarCollection(match { it.contains("tv_animation") })
+        } returns DoubanRexxarCollectionResponseDto(
+            subjectCollectionItems = listOf(
+                DoubanRexxarCollectionItemDto(
+                    id = "701",
+                    title = "药屋少女的呢喃 第三季",
+                    type = "tv",
+                    year = "2026",
+                    pic = DoubanRexxarPicDto(large = "https://img3.doubanio.com/anime.jpg"),
+                ),
+            ),
+        )
+        coEvery {
+            api.rexxarRecommend(match { it.contains("/tv/recommend") && it.contains("%E5%8A%A8%E7%94%BB%2C%E6%82%AC%E7%96%91") })
+        } returns DoubanRexxarRecommendResponseDto(
+            items = listOf(
+                DoubanRexxarCollectionItemDto(
+                    id = "702",
+                    title = "时光代理人 第三季",
+                    type = "tv",
+                    year = "2026",
+                    pic = DoubanRexxarPicDto(large = "https://img3.doubanio.com/mystery.jpg"),
+                ),
+            ),
+        )
+        val catalogApi = newCatalogApi(api)
+
+        val topAnime = catalogApi.discoverTvQuery("douban", mapOf("douban_collection" to "tv_animation", "page" to "1")).results
+        val mysteryAnime = catalogApi.discoverTvQuery("douban", mapOf("douban_tags" to "动画,悬疑", "page" to "1")).results
+
+        assertEquals(listOf("药屋少女的呢喃 第三季"), topAnime.map { it.name })
+        assertEquals(listOf("时光代理人 第三季"), mysteryAnime.map { it.name })
+    }
+
     private fun newCatalogApi(api: DoubanApi): DoubanCatalogApi {
         val cms = mockk<CmsStreams>()
         val prefsEditor = mockk<SharedPreferences.Editor>(relaxed = true) {

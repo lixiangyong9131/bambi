@@ -124,4 +124,14 @@
     <string name="data_tv_american">Series estadounidenses</string>
     <string name="data_tv_korean">Series coreanas</string>
     <string name="data_tv_japanese">Series japonesas</string>
+    <string name="data_top_10_anime_week">Top 10 anime de la semana</string>
+    <string name="data_anime_chinese">Anime chino popular</string>
+    <string name="data_anime_japanese">Anime japonés popular</string>
+    <string name="data_anime_western">Animación occidental</string>
+    <string name="data_anime_movies">Películas de animación</string>
+    <string name="data_anime_japanese_top">Anime japonés aclamado</string>
+    <string name="data_anime_action_fantasy">Acción y fantasía</string>
+    <string name="data_anime_scifi_adventure">Ciencia ficción y aventura</string>
+    <string name="data_anime_mystery">Misterio y suspense</string>
+    <string name="data_anime_comedy">Comedia</string>
 </resources>

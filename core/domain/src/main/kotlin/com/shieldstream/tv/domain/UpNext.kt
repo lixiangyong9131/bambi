@@ -20,7 +20,7 @@ object UpNext {
         filter: HomeFilter,
         maxItems: Int = MAX_CANDIDATES,
     ): List<UpNextCandidate> {
-        if (filter == HomeFilter.MOVIES) return emptyList()
+        if (filter == HomeFilter.MOVIES || filter == HomeFilter.ANIME) return emptyList()
         return all.entries.mapNotNull { (key, progress) -> parse(key, progress) }
             .groupBy { it.showId }
             .values

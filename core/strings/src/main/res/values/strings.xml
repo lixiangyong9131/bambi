@@ -87,6 +87,7 @@
     <string name="common_episodes">剧集</string>
     <string name="common_tv_shows">电视剧</string>
     <string name="common_movies">电影</string>
+    <string name="common_anime">动漫</string>
     <string name="common_settings">设置</string>
     <string name="common_my_list">我的片单</string>
     <string name="episode_code">第%1$d季第%2$d集</string>

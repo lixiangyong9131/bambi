@@ -87,6 +87,7 @@
     <string name="common_episodes">Episodios</string>
     <string name="common_tv_shows">Series</string>
     <string name="common_movies">Películas</string>
+    <string name="common_anime">Anime</string>
     <string name="common_settings">Ajustes</string>
     <string name="common_my_list">Mi lista</string>
     <string name="episode_code">T%1$d:E%2$d</string>

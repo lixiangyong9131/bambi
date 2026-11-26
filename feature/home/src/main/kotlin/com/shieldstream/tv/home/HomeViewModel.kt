@@ -227,6 +227,7 @@ class HomeViewModel @Inject constructor(
                         HomeFilter.ALL -> true
                         HomeFilter.MOVIES -> it.type == MediaType.MOVIE
                         HomeFilter.TV -> it.type == MediaType.TV
+                        HomeFilter.ANIME -> false
                     }
                 }.take(rowQuery.maxItems)
             }
@@ -492,6 +493,7 @@ class HomeViewModel @Inject constructor(
         when (query.filter) {
             HomeFilter.MOVIES -> load(MediaType.MOVIE).map { MediaType.MOVIE to it }
             HomeFilter.TV -> load(MediaType.TV).map { MediaType.TV to it }
+            HomeFilter.ANIME -> emptyList()
             HomeFilter.ALL -> {
                 val movies = async { load(MediaType.MOVIE).map { MediaType.MOVIE to it } }
                 val shows = async { load(MediaType.TV).map { MediaType.TV to it } }

@@ -64,6 +64,7 @@ fun MainScreen(
     val filter = when (tab) {
         TopTab.TV -> HomeFilter.TV
         TopTab.MOVIES -> HomeFilter.MOVIES
+        TopTab.ANIME -> HomeFilter.ANIME
         else -> HomeFilter.ALL
     }
     val episodeCenter: EpisodeCenterViewModel? = if (tab == TopTab.EPISODES) hiltViewModel() else null

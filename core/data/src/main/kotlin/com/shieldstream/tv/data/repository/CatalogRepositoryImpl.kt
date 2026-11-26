@@ -263,6 +263,18 @@ class CatalogRepositoryImpl @Inject constructor(
             RowSpec("t_animation", texts.get(StringsR.string.data_animation)) { page -> tmdb.discoverTv(key, "16", page = page).results.map { it.toCatalogItem() } },
             RowSpec("t_top", texts.get(StringsR.string.data_critically_acclaimed)) { page -> tmdb.topRatedTv(key, page = page).results.map { it.toCatalogItem() } },
         )
+        HomeFilter.ANIME -> listOf(
+            RowSpec("a_top10", texts.get(StringsR.string.data_top_10_anime_week), RowStyle.TOP10) { page -> tmdb.discoverTvQuery(key, mapOf("douban_collection" to "tv_animation", "page" to page.toString())).results.map { it.toCatalogItem() } },
+            RowSpec("a_chinese", texts.get(StringsR.string.data_anime_chinese)) { page -> tmdb.discoverTvQuery(key, mapOf("with_origin_country" to "CN", "with_genres" to "16", "page" to page.toString())).results.map { it.toCatalogItem() } },
+            RowSpec("a_japanese", texts.get(StringsR.string.data_anime_japanese)) { page -> tmdb.discoverTvQuery(key, mapOf("with_origin_country" to "JP", "with_genres" to "16", "page" to page.toString())).results.map { it.toCatalogItem() } },
+            RowSpec("a_western", texts.get(StringsR.string.data_anime_western)) { page -> tmdb.discoverTvQuery(key, mapOf("with_origin_country" to "US", "with_genres" to "16", "page" to page.toString())).results.map { it.toCatalogItem() } },
+            RowSpec("a_movies", texts.get(StringsR.string.data_anime_movies)) { page -> tmdb.discoverMovieQuery(key, mapOf("with_genres" to "16", "page" to page.toString())).results.map { it.toCatalogItem() } },
+            RowSpec("a_japanese_top", texts.get(StringsR.string.data_anime_japanese_top)) { page -> tmdb.discoverTvQuery(key, mapOf("with_origin_country" to "JP", "with_genres" to "16", "sort_by" to "vote_average.desc", "page" to page.toString())).results.map { it.toCatalogItem() } },
+            RowSpec("a_action_fantasy", texts.get(StringsR.string.data_anime_action_fantasy)) { page -> tmdb.discoverTvQuery(key, mapOf("douban_tags" to "动画,动作", "page" to page.toString())).results.map { it.toCatalogItem() } },
+            RowSpec("a_scifi_adventure", texts.get(StringsR.string.data_anime_scifi_adventure)) { page -> tmdb.discoverTvQuery(key, mapOf("douban_tags" to "动画,科幻", "page" to page.toString())).results.map { it.toCatalogItem() } },
+            RowSpec("a_mystery", texts.get(StringsR.string.data_anime_mystery)) { page -> tmdb.discoverTvQuery(key, mapOf("douban_tags" to "动画,悬疑", "page" to page.toString())).results.map { it.toCatalogItem() } },
+            RowSpec("a_comedy", texts.get(StringsR.string.data_anime_comedy)) { page -> tmdb.discoverTvQuery(key, mapOf("douban_tags" to "动画,喜剧", "page" to page.toString())).results.map { it.toCatalogItem() } },
+        )
     }
 
     override suspend fun trending(): List<CatalogItem> =
@@ -329,6 +341,7 @@ class CatalogRepositoryImpl @Inject constructor(
             HomeFilter.ALL -> listOf(movies[0], shows[0], movies[1], shows[1], movies[2], movies[3], shows[2])
             HomeFilter.MOVIES -> movies
             HomeFilter.TV -> shows
+            HomeFilter.ANIME -> listOf(movies[1], shows[1], movies[0], shows[0], shows[2])
         }
     }
 

@@ -49,6 +49,7 @@ enum class TopTab {
     EPISODES,
     TV,
     MOVIES,
+    ANIME,
     MY_LIST,
 }
 
@@ -60,6 +61,7 @@ private val TopTab.labelResource: Int
         TopTab.EPISODES -> StringsR.string.common_episodes
         TopTab.TV -> StringsR.string.common_tv_shows
         TopTab.MOVIES -> StringsR.string.common_movies
+        TopTab.ANIME -> StringsR.string.common_anime
         TopTab.MY_LIST -> StringsR.string.common_my_list
     }
 
