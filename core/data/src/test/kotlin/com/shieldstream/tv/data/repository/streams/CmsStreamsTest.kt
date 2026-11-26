@@ -1,15 +1,24 @@
 package com.shieldstream.tv.data.repository.streams
 
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import java.net.ServerSocket
+import java.util.concurrent.atomic.AtomicInteger
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
 class CmsStreamsTest {
 
     private val cms = CmsStreams(
@@ -76,5 +85,44 @@ class CmsStreamsTest {
             ),
             urls,
         )
+    }
+
+    @Test
+    fun `sources include verified dyttzy and ruyi and exclude broken bfzy`() {
+        val labels = CmsStreams.SOURCES.map { it.first }
+        assertTrue("电影天堂" in labels)
+        assertTrue("如意资源" in labels)
+        assertFalse("暴风资源" in labels)
+    }
+
+    @Test
+    fun `unreachable site enters cooldown after one failure and skips subsequent queries`() = runBlocking {
+        val hits = AtomicInteger(0)
+        val server = ServerSocket(0)
+        val port = server.localPort
+        val worker = Thread {
+            runCatching {
+                while (!server.isClosed) {
+                    val sock = server.accept()
+                    hits.incrementAndGet()
+                    sock.getOutputStream().write("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n".toByteArray())
+                    sock.close()
+                }
+            }
+        }
+        worker.isDaemon = true
+        worker.start()
+        try {
+            val base = "http://127.0.0.1:$port/api.php/provide/vod"
+            val first = cms.fetchDetailForTitle(base, "庆余年：第二季")
+            val second = cms.fetchDetailForTitle(base, "凡人修仙传")
+
+            assertNull(first)
+            assertNull(second)
+            assertTrue(cms.isSiteCoolingDown(base))
+            assertEquals(1, hits.get())
+        } finally {
+            server.close()
+        }
     }
 }

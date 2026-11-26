@@ -57,18 +57,21 @@ class CmsStreams @Inject constructor(
         private const val RYI = "http://cj.rycjapi.com/api.php/provide/vod"                    // 如意资源
         private const val JISU = "https://www.jisuzy.com/api.php/provide/vod"             // 速播资源(备域名)
         private const val HONGNIU = "https://www.hongniuzy2.com/api.php/provide/vod"      // 红牛资源
-        // Put consistently low-latency direct sources first; slow/ISP-throttled mirrors stay at the tail.
-        private val SOURCES = listOf(
+        // Put consistently low-latency direct sources first; optional/region-sensitive mirrors stay at the tail
+        // with automatic per-device cooldown so blocked/poisoned devices pay zero ongoing cost.
+        internal val SOURCES = listOf(
             "非凡影视" to API,
             "iQIYI" to IQIYI,
             "红牛资源" to HONGNIU,
             "速播资源" to JISU,
             "如意资源" to RYI,
+            "电影天堂" to DYTT,
         )
         // Metadata & search use fast responsive endpoints first so Details/Search never stall on blocked edges.
         private val SEARCH_SOURCES = listOf(API, IQIYI, HONGNIU, JISU)
         private const val CACHE_TTL_MS = 10 * 60_000L
         private const val DNS_TTL_MS = 5 * 60_000L
+        internal const val SITE_COOLDOWN_MS = 30 * 60_000L
 
         /**
          * System DNS first (0ms overhead for clean hosts), falling back to DoH only when system DNS
@@ -110,10 +113,10 @@ class CmsStreams @Inject constructor(
             }
         }
 
-        // Fast timeouts so unresponsive mirrors never stall source discovery on Details entry.
+        // Fast timeouts so unresponsive/DNS-poisoned mirrors fail quickly once and enter cooldown.
         private val cmsClient: OkHttpClient = OkHttpClient.Builder()
             .dns(SmartDns)
-            .connectTimeout(2000, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .connectTimeout(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
             .readTimeout(3500, java.util.concurrent.TimeUnit.MILLISECONDS)
             .writeTimeout(3500, java.util.concurrent.TimeUnit.MILLISECONDS)
             .build()
@@ -147,9 +150,28 @@ class CmsStreams @Inject constructor(
     private val titleBundleLocks = ConcurrentHashMap<String, Mutex>()
     private val siteDetailCache = ConcurrentHashMap<String, CachedSiteDetail>()
     private val siteDetailLocks = ConcurrentHashMap<String, Mutex>()
+    private val siteCooldownUntil = ConcurrentHashMap<String, Long>()
     @Volatile
     private var initialPool: InitialPool? = null
     private val initialPoolLock = Mutex()
+
+    private sealed interface SiteResponse {
+        data class Ok(val body: String) : SiteResponse
+        data object Unavailable : SiteResponse
+    }
+
+    internal fun isSiteCoolingDown(base: String, nowMs: Long = System.currentTimeMillis()): Boolean {
+        val until = siteCooldownUntil[base] ?: return false
+        if (nowMs >= until) {
+            siteCooldownUntil.remove(base, until)
+            return false
+        }
+        return true
+    }
+
+    internal fun markSiteUnavailable(base: String, nowMs: Long = System.currentTimeMillis()) {
+        siteCooldownUntil[base] = nowMs + SITE_COOLDOWN_MS
+    }
 
     /** Match pinyin initials / full pinyin (xxrj -> title) against recently updated CMS titles. */
     suspend fun searchByInitials(query: String): List<String> {
@@ -172,7 +194,10 @@ class CmsStreams @Inject constructor(
         val base = SEARCH_SOURCES.firstOrNull() ?: return@withLock emptyList()
         val pool = withContext(Dispatchers.IO) {
             val pages = (1..5).map { pg ->
-                async { runCatching { parseList(get("$base?ac=vod&pg=$pg")) }.getOrNull().orEmpty() }
+                async {
+                    val body = (getForSite(base, "$base?ac=vod&pg=$pg") as? SiteResponse.Ok)?.body
+                    runCatching { parseList(body) }.getOrNull().orEmpty()
+                }
             }.awaitAll()
             val names = LinkedHashSet<String>()
             pages.forEach { rows -> rows.forEach { r -> names += clean(str(r, "vod_name")) } }
@@ -197,8 +222,8 @@ class CmsStreams @Inject constructor(
         val perSource = withContext(Dispatchers.IO) {
             SEARCH_SOURCES.map { base ->
                 async {
-                    val rows = parseList(get("$base?ac=vod&wd=" + URLEncoder.encode(query, "UTF-8")))
-                        ?: return@async emptyList()
+                    val body = (getForSite(base, "$base?ac=vod&wd=" + URLEncoder.encode(query, "UTF-8")) as? SiteResponse.Ok)?.body
+                    val rows = parseList(body) ?: return@async emptyList()
                     rows.map { r ->
                         Hit(
                             title = str(r, "vod_name"),
@@ -263,18 +288,22 @@ class CmsStreams @Inject constructor(
         }
     }
 
-    private suspend fun fetchDetailForTitle(base: String, rawTitle: String): JsonObject? {
+    internal suspend fun fetchDetailForTitle(base: String, rawTitle: String): JsonObject? {
+        if (isSiteCoolingDown(base)) return null
         val queries = queryCandidates(rawTitle)
         if (queries.isEmpty()) return null
         val cacheKey = "$base|${queries.first()}"
         siteDetailCache[cacheKey]?.takeIf { System.currentTimeMillis() - it.at < CACHE_TTL_MS }?.let { return it.detail }
         return siteDetailLocks.getOrPut(cacheKey) { Mutex() }.withLock {
+            if (isSiteCoolingDown(base)) return@withLock null
             val now = System.currentTimeMillis()
             siteDetailCache[cacheKey]?.takeIf { now - it.at < CACHE_TTL_MS }?.let { return@withLock it.detail }
 
             var bestMatch: JsonObject? = null
             for (q in queries) {
-                val rows = parseList(get("$base?ac=vod&wd=" + URLEncoder.encode(q, "UTF-8"))) ?: continue
+                val resp = getForSite(base, "$base?ac=vod&wd=" + URLEncoder.encode(q, "UTF-8"))
+                if (resp !is SiteResponse.Ok) return@withLock null
+                val rows = parseList(resp.body) ?: continue
                 if (rows.isEmpty()) continue
                 val matched = pickBestMatch(rows, rawTitle)
                 if (matched != null) {
@@ -284,7 +313,9 @@ class CmsStreams @Inject constructor(
             }
             val cand = bestMatch ?: return@withLock null
             val vid = str(cand, "vod_id")
-            val detailRows = parseList(get("$base?ac=detail&ids=" + URLEncoder.encode(vid, "UTF-8")))
+            val detailResp = getForSite(base, "$base?ac=detail&ids=" + URLEncoder.encode(vid, "UTF-8"))
+            if (detailResp !is SiteResponse.Ok) return@withLock null
+            val detailRows = parseList(detailResp.body)
             val v = detailRows?.firstOrNull() ?: cand
             siteDetailCache[cacheKey] = CachedSiteDetail(now, v)
             v
@@ -329,9 +360,11 @@ class CmsStreams @Inject constructor(
         withContext(Dispatchers.IO) {
             SOURCES.mapIndexed { idx, (label, base) ->
                 launch {
-                    val sources = kotlinx.coroutines.withTimeoutOrNull(4_500L) {
+                    val probed = kotlinx.coroutines.withTimeoutOrNull(4_500L) {
                         runCatching { searchAndBuild(base, rawTitle, episode, label) }.getOrDefault(emptyList())
-                    }.orEmpty()
+                    }
+                    if (probed == null) markSiteUnavailable(base)
+                    val sources = probed.orEmpty()
                     android.util.Log.i("CmsStream", "$label -> ${sources.size} sources")
                     if (sources.isNotEmpty()) {
                         val snapshot = lock.withLock {
@@ -436,18 +469,28 @@ class CmsStreams @Inject constructor(
         return emptyList()
     }
 
-    private fun get(url: String): String? = runCatching {
-        val req = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
-        cmsClient.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) {
-                android.util.Log.w("CmsStream", "GET $url -> HTTP ${resp.code}")
-                return null
+    private fun getForSite(base: String, url: String): SiteResponse {
+        if (isSiteCoolingDown(base)) return SiteResponse.Unavailable
+        return try {
+            val req = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
+            cmsClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    android.util.Log.w("CmsStream", "GET $url -> HTTP ${resp.code}")
+                    if (resp.code >= 500 || resp.code == 403 || resp.code == 404) {
+                        markSiteUnavailable(base)
+                    }
+                    SiteResponse.Unavailable
+                } else {
+                    siteCooldownUntil.remove(base)
+                    SiteResponse.Ok(resp.body?.string().orEmpty())
+                }
             }
-            resp.body?.string()
+        } catch (e: Throwable) {
+            android.util.Log.w("CmsStream", "GET $url failed: ${e.javaClass.simpleName}: ${e.message}")
+            markSiteUnavailable(base)
+            SiteResponse.Unavailable
         }
-    }.onFailure { e ->
-        android.util.Log.w("CmsStream", "GET $url failed: ${e.javaClass.simpleName}: ${e.message}")
-    }.getOrNull()
+    }
 
     private fun parseList(body: String?): List<JsonObject>? {
         if (body.isNullOrBlank()) return null
