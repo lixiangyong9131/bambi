@@ -287,4 +287,5 @@
     <string name="photo_page_sending">Enviando…</string>
     <string name="photo_page_done">¡Listo! Ya está en la tele.</string>
     <string name="photo_page_error">No se pudo enviar. Inténtalo de nuevo.</string>
+    <string name="settings_cat_sources">Servicios y fuentes</string>
 </resources>

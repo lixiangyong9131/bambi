@@ -1,17 +1,14 @@
 package com.shieldstream.tv.home
 
-import com.shieldstream.tv.strings.R as StringsR
-import com.shieldstream.tv.strings.localizedStringResource
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -23,12 +20,21 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -37,8 +43,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,35 +64,41 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.shieldstream.tv.model.CatalogItem
-import com.shieldstream.tv.ui.component.AppIcons
-import com.shieldstream.tv.ui.component.PosterCard
-import com.shieldstream.tv.ui.component.tvClickable
-import kotlinx.coroutines.delay
-import com.shieldstream.tv.ui.component.LineIcons
-import com.shieldstream.tv.ui.component.ActionMenuItem
+import com.shieldstream.tv.strings.R as StringsR
+import com.shieldstream.tv.strings.localizedStringResource
 import com.shieldstream.tv.ui.component.ActionMenuDialog
-import androidx.compose.foundation.lazy.grid.GridItemSpan
-
-private const val KEYS = "abcdefghijklmnopqrstuvwxyz1234567890"
-private const val KEY_COLUMNS = 6
+import com.shieldstream.tv.ui.component.ActionMenuItem
+import com.shieldstream.tv.ui.component.AppIcons
+import com.shieldstream.tv.ui.component.LineIcons
+import com.shieldstream.tv.ui.component.PosterCard
+import com.shieldstream.tv.ui.component.ProvidePivotScroll
+import com.shieldstream.tv.ui.component.onBackKey
+import com.shieldstream.tv.ui.component.requestFocusWithRetry
+import com.shieldstream.tv.ui.component.tvClickable
+import com.shieldstream.tv.ui.theme.AppColors
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.launch
 
 // 5 列大键位，遥控器上下左右移动更少、更好按。
 private val PINYIN_ROWS = listOf("qwert", "yuiop", "asdfg", "hjklz", "xcvbn", "m1234")
 private val QWERTY_ROWS = listOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
+private const val COMPACT_GENRE_COUNT = 9
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SearchScreen(
     onItemClick: (CatalogItem) -> Unit,
@@ -94,8 +108,12 @@ fun SearchScreen(
 ) {
     val query by viewModel.query.collectAsStateWithLifecycle()
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val filterState by viewModel.filterState.collectAsStateWithLifecycle()
     val notice by viewModel.notice.collectAsStateWithLifecycle()
     var lockedPick by remember { mutableStateOf<CatalogItem?>(null) }
+    var keyboardOpen by rememberSaveable { mutableStateOf(false) }
+    var genresExpanded by rememberSaveable { mutableStateOf(false) }
+
     LaunchedEffect(notice) {
         if (notice != null) {
             delay(3_500)
@@ -115,14 +133,19 @@ fun SearchScreen(
             ),
         )
     }
+
     val qwerty by viewModel.qwerty.collectAsStateWithLifecycle()
     val composing by viewModel.composing.collectAsStateWithLifecycle()
     val candidates by viewModel.candidates.collectAsStateWithLifecycle()
 
-    val firstKey = initialFocusRequester ?: remember { FocusRequester() }
-    val layoutKey = remember { FocusRequester() }
+    val searchBoxRequester = initialFocusRequester ?: remember { FocusRequester() }
+    val firstKeyRequester = remember { FocusRequester() }
+    val layoutKeyRequester = remember { FocusRequester() }
+    val firstFilterRequester = remember { FocusRequester() }
     val cardRequester = remember { FocusRequester() }
     var lastCardKey by rememberSaveable { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
     LaunchedEffect(Unit) {
         withFrameNanos { }
         val backOnCard = lastCardKey != null && run {
@@ -132,7 +155,9 @@ fun SearchScreen(
             }
             false
         }
-        if (!backOnCard) runCatching { firstKey.requestFocus() }
+        if (!backOnCard) {
+            searchBoxRequester.requestFocusWithRetry()
+        }
     }
 
     val keyboard = LocalSoftwareKeyboardController.current
@@ -153,6 +178,7 @@ fun SearchScreen(
         }
         TextFieldValue(styled, TextRange(text.length))
     }
+
     LaunchedEffect(systemKeyboard) {
         if (systemKeyboard) {
             val full = query + composing
@@ -162,20 +188,51 @@ fun SearchScreen(
             keyboard?.show()
         }
     }
+
+    var wasKeyboardOpen by remember { mutableStateOf(keyboardOpen) }
+    LaunchedEffect(keyboardOpen) {
+        if (keyboardOpen && !wasKeyboardOpen) {
+            withFrameNanos { }
+            firstKeyRequester.requestFocusWithRetry()
+        } else if (!keyboardOpen && wasKeyboardOpen) {
+            withFrameNanos { }
+            searchBoxRequester.requestFocusWithRetry()
+        }
+        wasKeyboardOpen = keyboardOpen
+    }
+
     fun closeSystemKeyboard() {
         keyboard?.hide()
         systemKeyboard = false
-        runCatching { layoutKey.requestFocus() }
+        runCatching { layoutKeyRequester.requestFocus() }
     }
 
-    BackHandler(enabled = lockedPick != null || systemKeyboard) {
+    fun collapseKeyboard() {
+        if (systemKeyboard) {
+            keyboard?.hide()
+            systemKeyboard = false
+        }
+        keyboardOpen = false
+    }
+
+    val interceptBack = lockedPick != null || systemKeyboard || keyboardOpen
+    val handleLocalBack: () -> Unit = {
         when {
             lockedPick != null -> lockedPick = null
             systemKeyboard -> closeSystemKeyboard()
+            keyboardOpen -> collapseKeyboard()
         }
     }
+    BackHandler(enabled = interceptBack, onBack = handleLocalBack)
 
-    Row(Modifier.fillMaxSize().background(Color.Black)) {
+    val leftColumnWidth = if (keyboardOpen && qwerty) 452.dp else 390.dp
+
+    Row(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .onBackKey(enabled = interceptBack, onBack = handleLocalBack),
+    ) {
         if (onOpenRail != null) {
             Box(
                 Modifier
@@ -185,119 +242,222 @@ fun SearchScreen(
                     .focusable(),
             )
         }
+
         Column(
             Modifier
-                .width(if (qwerty) 452.dp else 330.dp)
+                .width(leftColumnWidth)
                 .fillMaxHeight()
-                .padding(start = 40.dp, top = 40.dp, end = 16.dp),
+                .padding(start = 36.dp, top = 34.dp, end = 16.dp, bottom = 20.dp),
         ) {
             Row(
-                Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(Color(0xFF1C1C1F))
-                    .then(if (systemKeyboard) Modifier.border(2.dp, Color.White, RoundedCornerShape(4.dp)) else Modifier)
-                    .padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                Icon(AppIcons.Search, contentDescription = null, tint = Color.White.copy(alpha = 0.6f))
-                Spacer(Modifier.width(10.dp))
-                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                    BasicTextField(
-                        value = if (systemKeyboard) field else display,
-                        onValueChange = {
-                            if (systemKeyboard) {
-                                field = it
-                                viewModel.setQuery(it.text.replace("\n", ""))
-                            }
-                        },
-                        enabled = true,
-                        readOnly = !systemKeyboard,
-                        singleLine = true,
-                        textStyle = MaterialTheme.typography.titleMedium.copy(color = Color.White),
-                        cursorBrush = SolidColor(Color.White),
-                        keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = { closeSystemKeyboard() }, onDone = { closeSystemKeyboard() }),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .focusRequester(fieldRequester)
-                            .focusProperties { canFocus = systemKeyboard }
-                            .onPreviewKeyEvent { event ->
-                                val exit = event.key == Key.DirectionDown || event.key == Key.Back || event.key == Key.Escape
-                                if (!exit) return@onPreviewKeyEvent false
-                                if (event.type == KeyEventType.KeyUp) closeSystemKeyboard()
-                                true
-                            }
-                            .onFocusChanged { if (!it.isFocused && systemKeyboard) systemKeyboard = false },
-                    )
-                    if (query.isEmpty()) {
-                        Text(
-                            text = localizedStringResource(StringsR.string.home_search),
-                            color = Color.White.copy(alpha = 0.45f),
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                var searchBoxFocused by remember { mutableStateOf(false) }
+                Row(
+                    Modifier
+                        .weight(1f)
+                        .height(46.dp)
+                        .onFocusChanged { searchBoxFocused = it.isFocused }
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(
+                            when {
+                                systemKeyboard -> Color(0xFF1C1C1F)
+                                searchBoxFocused -> Color.White
+                                else -> Color(0xFF1C1C1F)
+                            },
                         )
-                    }
-                }
-            }
-            Spacer(Modifier.height(10.dp))
-            // 候选词条固定在键盘上方，且始终占位：否则候选出现/消失会把按键推上推下，
-            // 遥控器用户点一次 G 再点 Y 就点到别的键上了。
-            if (!qwerty) {
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                        .border(
+                            width = 1.dp,
+                            color = when {
+                                systemKeyboard -> Color.White
+                                searchBoxFocused -> Color.White
+                                keyboardOpen -> AppColors.Accent
+                                else -> Color.White.copy(alpha = 0.16f)
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                        )
+                        .then(
+                            if (systemKeyboard) {
+                                Modifier
+                            } else {
+                                Modifier
+                                    .focusRequester(searchBoxRequester)
+                                    .focusProperties {
+                                        down = if (keyboardOpen) firstKeyRequester else firstFilterRequester
+                                    }
+                                    .tvClickable {
+                                        keyboardOpen = !keyboardOpen
+                                    }
+                            },
+                        )
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    itemsIndexed(candidates, key = { _, cand -> cand }) { _, cand ->
-                        CandidateChip(text = cand, onClick = { viewModel.commitCandidate(cand) })
+                    val iconTint = if (searchBoxFocused && !systemKeyboard) Color.Black else Color.White.copy(alpha = 0.7f)
+                    Icon(AppIcons.Search, contentDescription = null, tint = iconTint, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                        BasicTextField(
+                            value = if (systemKeyboard) field else display,
+                            onValueChange = {
+                                if (systemKeyboard) {
+                                    field = it
+                                    viewModel.setQuery(it.text.replace("\n", ""))
+                                }
+                            },
+                            enabled = true,
+                            readOnly = !systemKeyboard,
+                            singleLine = true,
+                            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                                color = if (searchBoxFocused && !systemKeyboard) Color.Black else Color.White,
+                                fontWeight = FontWeight.Medium,
+                            ),
+                            cursorBrush = SolidColor(Color.White),
+                            keyboardOptions = KeyboardOptions(autoCorrectEnabled = false, imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = { closeSystemKeyboard() }, onDone = { closeSystemKeyboard() }),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(fieldRequester)
+                                .focusProperties { canFocus = systemKeyboard }
+                                .onPreviewKeyEvent { event ->
+                                    val exit = event.key == Key.DirectionDown || event.key == Key.Back || event.key == Key.Escape
+                                    if (!exit) return@onPreviewKeyEvent false
+                                    if (event.type == KeyEventType.KeyUp) closeSystemKeyboard()
+                                    true
+                                }
+                                .onFocusChanged { if (!it.isFocused && systemKeyboard) systemKeyboard = false },
+                        )
+                        if (query.isEmpty() && composing.isEmpty()) {
+                            Text(
+                                text = localizedStringResource(StringsR.string.home_search_open_keyboard_hint),
+                                color = if (searchBoxFocused && !systemKeyboard) Color.Black.copy(alpha = 0.65f) else Color.White.copy(alpha = 0.48f),
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                 }
-                Spacer(Modifier.height(8.dp))
+
+                if (keyboardOpen) {
+                    CompactActionChip(
+                        label = localizedStringResource(StringsR.string.home_search_close_keyboard),
+                        onClick = { collapseKeyboard() },
+                    )
+                } else if (query.isNotEmpty() || composing.isNotEmpty()) {
+                    CompactActionChip(
+                        label = localizedStringResource(StringsR.string.home_clear),
+                        onClick = {
+                            viewModel.clearComposing()
+                            viewModel.clear()
+                        },
+                    )
+                }
             }
-            OnScreenKeyboard(
-                qwerty = qwerty,
-                composing = composing,
-                candidateCount = if (qwerty) 0 else candidates.size,
-                firstKeyRequester = firstKey,
-                layoutKeyRequester = layoutKey,
-                onChar = { c ->
-                    if (qwerty) viewModel.type(c) else viewModel.typeLetter(c)
-                },
-                onBackspace = {
-                    // En modo pinyin, primero borra el buffer; si está vacío, borra la consulta.
-                    if (qwerty || !viewModel.backspaceComposing()) viewModel.backspace()
-                },
-                onClear = viewModel::clear,
-                onToggleLayout = viewModel::toggleKeyboardLayout,
-                onSystemKeyboard = { systemKeyboard = true },
-                onSearch = viewModel::flushComposingToQuery,
-            )
+
+            Spacer(Modifier.height(12.dp))
+
+            if (keyboardOpen) {
+                // 候选词条固定在键盘上方，且始终占位：否则候选出现/消失会把按键推上推下，
+                // 遥控器用户点一次 G 再点 Y 就点到别的键上了。
+                if (!qwerty) {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                    ) {
+                        itemsIndexed(candidates, key = { _, cand -> cand }) { _, cand ->
+                            CandidateChip(text = cand, onClick = { viewModel.commitCandidate(cand) })
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+                OnScreenKeyboard(
+                    qwerty = qwerty,
+                    composing = composing,
+                    candidateCount = if (qwerty) 0 else candidates.size,
+                    columnWidth = leftColumnWidth,
+                    firstKeyRequester = firstKeyRequester,
+                    layoutKeyRequester = layoutKeyRequester,
+                    onChar = { c ->
+                        if (qwerty) viewModel.type(c) else viewModel.typeLetter(c)
+                    },
+                    onBackspace = {
+                        // En modo pinyin, primero borra el buffer; si está vacío, borra la consulta.
+                        if (qwerty || !viewModel.backspaceComposing()) viewModel.backspace()
+                    },
+                    onClear = {
+                        viewModel.clearComposing()
+                        viewModel.clear()
+                    },
+                    onToggleLayout = viewModel::toggleKeyboardLayout,
+                    onSystemKeyboard = { systemKeyboard = true },
+                    onSearch = {
+                        viewModel.flushComposingToQuery()
+                    },
+                    onCollapse = { collapseKeyboard() },
+                )
+            } else {
+                SearchFilterPanel(
+                    filterState = filterState,
+                    genresExpanded = genresExpanded,
+                    firstFilterRequester = firstFilterRequester,
+                    searchBoxRequester = searchBoxRequester,
+                    onToggleGenresExpanded = { genresExpanded = !genresExpanded },
+                    onSelectMediaType = viewModel::selectMediaType,
+                    onSelectSort = viewModel::selectSort,
+                    onToggleGenre = viewModel::toggleGenre,
+                    onClearGenres = viewModel::clearGenres,
+                    onSelectRegion = viewModel::selectRegion,
+                    onSelectEra = viewModel::selectEra,
+                    onReset = viewModel::resetFilters,
+                )
+            }
         }
 
-        Column(Modifier.weight(1f).fillMaxHeight().padding(top = 40.dp, end = 24.dp)) {
+        Column(Modifier.weight(1f).fillMaxHeight().padding(top = 34.dp, end = 24.dp)) {
             val header = when (val s = state) {
                 SearchUiState.Loading -> localizedStringResource(StringsR.string.home_searching)
-                is SearchUiState.Suggestions -> localizedStringResource(StringsR.string.home_most_watched_today)
+                is SearchUiState.Browse -> buildBrowseHeader(s.filter)
                 is SearchUiState.Results -> localizedStringResource(StringsR.string.home_search_results_for, s.query)
                 is SearchUiState.Empty -> localizedStringResource(StringsR.string.home_no_results_for, s.query)
                 is SearchUiState.Error -> s.message
             }
-            Text(
-                text = header,
-                color = Color.White,
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+            val isBrowseLoading = (state as? SearchUiState.Browse)?.isLoading == true
+            val isLoadingMore = (state as? SearchUiState.Browse)?.isLoadingMore == true
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(start = 12.dp, bottom = 8.dp),
-            )
+            ) {
+                Text(
+                    text = header,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (isBrowseLoading || isLoadingMore) {
+                    Spacer(Modifier.width(10.dp))
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        color = AppColors.Accent,
+                        strokeWidth = 2.dp,
+                    )
+                }
+            }
+
             val items = when (val s = state) {
-                is SearchUiState.Suggestions -> s.items
+                is SearchUiState.Browse -> s.items
                 is SearchUiState.Results -> s.items
                 else -> emptyList()
             }
+            val browseState = state as? SearchUiState.Browse
             val results = state as? SearchUiState.Results
             val locked = results?.locked.orEmpty()
             val pending = results?.pending.orEmpty()
+
             notice?.let { message ->
                 Text(
                     text = message,
@@ -310,57 +470,153 @@ fun SearchScreen(
                         .padding(horizontal = 14.dp, vertical = 6.dp),
                 )
             }
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(118.dp),
-                contentPadding = PaddingValues(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalArrangement = Arrangement.spacedBy(18.dp),
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                if (state is SearchUiState.Loading) {
-                    items(10, key = { "search_skeleton_$it" }) {
-                        Box(
-                            Modifier
-                                .width(118.dp)
-                                .aspectRatio(2f / 3f)
-                                .background(SkeletonColor, RoundedCornerShape(6.dp)),
-                        )
+
+            val gridState = rememberLazyGridState()
+            var gridHasFocus by remember { mutableStateOf(false) }
+            var activeGridIndex by remember { mutableStateOf(-1) }
+            var gridAnchorKey by remember { mutableStateOf<String?>(null) }
+            var gridAnchorIndex by remember { mutableStateOf(-1) }
+            var lastGridSizeSeen by remember { mutableStateOf(items.size) }
+            val gridAnchorRequester = remember { FocusRequester() }
+
+            if (browseState != null && browseState.canLoadMore) {
+                LaunchedEffect(gridState, items.size, browseState.canLoadMore) {
+                    snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+                        .collectLatest { lastVisible ->
+                            if (items.isNotEmpty() && lastVisible >= items.lastIndex - 6) {
+                                if (gridHasFocus && lastCardKey != null) {
+                                    gridAnchorKey = lastCardKey
+                                    gridAnchorIndex = activeGridIndex
+                                }
+                                viewModel.loadMoreFiltered()
+                            }
+                        }
+                }
+            }
+            if (browseState != null) {
+                LaunchedEffect(items.size, browseState.filter) {
+                    val grew = items.size > lastGridSizeSeen
+                    lastGridSizeSeen = items.size
+                    val anchorKey = gridAnchorKey
+                    val anchorIdx = gridAnchorIndex
+                    if (grew && anchorKey != null) {
+                        withFrameNanos { }
+                        val driftedBack = !gridHasFocus || (lastCardKey != anchorKey && activeGridIndex in 0 until anchorIdx)
+                        if (driftedBack) {
+                            runCatching { gridAnchorRequester.requestFocus() }
+                        }
+                    }
+                    if (grew || items.isEmpty()) {
+                        gridAnchorKey = null
+                        gridAnchorIndex = -1
                     }
                 }
-                items(items, key = { it.key }) { item ->
-                    PosterCard(
-                        item = item,
-                        onClick = { onItemClick(item) },
-                        onFocused = { lastCardKey = item.key },
-                        width = 118.dp,
-                        modifier = if (item.key == lastCardKey) Modifier.focusRequester(cardRequester) else Modifier,
-                    )
-                }
-                if (locked.isNotEmpty()) {
-                    item(key = "locked_header", span = { GridItemSpan(maxLineSpan) }) {
-                        Column(Modifier.padding(top = 12.dp)) {
+            }
+
+            when {
+                browseState != null && !browseState.isLoading && browseState.error != null && items.isEmpty() -> {
+                    Box(Modifier.fillMaxSize().padding(12.dp), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text(
-                                localizedStringResource(StringsR.string.home_ask_an_adult),
-                                color = Color.White,
-                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                text = browseState.error,
+                                color = Color.White.copy(alpha = 0.75f),
+                                style = MaterialTheme.typography.bodyLarge,
                             )
-                            Text(
-                                localizedStringResource(StringsR.string.home_ask_an_adult_hint),
-                                color = Color.White.copy(alpha = 0.6f),
-                                style = MaterialTheme.typography.bodyMedium,
+                            CompactActionChip(
+                                label = localizedStringResource(StringsR.string.home_retry),
+                                primary = true,
+                                onClick = viewModel::retryBrowse,
                             )
                         }
                     }
-                    items(locked, key = { "locked_" + it.key }) { item ->
-                        val asked = item.key in pending
-                        PosterCard(
-                            item = item,
-                            onClick = { if (!asked) lockedPick = item },
-                            onFocused = { lastCardKey = "locked_" + item.key },
-                            width = 118.dp,
-                            modifier = if ("locked_" + item.key == lastCardKey) Modifier.focusRequester(cardRequester) else Modifier,
-                            overlay = { LockedOverlay(asked) },
-                        )
+                }
+                browseState != null && !browseState.isLoading && items.isEmpty() -> {
+                    val summary = formatBrowseSummary(browseState.filter)
+                    Box(Modifier.fillMaxSize().padding(12.dp), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(
+                                text = localizedStringResource(StringsR.string.home_filter_empty, summary),
+                                color = Color.White.copy(alpha = 0.75f),
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            if (browseState.filter.canReset) {
+                                CompactActionChip(
+                                    label = localizedStringResource(StringsR.string.home_filter_reset_all),
+                                    primary = true,
+                                    onClick = viewModel::resetFilters,
+                                )
+                            }
+                        }
+                    }
+                }
+                else -> {
+                    LazyVerticalGrid(
+                        state = gridState,
+                        columns = GridCells.Adaptive(118.dp),
+                        contentPadding = PaddingValues(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(18.dp),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .onFocusChanged { gridHasFocus = it.hasFocus },
+                    ) {
+                        val showSkeletons = state is SearchUiState.Loading || (browseState != null && browseState.isLoading && items.isEmpty())
+                        if (showSkeletons) {
+                            items(12, key = { "search_skeleton_$it" }) {
+                                Box(
+                                    Modifier
+                                        .width(118.dp)
+                                        .aspectRatio(2f / 3f)
+                                        .background(SkeletonColor, RoundedCornerShape(6.dp)),
+                                )
+                            }
+                        }
+                        itemsIndexed(items, key = { _, item -> item.key }) { index, item ->
+                            val mod = when {
+                                item.key == lastCardKey && item.key == gridAnchorKey ->
+                                    Modifier.focusRequester(cardRequester).focusRequester(gridAnchorRequester)
+                                item.key == lastCardKey -> Modifier.focusRequester(cardRequester)
+                                item.key == gridAnchorKey -> Modifier.focusRequester(gridAnchorRequester)
+                                else -> Modifier
+                            }
+                            PosterCard(
+                                item = item,
+                                onClick = { onItemClick(item) },
+                                onFocused = {
+                                    lastCardKey = item.key
+                                    activeGridIndex = index
+                                },
+                                width = 118.dp,
+                                modifier = mod,
+                            )
+                        }
+                        if (locked.isNotEmpty()) {
+                            item(key = "locked_header", span = { GridItemSpan(maxLineSpan) }) {
+                                Column(Modifier.padding(top = 12.dp)) {
+                                    Text(
+                                        localizedStringResource(StringsR.string.home_ask_an_adult),
+                                        color = Color.White,
+                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                    )
+                                    Text(
+                                        localizedStringResource(StringsR.string.home_ask_an_adult_hint),
+                                        color = Color.White.copy(alpha = 0.6f),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                    )
+                                }
+                            }
+                            items(locked, key = { "locked_" + it.key }) { item ->
+                                val asked = item.key in pending
+                                PosterCard(
+                                    item = item,
+                                    onClick = { if (!asked) lockedPick = item },
+                                    onFocused = { lastCardKey = "locked_" + item.key },
+                                    width = 118.dp,
+                                    modifier = if ("locked_" + item.key == lastCardKey) Modifier.focusRequester(cardRequester) else Modifier,
+                                    overlay = { LockedOverlay(asked) },
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -369,10 +625,291 @@ fun SearchScreen(
 }
 
 @Composable
+private fun buildBrowseHeader(filter: SearchFilterState): String =
+    localizedStringResource(StringsR.string.home_search_filter_results_header, formatBrowseSummary(filter))
+
+@Composable
+private fun formatBrowseSummary(filter: SearchFilterState): String {
+    val typeLabel = localizedStringResource(filter.mediaType.labelRes)
+    val sortLabel = localizedStringResource(filter.sort.labelRes)
+    val selSummary = formatFilterSelectionSummary(filter.selection)
+    return buildList {
+        add(typeLabel)
+        add(sortLabel)
+        if (selSummary.isNotEmpty()) add(selSummary)
+    }.joinToString(" · ")
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SearchFilterPanel(
+    filterState: SearchFilterState,
+    genresExpanded: Boolean,
+    firstFilterRequester: FocusRequester,
+    searchBoxRequester: FocusRequester,
+    onToggleGenresExpanded: () -> Unit,
+    onSelectMediaType: (SearchMediaType) -> Unit,
+    onSelectSort: (SearchSort) -> Unit,
+    onToggleGenre: (String) -> Unit,
+    onClearGenres: () -> Unit,
+    onSelectRegion: (String?) -> Unit,
+    onSelectEra: (String?) -> Unit,
+    onReset: () -> Unit,
+) {
+    val allGenres = remember(filterState.mediaType) { CategoryFilterCatalog.genresFor(filterState.mediaType.filter) }
+    val regions = remember(filterState.mediaType) { CategoryFilterCatalog.regionsFor(filterState.mediaType.filter) }
+    val eras = remember { CategoryFilterCatalog.eras }
+    val hasHiddenSelectedGenre = remember(allGenres, filterState.selection.genres) {
+        filterState.selection.genres.any { tag ->
+            val idx = allGenres.indexOfFirst { it.doubanTag == tag }
+            idx >= COMPACT_GENRE_COUNT
+        }
+    }
+    val showAllGenres = genresExpanded || hasHiddenSelectedGenre
+    val visibleGenres = remember(allGenres, showAllGenres) {
+        if (showAllGenres || allGenres.size <= COMPACT_GENRE_COUNT) allGenres else allGenres.take(COMPACT_GENRE_COUNT)
+    }
+
+    ProvidePivotScroll(leading = 36.dp) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(top = 2.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item(key = "media_and_reset") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SearchMediaType.entries.forEachIndexed { idx, type ->
+                            FilterPillChip(
+                                label = localizedStringResource(type.labelRes),
+                                selected = filterState.mediaType == type,
+                                onClick = { onSelectMediaType(type) },
+                                modifier = (if (idx == 0) Modifier.focusRequester(firstFilterRequester) else Modifier)
+                                    .focusProperties { up = searchBoxRequester },
+                            )
+                        }
+                    }
+                    if (filterState.canReset) {
+                        CompactActionChip(
+                            label = localizedStringResource(StringsR.string.home_filter_reset),
+                            onClick = onReset,
+                            modifier = Modifier.focusProperties { up = searchBoxRequester },
+                        )
+                    }
+                }
+            }
+
+            item(key = "sort") {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    SearchSort.entries.forEach { sort ->
+                        FilterPillChip(
+                            label = localizedStringResource(sort.labelRes),
+                            selected = filterState.sort == sort,
+                            onClick = { onSelectSort(sort) },
+                        )
+                    }
+                }
+            }
+
+            item(key = "genres") {
+                FilterGroupBlock(title = localizedStringResource(StringsR.string.home_filter_group_genre)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        verticalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        FilterPillChip(
+                            label = localizedStringResource(StringsR.string.home_filter_all_genres),
+                            selected = filterState.selection.genres.isEmpty(),
+                            onClick = onClearGenres,
+                        )
+                        visibleGenres.forEach { opt ->
+                            val selected = opt.doubanTag in filterState.selection.genres
+                            val text = localizedStringResource(opt.labelRes)
+                            FilterPillChip(
+                                label = if (selected) "✓ $text" else text,
+                                selected = selected,
+                                onClick = { onToggleGenre(opt.doubanTag) },
+                            )
+                        }
+                        if (allGenres.size > COMPACT_GENRE_COUNT) {
+                            FilterPillChip(
+                                label = localizedStringResource(
+                                    if (showAllGenres) StringsR.string.home_filter_less_genres else StringsR.string.home_filter_more_genres,
+                                ),
+                                selected = false,
+                                subtle = true,
+                                onClick = onToggleGenresExpanded,
+                            )
+                        }
+                    }
+                }
+            }
+
+            item(key = "regions") {
+                FilterGroupBlock(title = localizedStringResource(StringsR.string.home_filter_group_region)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        verticalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        FilterPillChip(
+                            label = localizedStringResource(StringsR.string.home_filter_all_regions),
+                            selected = filterState.selection.region == null,
+                            onClick = { onSelectRegion(null) },
+                        )
+                        regions.forEach { opt ->
+                            FilterPillChip(
+                                label = localizedStringResource(opt.labelRes),
+                                selected = filterState.selection.region == opt.doubanTag,
+                                onClick = { onSelectRegion(opt.doubanTag) },
+                            )
+                        }
+                    }
+                }
+            }
+
+            item(key = "eras") {
+                FilterGroupBlock(title = localizedStringResource(StringsR.string.home_filter_group_era)) {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        verticalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        FilterPillChip(
+                            label = localizedStringResource(StringsR.string.home_filter_all_eras),
+                            selected = filterState.selection.era == null,
+                            onClick = { onSelectEra(null) },
+                        )
+                        eras.forEach { opt ->
+                            FilterPillChip(
+                                label = localizedStringResource(opt.labelRes),
+                                selected = filterState.selection.era == opt.doubanTag,
+                                onClick = { onSelectEra(opt.doubanTag) },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterGroupBlock(
+    title: String,
+    content: @Composable () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            text = title,
+            color = Color.White.copy(alpha = 0.62f),
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+        )
+        Spacer(Modifier.height(6.dp))
+        content()
+    }
+}
+
+@Composable
+private fun FilterPillChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    subtle: Boolean = false,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val bg = when {
+        focused -> Color.White
+        selected -> Color(0x4DE50914)
+        subtle -> Color.White.copy(alpha = 0.04f)
+        else -> Color.White.copy(alpha = 0.08f)
+    }
+    val border = when {
+        focused -> Color.White
+        selected -> AppColors.Accent
+        else -> Color.White.copy(alpha = 0.16f)
+    }
+    val textColor = when {
+        focused -> Color.Black
+        selected -> Color.White
+        else -> Color.White.copy(alpha = 0.8f)
+    }
+    Box(
+        modifier = modifier
+            .graphicsLayer {
+                val scale = if (focused) 1.05f else 1f
+                scaleX = scale
+                scaleY = scale
+            }
+            .onFocusChanged { focused = it.isFocused }
+            .clip(CircleShape)
+            .background(bg, CircleShape)
+            .border(1.dp, border, CircleShape)
+            .tvClickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Text(
+            text = label,
+            color = textColor,
+            style = MaterialTheme.typography.bodySmall.copy(
+                fontWeight = if (focused || selected) FontWeight.Bold else FontWeight.Medium,
+            ),
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun CompactActionChip(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    primary: Boolean = false,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val bg = when {
+        focused -> Color.White
+        primary -> AppColors.Accent
+        else -> Color.White.copy(alpha = 0.12f)
+    }
+    val fg = if (focused) Color.Black else Color.White
+    Box(
+        modifier = modifier
+            .graphicsLayer {
+                val scale = if (focused) 1.05f else 1f
+                scaleX = scale
+                scaleY = scale
+            }
+            .onFocusChanged { focused = it.isFocused }
+            .clip(CircleShape)
+            .background(bg, CircleShape)
+            .border(
+                width = 1.dp,
+                color = if (focused) Color.White else if (primary) AppColors.Accent else Color.White.copy(alpha = 0.25f),
+                shape = CircleShape,
+            )
+            .tvClickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = fg,
+            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
 private fun OnScreenKeyboard(
     qwerty: Boolean,
     composing: String,
     candidateCount: Int,
+    columnWidth: Dp,
     firstKeyRequester: FocusRequester,
     layoutKeyRequester: FocusRequester,
     onChar: (Char) -> Unit,
@@ -381,6 +918,7 @@ private fun OnScreenKeyboard(
     onToggleLayout: () -> Unit,
     onSystemKeyboard: () -> Unit,
     onSearch: () -> Unit,
+    onCollapse: () -> Unit,
 ) {
     var toggled by remember { mutableStateOf(false) }
     LaunchedEffect(qwerty) {
@@ -391,14 +929,12 @@ private fun OnScreenKeyboard(
     }
     // 拼音模式 5 列大键位（遥控器好按），英文模式 10 列紧凑排列。
     val rows = if (qwerty) QWERTY_ROWS else PINYIN_ROWS
-    // 列宽 = 内容区宽度（Column 宽度 - 左右 padding 56dp），按最长一行等分算键宽。
-    val columnWidth = if (qwerty) 452.dp else 300.dp
-    val contentWidth = columnWidth - 56.dp
+    val contentWidth = columnWidth - 52.dp
     val perRow = rows.first().length
     val keyGap = if (qwerty) 4.dp else 5.dp
     val keyWidth = (contentWidth - keyGap * (perRow - 1)) / perRow
     val fullWidth = keyWidth * perRow + keyGap * (perRow - 1)
-    // 拼音模式 6 行字母 + 候选条 + 2 行功能键要在一屏 1080 里放下，键高缩到 36dp。
+    // 拼音模式 6 行字母 + 候选条 + 3 行功能键要在一屏 1080 里放下，键高缩到 36dp。
     val keyHeight = if (qwerty) 40.dp else 36.dp
     Column(verticalArrangement = Arrangement.spacedBy(if (qwerty) 6.dp else 5.dp)) {
         rows.forEachIndexed { rowIndex, rowKeys ->
@@ -425,7 +961,7 @@ private fun OnScreenKeyboard(
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(keyGap)) {
-            val sideWidth = fullWidth * 0.38f - keyGap
+            val sideWidth = fullWidth * 0.34f - keyGap
             val sysWidth = fullWidth - sideWidth * 2 - keyGap * 2
             KeyButton(
                 width = sideWidth,
@@ -445,6 +981,9 @@ private fun OnScreenKeyboard(
             KeyButton(width = sysWidth, height = keyHeight, onClick = onSystemKeyboard) {
                 Text(localizedStringResource(StringsR.string.home_system_keyboard), style = MaterialTheme.typography.bodySmall, color = it, maxLines = 1)
             }
+        }
+        KeyButton(width = fullWidth, height = 34.dp, onClick = onCollapse) {
+            Text(localizedStringResource(StringsR.string.home_search_close_keyboard), style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold), color = it)
         }
         // 当前拼音缓冲：让用户知道这些字母还没上屏。
         if (!qwerty && composing.isNotEmpty()) {

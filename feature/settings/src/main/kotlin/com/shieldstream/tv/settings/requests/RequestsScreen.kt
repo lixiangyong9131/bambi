@@ -112,7 +112,7 @@ private fun RequestCard(request: TitleRequest, onApprove: () -> Unit, onDismiss:
         modifier = Modifier
             .fillMaxWidth()
             .clip(AppShapes.Control)
-            .background(if (focused) Color(0xFF2A2D3D) else Color(0xFF1A1C27))
+            .background(if (focused) Color(0xFF232327) else Color(0xFF141416))
             .border(
                 1.dp,
                 if (focused) Color.White.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.08f),

@@ -152,8 +152,8 @@ fun AllDebridQrPanel(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = modifier
             .width(250.dp)
-            .background(Color(0xFF1A1C27), RoundedCornerShape(18.dp))
-            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
+            .background(Color(0xFF18181B), RoundedCornerShape(10.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(10.dp))
             .padding(20.dp),
     ) {
         Box(

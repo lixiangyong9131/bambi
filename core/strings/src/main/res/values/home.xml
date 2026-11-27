@@ -81,6 +81,16 @@
     <string name="home_filter_row_top_rated">高分 · %1$s</string>
     <string name="home_filter_row_latest">最新 · %1$s</string>
     <string name="home_filter_empty">暂无 "%1$s" 相关内容</string>
+    <string name="home_filter_sort_popular">热门</string>
+    <string name="home_filter_sort_top_rated">高分</string>
+    <string name="home_filter_sort_latest">最新</string>
+    <string name="home_filter_all_genres">全部类型</string>
+    <string name="home_filter_more_genres">更多类型</string>
+    <string name="home_filter_less_genres">收起</string>
+    <string name="home_filter_reset">重置</string>
+    <string name="home_search_open_keyboard_hint">按确认键输入片名/拼音</string>
+    <string name="home_search_close_keyboard">收起键盘</string>
+    <string name="home_search_filter_results_header">筛选结果：%1$s</string>
     <string name="home_filter_cat_domestic">中国大陆</string>
     <string name="home_filter_cat_hk">中国香港</string>
     <string name="home_filter_cat_tw">中国台湾</string>

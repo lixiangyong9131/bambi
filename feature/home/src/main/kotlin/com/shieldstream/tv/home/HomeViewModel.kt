@@ -65,12 +65,7 @@ data class SectionedRow(
 sealed interface UnifiedHomeUiState {
     data object Loading : UnifiedHomeUiState
     data class Error(val message: String) : UnifiedHomeUiState
-    data class Content(
-        val sections: List<SectionedRow>,
-        val activeFilters: Map<HomeFilter, CategoryFilterSelection> = emptyMap(),
-        val loadingFilters: Set<HomeFilter> = emptySet(),
-        val filterNotice: String? = null,
-    ) : UnifiedHomeUiState
+    data class Content(val sections: List<SectionedRow>) : UnifiedHomeUiState
 }
 
 private data class HomeRowQuery(
@@ -214,12 +209,6 @@ class HomeViewModel @Inject constructor(
     private var unifiedJob: Job? = null
     private val _unifiedCatalog = MutableStateFlow<Map<HomeFilter, List<CatalogRow>>?>(null)
     private val _unifiedError = MutableStateFlow<String?>(null)
-    private val _sectionFilters = MutableStateFlow<Map<HomeFilter, CategoryFilterSelection>>(emptyMap())
-    private val _filteredCatalog = MutableStateFlow<Map<HomeFilter, List<CatalogRow>>>(emptyMap())
-    private val _filteredLoading = MutableStateFlow<Set<HomeFilter>>(emptySet())
-    private val _filterNotice = MutableStateFlow<String?>(null)
-    private val filteredRowMeta = java.util.concurrent.ConcurrentHashMap<Pair<HomeFilter, String>, Pair<String, String>>()
-    private val sectionFilterJobs = java.util.concurrent.ConcurrentHashMap<HomeFilter, Job>()
 
     val unifiedState: StateFlow<UnifiedHomeUiState> = combine(
         _unifiedCatalog,
@@ -228,10 +217,6 @@ class HomeViewModel @Inject constructor(
         myListRows,
         settings.homeRowItemLimit,
         extraRowItems,
-        _sectionFilters,
-        _filteredCatalog,
-        _filteredLoading,
-        _filterNotice,
     ) { values ->
         @Suppress("UNCHECKED_CAST")
         val catalog = values[0] as Map<HomeFilter, List<CatalogRow>>?
@@ -243,13 +228,6 @@ class HomeViewModel @Inject constructor(
         val maxItems = values[4] as Int
         @Suppress("UNCHECKED_CAST")
         val extras = values[5] as Map<Pair<HomeFilter, String>, List<CatalogItem>>
-        @Suppress("UNCHECKED_CAST")
-        val activeFilters = values[6] as Map<HomeFilter, CategoryFilterSelection>
-        @Suppress("UNCHECKED_CAST")
-        val filteredCatalog = values[7] as Map<HomeFilter, List<CatalogRow>>
-        @Suppress("UNCHECKED_CAST")
-        val loadingFilters = values[8] as Set<HomeFilter>
-        val filterNotice = values[9] as String?
 
         if (catalog == null || continueList == null || myListList == null) {
             if (errorMsg != null && continueList == null && myListList == null) {
@@ -269,12 +247,7 @@ class HomeViewModel @Inject constructor(
                 add(SectionedRow(RailDestination.HOME, null, uniqueRow(row.withItemLimit(maxItems))))
             }
             fun appendSection(section: RailDestination, filter: HomeFilter) {
-                val baseRows = if (activeFilters[filter]?.isActive == true && filteredCatalog[filter] != null) {
-                    filteredCatalog[filter].orEmpty()
-                } else {
-                    catalog[filter].orEmpty()
-                }
-                baseRows.forEach { baseRow ->
+                catalog[filter].orEmpty().forEach { baseRow ->
                     val more = extras[filter to baseRow.id]
                     val limited = baseRow.withItemLimit(maxItems)
                     val merged = if (more.isNullOrEmpty()) limited else limited.copy(items = (limited.items + more).distinctBy { it.key })
@@ -286,12 +259,7 @@ class HomeViewModel @Inject constructor(
             appendSection(RailDestination.ANIME, HomeFilter.ANIME)
         }
         when {
-            sections.isNotEmpty() -> UnifiedHomeUiState.Content(
-                sections = sections,
-                activeFilters = activeFilters,
-                loadingFilters = loadingFilters,
-                filterNotice = filterNotice,
-            )
+            sections.isNotEmpty() -> UnifiedHomeUiState.Content(sections = sections)
             errorMsg != null -> UnifiedHomeUiState.Error(errorMsg)
             else -> UnifiedHomeUiState.Loading
         }
@@ -683,21 +651,9 @@ class HomeViewModel @Inject constructor(
             rowLoadingMore -= key
             return
         }
-        val filteredMeta = filteredRowMeta[key]
         viewModelScope.launch {
             try {
-                val items = runCatching {
-                    if (filteredMeta != null) {
-                        catalogRepository.browseCategoryFilter(
-                            filter = filter,
-                            tag = filteredMeta.first,
-                            sort = filteredMeta.second,
-                            page = nextPage,
-                        )
-                    } else {
-                        catalogRepository.loadMoreRow(filter, rowId, nextPage)
-                    }
-                }.getOrDefault(emptyList())
+                val items = runCatching { catalogRepository.loadMoreRow(filter, rowId, nextPage) }.getOrDefault(emptyList())
                 if (items.isEmpty()) {
                     rowExhausted += key
                 } else {
@@ -712,83 +668,6 @@ class HomeViewModel @Inject constructor(
             }
         }
     }
-
-    fun consumeFilterNotice() {
-        _filterNotice.value = null
-    }
-
-    fun selectCategoryFilter(filter: HomeFilter, selection: CategoryFilterSelection) {
-        if (filter != HomeFilter.TV && filter != HomeFilter.MOVIES) return
-        sectionFilterJobs.remove(filter)?.cancel()
-        _filterNotice.value = null
-
-        val previousSelection = _sectionFilters.value[filter]
-        val previousRows = _filteredCatalog.value[filter]
-
-        if (!selection.isActive) {
-            filteredRowMeta.keys.removeAll { it.first == filter }
-            extraRowItems.value = extraRowItems.value.filterKeys { !isFilteredKey(it, filter) }
-            rowNextPage.keys.removeAll { isFilteredKey(it, filter) }
-            synchronized(rowExhausted) { rowExhausted.removeAll { isFilteredKey(it, filter) } }
-            _sectionFilters.value = _sectionFilters.value - filter
-            _filteredCatalog.value = _filteredCatalog.value - filter
-            _filteredLoading.value = _filteredLoading.value - filter
-            return
-        }
-
-        val doubanTags = selection.toDoubanTags()
-        val label = selection.summary(texts).ifBlank { doubanTags.replace(",", " · ") }
-        _filteredLoading.value = _filteredLoading.value + filter
-        sectionFilterJobs[filter] = viewModelScope.launch {
-            try {
-                val sortSpecs = listOf(
-                    "U" to texts.get(StringsR.string.home_filter_row_popular, label),
-                    "S" to texts.get(StringsR.string.home_filter_row_top_rated, label),
-                    "R" to texts.get(StringsR.string.home_filter_row_latest, label),
-                )
-                val rows = coroutineScope {
-                    sortSpecs.map { (sort, title) ->
-                        async {
-                            val items = withTimeoutOrNull(8_000) {
-                                runCatching {
-                                    catalogRepository.browseCategoryFilter(
-                                        filter = filter,
-                                        tag = doubanTags,
-                                        sort = sort,
-                                        page = 1,
-                                    )
-                                }.getOrDefault(emptyList())
-                            }.orEmpty()
-                            val rowId = "filtered_${filter.name}_${doubanTags.hashCode()}_$sort"
-                            filteredRowMeta[filter to rowId] = doubanTags to sort
-                            CatalogRow(id = rowId, title = title, items = items)
-                        }
-                    }.awaitAll().filter { it.items.isNotEmpty() }
-                }
-                if (rows.isNotEmpty()) {
-                    extraRowItems.value = extraRowItems.value.filterKeys { !isFilteredKey(it, filter) }
-                    rowNextPage.keys.removeAll { isFilteredKey(it, filter) }
-                    synchronized(rowExhausted) { rowExhausted.removeAll { isFilteredKey(it, filter) } }
-                    _sectionFilters.value = _sectionFilters.value + (filter to selection)
-                    _filteredCatalog.value = _filteredCatalog.value + (filter to rows)
-                } else {
-                    if (previousSelection != null && previousRows != null) {
-                        _sectionFilters.value = _sectionFilters.value + (filter to previousSelection)
-                        _filteredCatalog.value = _filteredCatalog.value + (filter to previousRows)
-                    } else {
-                        _sectionFilters.value = _sectionFilters.value - filter
-                        _filteredCatalog.value = _filteredCatalog.value - filter
-                    }
-                    _filterNotice.value = texts.get(StringsR.string.home_filter_no_match, label)
-                }
-            } finally {
-                _filteredLoading.value = _filteredLoading.value - filter
-            }
-        }
-    }
-
-    private fun isFilteredKey(key: Pair<HomeFilter, String>, filter: HomeFilter): Boolean =
-        key.first == filter && key.second.startsWith("filtered_${filter.name}_")
 
     private companion object {
         const val TAG = "HomeRows"

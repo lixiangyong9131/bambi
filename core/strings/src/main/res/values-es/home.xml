@@ -81,6 +81,16 @@
     <string name="home_filter_row_top_rated">Mejor valoradas · %1$s</string>
     <string name="home_filter_row_latest">Novedades · %1$s</string>
     <string name="home_filter_empty">Sin resultados para «%1$s»</string>
+    <string name="home_filter_sort_popular">Populares</string>
+    <string name="home_filter_sort_top_rated">Mejor valoradas</string>
+    <string name="home_filter_sort_latest">Novedades</string>
+    <string name="home_filter_all_genres">Todos</string>
+    <string name="home_filter_more_genres">Más géneros</string>
+    <string name="home_filter_less_genres">Menos</string>
+    <string name="home_filter_reset">Restablecer</string>
+    <string name="home_search_open_keyboard_hint">Pulsa OK para escribir</string>
+    <string name="home_search_close_keyboard">Ocultar teclado</string>
+    <string name="home_search_filter_results_header">Filtros: %1$s</string>
     <string name="home_filter_cat_domestic">China continental</string>
     <string name="home_filter_cat_hk">Hong Kong</string>
     <string name="home_filter_cat_tw">Taiwán</string>

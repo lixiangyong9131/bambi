@@ -159,15 +159,21 @@ internal fun SourcesPanel(
         }
     }
 
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f))) {
-        Column(
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f))) {
+        Row(
             Modifier
                 .align(Alignment.CenterEnd)
                 .fillMaxHeight()
                 .width(520.dp)
-                .background(AppColors.BackgroundRaised.copy(alpha = 0.95f))
-                .padding(top = 32.dp, start = 24.dp, end = 24.dp),
+                .background(Color(0xFA101012)),
         ) {
+            Box(Modifier.width(1.dp).fillMaxHeight().background(Color.White.copy(alpha = 0.10f)))
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .padding(top = 32.dp, start = 24.dp, end = 24.dp),
+            ) {
             // Modified build: no Spanish-only chip in the header (user does not want it).
             Text(
                 text = localizedStringResource(StringsR.string.details_choose_a_source),
@@ -282,6 +288,7 @@ internal fun SourcesPanel(
                     }
                 }
             }
+        }
         }
     }
     brokenCandidate?.let { source ->

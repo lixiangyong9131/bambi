@@ -703,6 +703,13 @@ private fun InfoBlock(
                 enabled = interactive,
                 modifier = Modifier.focusRequester(playRequester),
             )
+            if (resumable && !state.pendingPlay) {
+                TvButton(
+                    text = localizedStringResource(StringsR.string.details_from_the_beginning),
+                    onClick = onPlayFromStart,
+                    enabled = interactive,
+                )
+            }
             TvButton(
                 text = localizedStringResource(
                     if (state.inMyList) StringsR.string.details_in_my_list else StringsR.string.details_my_list,
@@ -711,13 +718,6 @@ private fun InfoBlock(
                 onClick = onToggleMyList,
                 enabled = interactive,
             )
-            if (resumable && !state.pendingPlay) {
-                TvButton(
-                    text = localizedStringResource(StringsR.string.details_from_the_beginning),
-                    onClick = onPlayFromStart,
-                    enabled = interactive,
-                )
-            }
             if (onTrailer != null) {
                 TvButton(
                     text = localizedStringResource(StringsR.string.details_trailer),

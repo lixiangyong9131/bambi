@@ -319,7 +319,7 @@ private fun DownloadOptions(
 
 private const val NEXT_EPISODES = 5
 
-/** Panel lateral de la derecha (como el de fuentes), con el resto de la ficha atenuada detrás. */
+/** Netflix TV style right-hand side drawer with hairline border and crisp inverted focus rows. */
 @Composable
 private fun MoreSidePanel(
     title: String,
@@ -330,31 +330,60 @@ private fun MoreSidePanel(
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.55f))
+            .background(Color.Black.copy(alpha = 0.65f))
             .onBackKey(enabled = true, onBack = onBack),
     ) {
-        Column(
+        Row(
             Modifier
                 .align(Alignment.CenterEnd)
                 .fillMaxHeight()
-                .width(480.dp)
-                .background(AppColors.BackgroundRaised.copy(alpha = 0.97f))
-                .verticalScroll(rememberScrollState())
-                .padding(top = 36.dp, start = 24.dp, end = 24.dp, bottom = 36.dp),
+                .width(460.dp)
+                .background(Color(0xFA101012)),
         ) {
-            Text(
-                title,
-                color = Color.White,
-                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 12.dp),
-            )
-            subtitle?.let {
-                Text(it, color = Grey, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 12.dp, top = 2.dp))
+            Box(Modifier.width(1.dp).fillMaxHeight().background(Color.White.copy(alpha = 0.10f)))
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .verticalScroll(rememberScrollState())
+                    .padding(top = 34.dp, start = 24.dp, end = 24.dp, bottom = 36.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(start = 6.dp),
+                ) {
+                    Box(
+                        Modifier
+                            .width(4.dp)
+                            .height(22.dp)
+                            .background(AppColors.Accent, RoundedCornerShape(2.dp)),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            title,
+                            color = Color.White,
+                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        subtitle?.let {
+                            Text(
+                                it,
+                                color = Color.White.copy(alpha = 0.62f),
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.padding(top = 2.dp),
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.10f)))
+                Spacer(Modifier.height(6.dp))
+                content()
             }
-            Spacer(Modifier.height(8.dp))
-            content()
         }
     }
 }
@@ -365,7 +394,7 @@ private fun MoreSectionHeader(text: String) {
         text.uppercase(java.util.Locale.getDefault()),
         color = Color.White.copy(alpha = 0.45f),
         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.sp),
-        modifier = Modifier.padding(start = 12.dp, top = 18.dp, bottom = 6.dp),
+        modifier = Modifier.padding(start = 10.dp, top = 16.dp, bottom = 6.dp),
     )
 }
 
@@ -401,38 +430,57 @@ internal fun MoreRow(
                     Modifier
                 },
             )
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (focused) Color.White else Color.Transparent)
+            .padding(vertical = 2.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(if (focused) Color.White else Color.White.copy(alpha = 0.04f))
             .tvClickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size(34.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(
-                    when {
-                        focused -> Color.Black.copy(alpha = 0.08f)
-                        highlighted -> AppColors.Accent.copy(alpha = 0.25f)
-                        else -> Color.White.copy(alpha = 0.08f)
-                    },
-                ),
-        ) {
-            if (icon != null) Icon(icon, contentDescription = null, tint = if (highlighted && !focused) Color.White else fg, modifier = Modifier.size(18.dp))
+        if (icon != null) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = if (highlighted && !focused) AppColors.Accent else fg,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(14.dp))
         }
-        Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(text, color = fg, style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                text,
+                color = fg,
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontWeight = if (focused || highlighted) FontWeight.Bold else FontWeight.SemiBold,
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
             detail?.takeIf { it.isNotBlank() }?.let {
-                Text(it, color = if (focused) Color.Black.copy(alpha = 0.6f) else Grey, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(
+                    it,
+                    color = if (focused) Color.Black.copy(alpha = 0.65f) else Color.White.copy(alpha = 0.58f),
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             progress?.let { p ->
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(5.dp))
                 Box(Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)).background(fg.copy(alpha = 0.2f))) {
                     Box(Modifier.fillMaxWidth(p).height(3.dp).background(if (focused) Color.Black else AppColors.Accent))
                 }
             }
+        }
+        if (highlighted) {
+            Spacer(Modifier.width(10.dp))
+            Box(
+                Modifier
+                    .size(7.dp)
+                    .background(
+                        if (focused) Color.Black else AppColors.Accent,
+                        androidx.compose.foundation.shape.CircleShape,
+                    ),
+            )
         }
     }
 }

@@ -85,8 +85,8 @@ import com.shieldstream.tv.ui.component.onBackKey
 import com.shieldstream.tv.ui.component.tvClickable
 import com.shieldstream.tv.ui.theme.DisplayFont
 
-private val Background = Brush.verticalGradient(listOf(Color(0xFF151622), Color.Black))
-private val Panel = Color(0xFF1A1C27)
+private val Background = Brush.verticalGradient(listOf(Color(0xFF0A0A0C), Color.Black))
+private val Panel = Color(0xFF141416)
 private val Muted = Color.White.copy(alpha = 0.62f)
 private val Green = Color(0xFF46D369)
 private val Red = Color(0xFFFF5A5F)

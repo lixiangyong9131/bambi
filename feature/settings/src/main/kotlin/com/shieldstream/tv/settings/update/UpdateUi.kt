@@ -43,7 +43,7 @@ import com.shieldstream.tv.ui.component.TvButton
 import com.shieldstream.tv.ui.component.tvClickable
 import kotlinx.coroutines.delay
 
-private val Panel = Color(0xFF1A1C27)
+private val Panel = Color(0xFF141416)
 private val Muted = Color.White.copy(alpha = 0.6f)
 private val Red = Color(0xFFE50914)
 
@@ -66,8 +66,8 @@ fun UpdatePrompt(
         Column(
             Modifier
                 .width(620.dp)
-                .background(Panel, RoundedCornerShape(18.dp))
-                .border(1.dp, Color.White.copy(alpha = 0.08f), RoundedCornerShape(18.dp))
+                .background(Panel, RoundedCornerShape(10.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
                 .padding(32.dp),
         ) {
             when (val s = visible.state) {
@@ -200,11 +200,11 @@ fun UpdateCard(viewModel: UpdateViewModel = hiltViewModel()) {
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .background(if (focused) Color(0xFF2A2D3D) else Panel, RoundedCornerShape(14.dp))
+            .background(if (focused) Color(0xFF232327) else Panel, RoundedCornerShape(8.dp))
             .border(
                 width = if (focused) 2.dp else 1.dp,
                 color = if (focused) Color.White else Color.White.copy(alpha = 0.08f),
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(8.dp),
             )
             .onFocusChanged { focused = it.isFocused }
             .tvClickable {

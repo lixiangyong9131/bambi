@@ -287,4 +287,5 @@
     <string name="photo_page_sending">发送中…</string>
     <string name="photo_page_done">完成！照片已显示在电视上。</string>
     <string name="photo_page_error">发送失败，请重试。</string>
+    <string name="settings_cat_sources">服务与片源</string>
 </resources>

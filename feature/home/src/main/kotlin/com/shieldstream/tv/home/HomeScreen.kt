@@ -1,50 +1,30 @@
 package com.shieldstream.tv.home
 
 import com.shieldstream.tv.ui.theme.AppSpacing
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.zIndex
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusTarget
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.shieldstream.tv.domain.EpisodeTarget
-import com.shieldstream.tv.ui.component.requestFocusWithRetry
 import com.shieldstream.tv.model.CatalogItem
 import com.shieldstream.tv.model.CatalogRow
 import com.shieldstream.tv.model.Category
@@ -85,19 +65,6 @@ fun UnifiedHomeScreen(
 ) {
     LaunchedEffect(Unit) { viewModel.loadUnified() }
     val state by viewModel.unifiedState.collectAsStateWithLifecycle()
-    var categoryPickerSection by remember { mutableStateOf<RailDestination?>(null) }
-    var pendingFilterJumpSection by remember { mutableStateOf<RailDestination?>(null) }
-    var internalJumpTick by remember { mutableIntStateOf(0) }
-    var internalScrollRequest by remember { mutableStateOf<Pair<RailDestination, Int>?>(null) }
-    val sectionPillRequesters = remember {
-        mapOf(
-            RailDestination.TV to FocusRequester(),
-            RailDestination.MOVIES to FocusRequester(),
-        )
-    }
-    val scope = rememberCoroutineScope()
-
-    val effectiveScrollRequest = internalScrollRequest ?: scrollToSectionRequest
 
     when (val s = state) {
         UnifiedHomeUiState.Loading -> HomeSkeleton(modifier = Modifier.fillMaxSize())
@@ -109,32 +76,12 @@ fun UnifiedHomeScreen(
             )
         }
         is UnifiedHomeUiState.Content -> {
-            LaunchedEffect(s.sections, s.loadingFilters, pendingFilterJumpSection) {
-                val jumpSection = pendingFilterJumpSection ?: return@LaunchedEffect
-                val jumpFilter = CategoryFilterCatalog.filterForSection(jumpSection) ?: run {
-                    pendingFilterJumpSection = null
-                    return@LaunchedEffect
-                }
-                if (jumpFilter !in s.loadingFilters) {
-                    internalJumpTick++
-                    internalScrollRequest = jumpSection to internalJumpTick
-                    pendingFilterJumpSection = null
-                }
-            }
-            LaunchedEffect(s.filterNotice) {
-                if (s.filterNotice != null) {
-                    delay(2_600)
-                    viewModel.consumeFilterNotice()
-                }
-            }
-
-            Box(Modifier.fillMaxSize()) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .focusProperties { canFocus = !railFocused && categoryPickerSection == null },
-                ) {
-                    RowsBrowser(
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .focusProperties { canFocus = !railFocused },
+            ) {
+                RowsBrowser(
                     sectionedRows = s.sections,
                     onItemClick = { item ->
                         viewModel.cancelBackgroundPrefetch()
@@ -167,74 +114,11 @@ fun UnifiedHomeScreen(
                     railRequester = railRequester,
                     contentFocusRequester = contentFocusRequester,
                     onOpenRail = onOpenRail,
-                    railFocused = railFocused || categoryPickerSection != null,
+                    railFocused = railFocused,
                     onActiveSectionChange = onActiveSectionChange,
-                    scrollToSectionRequest = effectiveScrollRequest,
-                    onScrollToSectionConsumed = {
-                        if (internalScrollRequest != null) {
-                            internalScrollRequest = null
-                        } else {
-                            onScrollToSectionConsumed()
-                        }
-                    },
-                    activeSectionFilters = s.activeFilters,
-                    loadingSectionFilters = s.loadingFilters,
-                    sectionFilterPillRequesters = sectionPillRequesters,
-                    onOpenSectionCategoryPicker = { section ->
-                        categoryPickerSection = section
-                    },
-                        onClearSectionCategoryFilter = { section ->
-                            CategoryFilterCatalog.filterForSection(section)?.let { f ->
-                                viewModel.selectCategoryFilter(f, CategoryFilterSelection())
-                                pendingFilterJumpSection = section
-                            }
-                        },
-                    )
-                }
-
-                categoryPickerSection?.let { pickerSection ->
-                    val pickerFilter = CategoryFilterCatalog.filterForSection(pickerSection)
-                    NetflixCategoryOverlay(
-                        section = pickerSection,
-                        activeSelection = pickerFilter?.let { s.activeFilters[it] } ?: CategoryFilterSelection(),
-                        onApply = { selection ->
-                            categoryPickerSection = null
-                            if (pickerFilter != null) {
-                                viewModel.selectCategoryFilter(pickerFilter, selection)
-                                pendingFilterJumpSection = pickerSection
-                            }
-                        },
-                        onDismiss = {
-                            categoryPickerSection = null
-                            scope.launch {
-                                sectionPillRequesters[pickerSection]?.requestFocusWithRetry()
-                            }
-                        },
-                    )
-                }
-
-                AnimatedVisibility(
-                    visible = s.filterNotice != null,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 44.dp)
-                        .zIndex(8f),
-                ) {
-                    Box(
-                        Modifier
-                            .background(Color(0xE6141414), RoundedCornerShape(50))
-                            .border(1.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(50))
-                            .padding(horizontal = 24.dp, vertical = 12.dp),
-                    ) {
-                        Text(
-                            text = s.filterNotice.orEmpty(),
-                            color = Color.White,
-                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
-                        )
-                    }
-                }
+                    scrollToSectionRequest = scrollToSectionRequest,
+                    onScrollToSectionConsumed = onScrollToSectionConsumed,
+                )
             }
         }
     }

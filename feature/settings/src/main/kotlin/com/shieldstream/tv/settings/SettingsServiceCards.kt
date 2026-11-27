@@ -299,9 +299,9 @@ internal fun KeyEditorDialog(
         Column(
             Modifier
                 .width(if (editor.service == ApiService.ALLDEBRID) 1040.dp else 720.dp)
-                .background(Color(0xFF1B1D29), RoundedCornerShape(20.dp))
-                .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
-                .padding(36.dp),
+                .background(Color(0xFA121214), RoundedCornerShape(10.dp))
+                .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(10.dp))
+                .padding(32.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 ServiceLogo(editor.service)
@@ -367,7 +367,7 @@ internal fun KeyEditorDialog(
                     Box(
                         Modifier
                             .fillMaxWidth()
-                            .background(Color(0xFF101119), RoundedCornerShape(10.dp))
+                            .background(Color(0xFF0C0C0E), RoundedCornerShape(8.dp))
                             .border(
                                 width = if (fieldFocused) 2.dp else 1.dp,
                                 color = if (fieldFocused) Color.White else Color.White.copy(alpha = 0.2f),

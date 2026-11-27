@@ -197,26 +197,58 @@ class CatalogRepositoryImpl @Inject constructor(
         sort: String,
         page: Int,
     ): List<CatalogItem> {
-        if (key.isBlank() || tag.isBlank()) return emptyList()
+        if (key.isBlank() || filter == HomeFilter.ALL) return emptyList()
+        val cleanTag = tag.trim()
         val sortBy = when (sort) {
             "S" -> "vote_average.desc"
-            "R" -> if (filter == HomeFilter.TV) "first_air_date.desc" else "primary_release_date.desc"
+            "R" -> if (filter == HomeFilter.MOVIES) "primary_release_date.desc" else "first_air_date.desc"
             else -> ""
         }
-        val params = buildMap {
-            put("douban_tags", tag)
-            put("page", page.coerceAtLeast(1).toString())
-            if (sortBy.isNotEmpty()) put("sort_by", sortBy)
-        }
         val raw = when (filter) {
-            HomeFilter.TV -> tmdb.discoverTvQuery(key, params).results.map { it.toCatalogItem() }
-            HomeFilter.MOVIES -> tmdb.discoverMovieQuery(key, params).results.map { it.toCatalogItem() }
-            else -> emptyList()
+            HomeFilter.TV -> {
+                val params = if (cleanTag.isBlank() && sortBy.isEmpty()) {
+                    mapOf("douban_collection" to "tv_hot", "page" to page.coerceAtLeast(1).toString())
+                } else {
+                    buildMap {
+                        put("douban_tags", cleanTag)
+                        put("page", page.coerceAtLeast(1).toString())
+                        if (sortBy.isNotEmpty()) put("sort_by", sortBy)
+                    }
+                }
+                tmdb.discoverTvQuery(key, params).results.map { it.toCatalogItem() }
+            }
+            HomeFilter.MOVIES -> {
+                val params = if (cleanTag.isBlank() && sortBy.isEmpty()) {
+                    mapOf("douban_collection" to "movie_hot_gaia", "page" to page.coerceAtLeast(1).toString())
+                } else {
+                    buildMap {
+                        put("douban_tags", cleanTag)
+                        put("page", page.coerceAtLeast(1).toString())
+                        if (sortBy.isNotEmpty()) put("sort_by", sortBy)
+                    }
+                }
+                tmdb.discoverMovieQuery(key, params).results.map { it.toCatalogItem() }
+            }
+            HomeFilter.ANIME -> {
+                val params = if (cleanTag.isBlank() && sortBy.isEmpty()) {
+                    mapOf("douban_collection" to "tv_animation", "page" to page.coerceAtLeast(1).toString())
+                } else {
+                    val parts = cleanTag.split(',').map { it.trim() }.filter { it.isNotEmpty() && it != "动画" }
+                    val animeTags = (listOf("动画") + parts).joinToString(",")
+                    buildMap {
+                        put("douban_tags", animeTags)
+                        put("page", page.coerceAtLeast(1).toString())
+                        if (sortBy.isNotEmpty()) put("sort_by", sortBy)
+                    }
+                }
+                tmdb.discoverTvQuery(key, params).results.map { it.toCatalogItem() }
+            }
+            HomeFilter.ALL -> emptyList()
         }
         val items = raw.distinctBy { it.type to it.id }.filter { it.posterUrl != null }
         items.forEach { item ->
             itemCache.putIfAbsent("${item.type.name}_${item.id}", item)
-            if (item.genres.any { it.contains("动画") || it.equals("Animation", ignoreCase = true) }) {
+            if (filter == HomeFilter.ANIME || item.genres.any { it.contains("动画") || it.equals("Animation", ignoreCase = true) }) {
                 animeIds?.mark(item.id)
             }
         }

@@ -44,9 +44,9 @@ import com.shieldstream.tv.ui.component.TvButton
 import com.shieldstream.tv.ui.component.onBackKey
 import com.shieldstream.tv.ui.theme.DisplayFont
 
-private val PhoneBackground = Brush.verticalGradient(listOf(Color(0xFF151622), Color.Black))
+private val PhoneBackground = Brush.verticalGradient(listOf(Color(0xFF0A0A0C), Color.Black))
 private val PhoneMuted = Color.White.copy(alpha = 0.62f)
-private val PhonePanel = Color(0xFF1A1C27)
+private val PhonePanel = Color(0xFF141416)
 
 @Composable
 fun PhoneConfigScreen(

@@ -1,6 +1,5 @@
 package com.shieldstream.tv.settings
 
-import com.shieldstream.tv.ui.theme.AppShapes
 import com.shieldstream.tv.strings.R as StringsR
 import com.shieldstream.tv.strings.localizedStringResource
 import com.shieldstream.tv.model.SubtitleColor
@@ -11,8 +10,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -24,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -36,35 +36,61 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.shieldstream.tv.ui.component.tvClickable
-import com.shieldstream.tv.ui.theme.DisplayFont
+import com.shieldstream.tv.ui.theme.AppColors
 
-// Piezas comunes de Ajustes: colores, títulos de sección y tarjetas genéricas.
+// Netflix TV palette & shared rows for Settings.
 
-internal val SettingsBackground = Brush.verticalGradient(listOf(Color(0xFF151622), Color.Black))
+internal val SettingsBackground = Brush.verticalGradient(listOf(Color(0xFF0A0A0C), Color.Black))
 
-internal val CardColor = Color(0xFF1A1C27)
+internal val CardColor = Color(0xFF141416)
 
-internal val CardFocused = Color(0xFF2A2D3D)
+internal val CardFocused = Color(0xFF232327)
 
-internal val CardShape = RoundedCornerShape(14.dp)
+internal val CardShape = RoundedCornerShape(8.dp)
 
-internal val SettingsMuted = Color.White.copy(alpha = 0.6f)
+internal val SettingsMuted = Color.White.copy(alpha = 0.58f)
 
 internal val SettingsGreen = Color(0xFF46D369)
 
 internal val SettingsAmber = Color(0xFFF5B83D)
 
-internal val SettingsRed = Color(0xFFFF5A5F)
+internal val SettingsRed = Color(0xFFE50914)
 
 @Composable
 internal fun SectionTitle(text: String) {
-    Text(
-        text = text.uppercase(),
-        fontFamily = DisplayFont,
-        fontSize = 26.sp,
-        color = Color.White.copy(alpha = 0.85f),
-        modifier = Modifier.padding(top = 18.dp, bottom = 2.dp, start = 4.dp),
-    )
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 18.dp, bottom = 4.dp, start = 2.dp),
+    ) {
+        Box(
+            Modifier
+                .width(3.dp)
+                .height(15.dp)
+                .background(AppColors.Accent, RoundedCornerShape(2.dp)),
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = text.uppercase(),
+            style = MaterialTheme.typography.labelLarge.copy(
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+            ),
+            color = Color.White.copy(alpha = 0.78f),
+        )
+        Spacer(Modifier.width(14.dp))
+        Box(
+            Modifier
+                .weight(1f)
+                .height(1.dp)
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(Color.White.copy(alpha = 0.14f), Color.Transparent),
+                    ),
+                ),
+        )
+    }
 }
 
 @Composable
@@ -77,6 +103,7 @@ internal fun FocusCard(
     Box(
         modifier
             .fillMaxWidth()
+            .clip(CardShape)
             .background(if (focused) CardFocused else CardColor, CardShape)
             .border(
                 width = if (focused) 2.dp else 1.dp,
@@ -85,7 +112,7 @@ internal fun FocusCard(
             )
             .onFocusChanged { focused = it.isFocused }
             .tvClickable(onClick = onClick ?: {})
-            .padding(horizontal = 24.dp, vertical = 18.dp),
+            .padding(horizontal = 22.dp, vertical = 16.dp),
     ) {
         content(focused)
     }
@@ -114,7 +141,7 @@ internal fun OnOffCard(title: String, summary: String, enabled: Boolean, onChang
             Column(Modifier.weight(1f)) {
                 Text(
                     title,
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                     color = Color.White,
                 )
                 Text(
@@ -126,8 +153,8 @@ internal fun OnOffCard(title: String, summary: String, enabled: Boolean, onChang
             Spacer(Modifier.width(24.dp))
             Row(
                 Modifier
-                    .background(Color.White.copy(alpha = 0.08f), AppShapes.Pill)
-                    .padding(4.dp),
+                    .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(6.dp))
+                    .padding(3.dp),
             ) {
                 SegmentOption(localizedStringResource(StringsR.string.settings_on), selected = enabled)
                 SegmentOption(localizedStringResource(StringsR.string.settings_off_9847b4), selected = !enabled)
@@ -141,10 +168,10 @@ internal fun SegmentOption(text: String, selected: Boolean) {
     Text(
         text,
         style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
-        color = if (selected) Color.Black else Color.White.copy(alpha = 0.7f),
+        color = if (selected) Color.Black else Color.White.copy(alpha = 0.68f),
         modifier = Modifier
-            .background(if (selected) Color.White else Color.Transparent, RoundedCornerShape(50))
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .background(if (selected) Color.White else Color.Transparent, RoundedCornerShape(5.dp))
+            .padding(horizontal = 14.dp, vertical = 7.dp),
     )
 }
 
@@ -168,13 +195,13 @@ internal fun CyclingSettingCard(title: String, hint: String, value: String, onSh
     ) { _ ->
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold), color = Color.White)
+                Text(title, style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), color = Color.White)
                 Text(hint, style = MaterialTheme.typography.bodyMedium, color = SettingsMuted)
             }
             Spacer(Modifier.width(24.dp))
             Text(
                 "‹  $value  ›",
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
                 color = Color.White,
             )
         }

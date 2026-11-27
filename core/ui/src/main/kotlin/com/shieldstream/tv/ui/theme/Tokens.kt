@@ -17,13 +17,13 @@ object AppColors {
     val Background = Color(0xFF0E0E10)
 
     /** Top stop of subtle full-screen gradients and image placeholders behind backdrops. */
-    val BackgroundRaised = Color(0xFF151622)
+    val BackgroundRaised = Color(0xFF121214)
 
     /** Panels, cards, dialogs, and unfocused controls. */
-    val Surface = Color(0xFF1A1C27)
+    val Surface = Color(0xFF18181B)
 
     /** Focused panel rows when the control does not invert to white. */
-    val SurfaceFocused = Color(0xFF2A2D3D)
+    val SurfaceFocused = Color(0xFF27272B)
 
     /** Text fields and inset areas inside a [Surface]. */
     val Field = Color(0xFF101012)

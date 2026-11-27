@@ -1,6 +1,5 @@
 package com.shieldstream.tv.home
 
-import androidx.compose.ui.text.style.TextOverflow
 import com.shieldstream.tv.ui.theme.AppColors
 import com.shieldstream.tv.strings.R as StringsR
 import com.shieldstream.tv.strings.localizedStringResource
@@ -9,13 +8,7 @@ import com.shieldstream.tv.model.Lang
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.foundation.border
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.focus.onFocusChanged
-import com.shieldstream.tv.ui.component.tvClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -27,7 +20,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -44,7 +36,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
@@ -52,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
@@ -167,11 +159,6 @@ internal fun RowsBrowser(
     onActiveSectionChange: (RailDestination) -> Unit = {},
     scrollToSectionRequest: Pair<RailDestination, Int>? = null,
     onScrollToSectionConsumed: () -> Unit = {},
-    activeSectionFilters: Map<HomeFilter, CategoryFilterSelection> = emptyMap(),
-    loadingSectionFilters: Set<HomeFilter> = emptySet(),
-    sectionFilterPillRequesters: Map<RailDestination, FocusRequester> = emptyMap(),
-    onOpenSectionCategoryPicker: ((RailDestination) -> Unit)? = null,
-    onClearSectionCategoryFilter: ((RailDestination) -> Unit)? = null,
 ) {
     val rows = remember(sectionedRows) { sectionedRows.map { it.row } }
     fun loopsFor(row: CatalogRow): Boolean =
@@ -189,7 +176,6 @@ internal fun RowsBrowser(
     var continueMenu by remember { mutableStateOf<ItemMenu?>(null) }
     var myListMenu by remember { mutableStateOf<ItemMenu?>(null) }
     var upNextMenu by remember { mutableStateOf<UpNextMenu?>(null) }
-    var topFilterBarFocused by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var focusedSection by remember {
@@ -214,6 +200,13 @@ internal fun RowsBrowser(
     }
 
     val restoreRequester = contentFocusRequester ?: remember { FocusRequester() }
+    val syncRestoreKey = {
+        val current = validKey(savedFocus.value)
+        if (restoreKey != current) restoreKey = current
+    }
+    LaunchedEffect(railFocused) {
+        if (railFocused) syncRestoreKey()
+    }
     LaunchedEffect(Unit) {
         val currentRow = findByKey(rows, validKey(savedFocus.value))
         if (currentRow != null) {
@@ -296,108 +289,12 @@ internal fun RowsBrowser(
                     }
                 },
             )
-            val fallbackPillRequester = remember { FocusRequester() }
             Box(
                 Modifier
                     .fillMaxWidth()
                     .height(194.dp)
                     .padding(start = startPadding, top = 14.dp, end = 360.dp),
             ) {
-                val showTopFilterBar = header == null &&
-                    onOpenSectionCategoryPicker != null &&
-                    (focusedSection == RailDestination.TV || focusedSection == RailDestination.MOVIES)
-                if (showTopFilterBar) {
-                    val activeSection = focusedSection
-                    val homeFilter = CategoryFilterCatalog.filterForSection(activeSection)
-                    val activeSelection = homeFilter?.let { activeSectionFilters[it] } ?: CategoryFilterSelection()
-                    val isLoading = homeFilter != null && homeFilter in loadingSectionFilters
-                    val pillRequester = sectionFilterPillRequesters[activeSection] ?: fallbackPillRequester
-                    val jumpToRow: (Int) -> Unit = { idx ->
-                        val targetEntry = sectionedRows.getOrNull(idx)
-                        if (targetEntry != null) {
-                            val key = firstKey(targetEntry.row, loopsFor(targetEntry.row))
-                            savedFocus.value = key
-                            restoreKey = key
-                            targetEntry.row.items.firstOrNull()?.let { heroState.value = it }
-                            focusedSection = targetEntry.section
-                            onActiveSectionChange(targetEntry.section)
-                            scope.launch {
-                                listState.scrollToItem(idx)
-                                withFrameNanos { }
-                                restoreRequester.requestFocusWithRetry()
-                            }
-                        }
-                    }
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .align(Alignment.TopStart)
-                            .onFocusChanged { topFilterBarFocused = it.hasFocus }
-                            .onBackKey(enabled = topFilterBarFocused && !railFocused) {
-                                val sectionStart = sectionedRows.indexOfFirst { it.section == activeSection }
-                                if (sectionStart >= 0) jumpToRow(sectionStart)
-                            }
-                            .onPreviewKeyEvent { event ->
-                                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                                val sectionStart = sectionedRows.indexOfFirst { it.section == activeSection }
-                                when (event.key) {
-                                    Key.DirectionDown -> {
-                                        if (sectionStart >= 0) jumpToRow(sectionStart)
-                                        true
-                                    }
-                                    Key.DirectionUp -> {
-                                        val prevIdx = (sectionStart - 1).coerceAtLeast(0)
-                                        if (sectionStart > 0) jumpToRow(prevIdx)
-                                        true
-                                    }
-                                    else -> false
-                                }
-                            },
-                    ) {
-                        Box(
-                            Modifier
-                                .width(4.dp)
-                                .height(18.dp)
-                                .background(AppColors.Accent, RoundedCornerShape(2.dp)),
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            text = sectionLabel(activeSection).orEmpty(),
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                            color = Color.White,
-                        )
-                        Spacer(Modifier.width(16.dp))
-                        val pillSummary = if (activeSelection.isActive) {
-                            formatFilterSelectionSummary(activeSelection)
-                        } else {
-                            localizedStringResource(StringsR.string.home_filter_all_categories)
-                        }
-                        SectionCategoryPill(
-                            label = pillSummary,
-                            active = activeSelection.isActive,
-                            onClick = { onOpenSectionCategoryPicker.invoke(activeSection) },
-                            onLeftAtEdge = onOpenRail,
-                            modifier = Modifier.focusRequester(pillRequester),
-                        )
-                        if (activeSelection.isActive && onClearSectionCategoryFilter != null) {
-                            Spacer(Modifier.width(10.dp))
-                            SectionClearFilterPill(
-                                label = localizedStringResource(StringsR.string.home_filter_clear),
-                                onClick = { onClearSectionCategoryFilter(activeSection) },
-                            )
-                        }
-                        if (isLoading) {
-                            Spacer(Modifier.width(12.dp))
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                color = AppColors.Accent,
-                                strokeWidth = 2.dp,
-                            )
-                        }
-                    }
-                } else {
-                    LaunchedEffect(Unit) { topFilterBarFocused = false }
-                }
                 Column(
                     Modifier.align(Alignment.BottomStart),
                     verticalArrangement = Arrangement.Bottom,
@@ -424,21 +321,21 @@ internal fun RowsBrowser(
                         val isSectionStart = entry.section != RailDestination.HOME &&
                             (rowIndex == 0 || sectionedRows[rowIndex - 1].section != entry.section)
                         val sectionHeaderLabel = if (isSectionStart) sectionLabel(entry.section) else null
-                        val filterableSectionStart = isSectionStart &&
-                            onOpenSectionCategoryPicker != null &&
-                            (entry.section == RailDestination.TV || entry.section == RailDestination.MOVIES)
-                        val sectionPillRequester = if (filterableSectionStart) sectionFilterPillRequesters[entry.section] else null
                         val rowLoops = loopsFor(row)
                         CatalogRowView(
                             row = row,
                             sectionLabel = sectionHeaderLabel,
-                            sectionFilterPillRequester = sectionPillRequester,
                             startPadding = startPadding,
                             loops = rowLoops,
                             focusKey = restoreKey,
                             restoreRequester = restoreRequester,
                             railRequester = railRequester,
-                            onOpenRail = onOpenRail,
+                            onOpenRail = onOpenRail?.let { open ->
+                                {
+                                    syncRestoreKey()
+                                    open()
+                                }
+                            },
                             resetScrollTick = if (rowIndex == 0) backToTopTick else 0,
                             onLoadMore = if (row.style == RowStyle.POSTER && onLoadMoreRow != null) {
                                 { rowId -> onLoadMoreRow(entry.filter, rowId) }
@@ -551,89 +448,6 @@ private fun sectionLabel(section: RailDestination): String? = when (section) {
 }
 
 @Composable
-private fun SectionCategoryPill(
-    label: String,
-    active: Boolean,
-    onClick: () -> Unit,
-    onLeftAtEdge: (() -> Unit)?,
-    modifier: Modifier = Modifier,
-) {
-    var focused by remember { mutableStateOf(false) }
-    val bg = when {
-        focused -> Color.White
-        active -> Color(0x4DE50914)
-        else -> Color(0xCC1C1C1C)
-    }
-    val border = when {
-        focused -> Color.White
-        active -> AppColors.Accent
-        else -> Color.White.copy(alpha = 0.28f)
-    }
-    val textColor = if (focused) Color.Black else Color.White
-    Box(
-        modifier = modifier
-            .graphicsLayer {
-                val scale = if (focused) 1.05f else 1f
-                scaleX = scale
-                scaleY = scale
-            }
-            .onFocusChanged { focused = it.isFocused }
-            .onPreviewKeyEvent { event ->
-                if (onLeftAtEdge != null && event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
-                    onLeftAtEdge()
-                    true
-                } else {
-                    false
-                }
-            }
-            .clip(CircleShape)
-            .background(bg, CircleShape)
-            .border(1.dp, border, CircleShape)
-            .tvClickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 7.dp),
-    ) {
-        Text(
-            text = "$label  ▾",
-            color = textColor,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.labelLarge.copy(
-                fontWeight = if (focused || active) FontWeight.Bold else FontWeight.Medium,
-            ),
-            modifier = Modifier.widthIn(max = 440.dp),
-        )
-    }
-}
-
-@Composable
-private fun SectionClearFilterPill(
-    label: String,
-    onClick: () -> Unit,
-) {
-    var focused by remember { mutableStateOf(false) }
-    Box(
-        modifier = Modifier
-            .graphicsLayer {
-                val scale = if (focused) 1.05f else 1f
-                scaleX = scale
-                scaleY = scale
-            }
-            .onFocusChanged { focused = it.isFocused }
-            .clip(CircleShape)
-            .background(if (focused) Color.White else Color(0x991C1C1C), CircleShape)
-            .border(1.dp, if (focused) Color.White else Color.White.copy(alpha = 0.22f), CircleShape)
-            .tvClickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 7.dp),
-    ) {
-        Text(
-            text = "✕  $label",
-            color = if (focused) Color.Black else Color.White.copy(alpha = 0.85f),
-            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium),
-        )
-    }
-}
-
-@Composable
 private fun HeroBackdropSlot(heroState: StateFlow<CatalogItem>) {
     val hero by heroState.collectAsState()
     HeroBackdrop(hero)
@@ -685,7 +499,6 @@ private fun UpNextActions(
 private fun CatalogRowView(
     row: CatalogRow,
     sectionLabel: String? = null,
-    sectionFilterPillRequester: FocusRequester? = null,
     startPadding: Dp = ContentStart,
     loops: Boolean = false,
     focusKey: String?,
@@ -758,6 +571,14 @@ private fun CatalogRowView(
         key(loops) {
             ProvidePivotScroll(leading = startPadding + 6.dp) {
                 val rowState = rememberLoopingRowState(if (loops) row.items.size else 0)
+                var rowHasFocus by remember { mutableStateOf(false) }
+                var activeIndex by remember { mutableStateOf(-1) }
+                var activeItemKey by remember { mutableStateOf<String?>(null) }
+                var paginationAnchorKey by remember { mutableStateOf<String?>(null) }
+                var paginationAnchorIndex by remember { mutableStateOf(-1) }
+                var lastSizeSeen by remember { mutableStateOf(row.items.size) }
+                val paginationAnchorRequester = remember { FocusRequester() }
+
                 LaunchedEffect(resetScrollTick) {
                     if (resetScrollTick > 0) {
                         rowState.scrollToItem(if (loops) firstVirtualIndex(row.items.size) else 0)
@@ -768,13 +589,35 @@ private fun CatalogRowView(
                         snapshotFlow { rowState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
                             .collectLatest { lastVisible ->
                                 if (lastVisible >= row.items.lastIndex - 4 && row.items.isNotEmpty()) {
+                                    if (rowHasFocus && activeItemKey != null) {
+                                        paginationAnchorKey = activeItemKey
+                                        paginationAnchorIndex = activeIndex
+                                    }
                                     onLoadMore?.invoke(row.id)
                                 }
                             }
                     }
+                    LaunchedEffect(row.items.size) {
+                        val grew = row.items.size > lastSizeSeen
+                        lastSizeSeen = row.items.size
+                        val anchorKey = paginationAnchorKey
+                        val anchorIdx = paginationAnchorIndex
+                        if (grew && anchorKey != null) {
+                            withFrameNanos { }
+                            val driftedBack = !rowHasFocus || (activeItemKey != anchorKey && activeIndex in 0 until anchorIdx)
+                            if (driftedBack) {
+                                runCatching { paginationAnchorRequester.requestFocus() }
+                            }
+                        }
+                        if (grew) {
+                            paginationAnchorKey = null
+                            paginationAnchorIndex = -1
+                        }
+                    }
                 }
                 LazyRow(
                     state = rowState,
+                    modifier = Modifier.onFocusChanged { rowHasFocus = it.hasFocus },
                     contentPadding = PaddingValues(horizontal = startPadding, vertical = 14.dp),
                     horizontalArrangement = Arrangement.spacedBy(if (row.style == RowStyle.TOP10) 6.dp else 12.dp),
                 ) {
@@ -803,10 +646,15 @@ private fun CatalogRowView(
                         }
                     } else {
                         itemsIndexed(row.items, key = { _, item -> item.key }) { index, item ->
-                            val focusMod = if (keyOf(row, index) == focusKey) {
+                            val baseFocusMod = if (keyOf(row, index) == focusKey) {
                                 Modifier.focusRequester(restoreRequester)
                             } else {
                                 Modifier
+                            }
+                            val focusMod = if (item.key == paginationAnchorKey) {
+                                baseFocusMod.focusRequester(paginationAnchorRequester)
+                            } else {
+                                baseFocusMod
                             }
                             val edgeMod = when {
                                 index == 0 && onOpenRail != null -> focusMod.onPreviewKeyEvent { event ->
@@ -819,12 +667,6 @@ private fun CatalogRowView(
                                 }
                                 index == 0 && railRequester != null -> focusMod.focusProperties { left = railRequester }
                                 else -> focusMod
-                            }.let { baseMod ->
-                                if (sectionFilterPillRequester != null) {
-                                    baseMod.focusProperties { up = sectionFilterPillRequester }
-                                } else {
-                                    baseMod
-                                }
                             }
                             RowItemCard(
                                 row = row,
@@ -833,8 +675,12 @@ private fun CatalogRowView(
                                 item = item,
                                 modifier = edgeMod,
                                 onFocused = {
+                                    activeIndex = index
+                                    activeItemKey = item.key
                                     onFocused(index)
                                     if (expandable && index >= row.items.lastIndex - 4) {
+                                        paginationAnchorKey = item.key
+                                        paginationAnchorIndex = index
                                         onLoadMore?.invoke(row.id)
                                     }
                                 },

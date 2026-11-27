@@ -1,30 +1,71 @@
 package com.shieldstream.tv.home
 
-import com.shieldstream.tv.strings.R as StringsR
-import com.shieldstream.tv.strings.Texts
+import android.content.Context
+import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.shieldstream.tv.domain.CatalogRepository
+import com.shieldstream.tv.domain.RequestRepository
 import com.shieldstream.tv.domain.SettingsRepository
 import com.shieldstream.tv.model.CatalogItem
+import com.shieldstream.tv.model.HomeFilter
+import com.shieldstream.tv.strings.R as StringsR
+import com.shieldstream.tv.strings.Texts
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+enum class SearchMediaType(
+    val filter: HomeFilter,
+    @param:StringRes val labelRes: Int,
+) {
+    TV(HomeFilter.TV, StringsR.string.common_tv_shows),
+    MOVIES(HomeFilter.MOVIES, StringsR.string.common_movies),
+    ANIME(HomeFilter.ANIME, StringsR.string.common_anime),
+}
+
+enum class SearchSort(
+    val doubanSort: String,
+    @param:StringRes val labelRes: Int,
+) {
+    POPULAR("U", StringsR.string.home_filter_sort_popular),
+    TOP_RATED("S", StringsR.string.home_filter_sort_top_rated),
+    LATEST("R", StringsR.string.home_filter_sort_latest),
+}
+
+data class SearchFilterState(
+    val mediaType: SearchMediaType = SearchMediaType.TV,
+    val sort: SearchSort = SearchSort.POPULAR,
+    val selection: CategoryFilterSelection = CategoryFilterSelection(),
+) {
+    val canReset: Boolean
+        get() = sort != SearchSort.POPULAR || selection.isActive
+}
+
 sealed interface SearchUiState {
+    data class Browse(
+        val filter: SearchFilterState,
+        val items: List<CatalogItem>,
+        val isLoading: Boolean = false,
+        val isLoadingMore: Boolean = false,
+        val canLoadMore: Boolean = false,
+        val error: String? = null,
+    ) : SearchUiState
+
     data object Loading : SearchUiState
-    data class Suggestions(val items: List<CatalogItem>) : SearchUiState
+
     /** [locked]: solo en perfiles infantiles, lo que hay que pedir a un adulto; [pending]: claves ya pedidas. */
     data class Results(
         val query: String,
@@ -32,6 +73,7 @@ sealed interface SearchUiState {
         val locked: List<CatalogItem> = emptyList(),
         val pending: Set<String> = emptySet(),
     ) : SearchUiState
+
     data class Empty(val query: String) : SearchUiState
     data class Error(val message: String) : SearchUiState
 }
@@ -41,8 +83,8 @@ class SearchViewModel @Inject constructor(
     private val catalogRepository: CatalogRepository,
     private val settings: SettingsRepository,
     private val texts: Texts,
-    private val requests: com.shieldstream.tv.domain.RequestRepository,
-    @dagger.hilt.android.qualifiers.ApplicationContext private val appContext: android.content.Context,
+    private val requests: RequestRepository,
+    @param:ApplicationContext private val appContext: Context,
 ) : ViewModel() {
 
     private val _notice = MutableStateFlow<String?>(null)
@@ -68,6 +110,9 @@ class SearchViewModel @Inject constructor(
 
     private val _query = MutableStateFlow("")
     val query: StateFlow<String> = _query.asStateFlow()
+
+    private val _filterState = MutableStateFlow(SearchFilterState())
+    val filterState: StateFlow<SearchFilterState> = _filterState.asStateFlow()
 
     // ---- 拼音输入法状态 ----
     /**
@@ -144,19 +189,186 @@ class SearchViewModel @Inject constructor(
         return _query.value
     }
 
-    private val _uiState = MutableStateFlow<SearchUiState>(SearchUiState.Loading)
+    private val _uiState = MutableStateFlow<SearchUiState>(
+        SearchUiState.Browse(
+            filter = SearchFilterState(),
+            items = emptyList(),
+            isLoading = true,
+        ),
+    )
     val uiState: StateFlow<SearchUiState> = _uiState.asStateFlow()
 
-    private var suggestions: List<CatalogItem> = emptyList()
     private var searchJob: Job? = null
+    private var filterJob: Job? = null
+    private var loadMoreJob: Job? = null
+    private var browsePage = 1
+    private var browseExhausted = false
+    private var lastBrowseFilter: SearchFilterState? = null
+    private var lastBrowseItems: List<CatalogItem> = emptyList()
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
             PinyinEngine.ensureLoaded(appContext)
         }
-        viewModelScope.launch {
-            suggestions = runCatching { catalogRepository.trending() }.getOrDefault(emptyList())
-            if (_query.value.isBlank()) _uiState.value = SearchUiState.Suggestions(suggestions)
+        loadBrowse(_filterState.value, debounceMs = 0L)
+    }
+
+    fun selectMediaType(mediaType: SearchMediaType) {
+        val current = _filterState.value
+        val next = current.copy(
+            mediaType = mediaType,
+            selection = current.selection.sanitizeFor(mediaType.filter),
+        )
+        applyFilterChange(next)
+    }
+
+    fun selectSort(sort: SearchSort) {
+        val current = _filterState.value
+        if (current.sort == sort && _query.value.isBlank()) return
+        applyFilterChange(current.copy(sort = sort))
+    }
+
+    fun toggleGenre(tag: String) {
+        val current = _filterState.value
+        applyFilterChange(current.copy(selection = current.selection.toggleGenre(tag)))
+    }
+
+    fun clearGenres() {
+        val current = _filterState.value
+        if (current.selection.genres.isEmpty() && _query.value.isBlank()) return
+        applyFilterChange(current.copy(selection = current.selection.clearGenres()))
+    }
+
+    fun selectRegion(tag: String?) {
+        val current = _filterState.value
+        applyFilterChange(current.copy(selection = current.selection.toggleRegion(tag)))
+    }
+
+    fun selectEra(tag: String?) {
+        val current = _filterState.value
+        applyFilterChange(current.copy(selection = current.selection.toggleEra(tag)))
+    }
+
+    fun resetFilters() {
+        val current = _filterState.value
+        applyFilterChange(
+            current.copy(
+                sort = SearchSort.POPULAR,
+                selection = CategoryFilterSelection(),
+            ),
+        )
+    }
+
+    fun retryBrowse() {
+        loadBrowse(_filterState.value, debounceMs = 0L)
+    }
+
+    fun loadMoreFiltered() {
+        val currentBrowse = _uiState.value as? SearchUiState.Browse ?: return
+        if (currentBrowse.isLoading || currentBrowse.isLoadingMore || browseExhausted || !currentBrowse.canLoadMore) return
+        val nextPage = browsePage + 1
+        if (nextPage > MAX_FILTER_PAGES) {
+            browseExhausted = true
+            _uiState.value = currentBrowse.copy(canLoadMore = false)
+            return
+        }
+        val activeFilter = currentBrowse.filter
+        _uiState.value = currentBrowse.copy(isLoadingMore = true)
+        loadMoreJob?.cancel()
+        loadMoreJob = viewModelScope.launch {
+            val extra = runCatching {
+                catalogRepository.browseCategoryFilter(
+                    filter = activeFilter.mediaType.filter,
+                    tag = activeFilter.selection.toDoubanTags(),
+                    sort = activeFilter.sort.doubanSort,
+                    page = nextPage,
+                )
+            }.getOrDefault(emptyList())
+
+            if (_query.value.isNotBlank() || _filterState.value != activeFilter) return@launch
+            val latestBrowse = _uiState.value as? SearchUiState.Browse ?: return@launch
+            if (extra.isEmpty()) {
+                browseExhausted = true
+                _uiState.value = latestBrowse.copy(isLoadingMore = false, canLoadMore = false)
+            } else {
+                browsePage = nextPage
+                val merged = (latestBrowse.items + extra).distinctBy { it.key }
+                lastBrowseFilter = activeFilter
+                lastBrowseItems = merged
+                val hasMore = nextPage < MAX_FILTER_PAGES && merged.size > latestBrowse.items.size
+                if (!hasMore) browseExhausted = true
+                _uiState.value = latestBrowse.copy(
+                    items = merged,
+                    isLoadingMore = false,
+                    canLoadMore = hasMore,
+                )
+            }
+        }
+    }
+
+    private fun applyFilterChange(next: SearchFilterState) {
+        searchJob?.cancel()
+        loadMoreJob?.cancel()
+        val hadQuery = _query.value.isNotEmpty() || _composing.value.isNotEmpty()
+        if (hadQuery) {
+            _composing.value = ""
+            refreshCandidates()
+            _query.value = ""
+        }
+        _filterState.value = next
+        loadBrowse(next, debounceMs = if (hadQuery) 0L else FILTER_DEBOUNCE_MS)
+    }
+
+    private fun loadBrowse(filter: SearchFilterState, debounceMs: Long) {
+        filterJob?.cancel()
+        loadMoreJob?.cancel()
+        val preservedItems = (_uiState.value as? SearchUiState.Browse)?.items
+            ?: lastBrowseItems.takeIf { lastBrowseFilter == filter }
+            ?: emptyList()
+        _uiState.value = SearchUiState.Browse(
+            filter = filter,
+            items = preservedItems,
+            isLoading = true,
+            isLoadingMore = false,
+            canLoadMore = false,
+            error = null,
+        )
+        filterJob = viewModelScope.launch {
+            if (debounceMs > 0L) delay(debounceMs)
+            val result = runCatching {
+                catalogRepository.browseCategoryFilter(
+                    filter = filter.mediaType.filter,
+                    tag = filter.selection.toDoubanTags(),
+                    sort = filter.sort.doubanSort,
+                    page = 1,
+                )
+            }
+            if (_query.value.isNotBlank() || _filterState.value != filter) return@launch
+            result
+                .onSuccess { items ->
+                    browsePage = 1
+                    browseExhausted = items.isEmpty()
+                    lastBrowseFilter = filter
+                    lastBrowseItems = items
+                    _uiState.value = SearchUiState.Browse(
+                        filter = filter,
+                        items = items,
+                        isLoading = false,
+                        isLoadingMore = false,
+                        canLoadMore = items.isNotEmpty(),
+                        error = null,
+                    )
+                }
+                .onFailure { e ->
+                    _uiState.value = SearchUiState.Browse(
+                        filter = filter,
+                        items = emptyList(),
+                        isLoading = false,
+                        isLoadingMore = false,
+                        canLoadMore = false,
+                        error = e.message ?: texts.get(StringsR.string.home_search_error),
+                    )
+                }
         }
     }
 
@@ -174,9 +386,23 @@ class SearchViewModel @Inject constructor(
         // whereas a single Latin letter is not worth a round-trip.
         val minLen = if (PinyinEngine.hasChinese(q)) 1 else 2
         if (q.length < minLen) {
-            _uiState.value = SearchUiState.Suggestions(suggestions)
+            val activeFilter = _filterState.value
+            if (lastBrowseFilter == activeFilter && lastBrowseItems.isNotEmpty()) {
+                _uiState.value = SearchUiState.Browse(
+                    filter = activeFilter,
+                    items = lastBrowseItems,
+                    isLoading = false,
+                    isLoadingMore = false,
+                    canLoadMore = !browseExhausted && browsePage < MAX_FILTER_PAGES,
+                    error = null,
+                )
+            } else {
+                loadBrowse(activeFilter, debounceMs = 0L)
+            }
             return
         }
+        filterJob?.cancel()
+        loadMoreJob?.cancel()
         searchJob = viewModelScope.launch {
             delay(450)
             _uiState.value = SearchUiState.Loading
@@ -199,5 +425,10 @@ class SearchViewModel @Inject constructor(
                 }
                 .onFailure { e -> _uiState.value = SearchUiState.Error(e.message ?: texts.get(StringsR.string.home_search_error)) }
         }
+    }
+
+    private companion object {
+        const val FILTER_DEBOUNCE_MS = 260L
+        const val MAX_FILTER_PAGES = 5
     }
 }
