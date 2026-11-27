@@ -88,15 +88,15 @@ class CmsStreamsTest {
     }
 
     @Test
-    fun `sources include verified dyttzy, ruyi, ikun, and 360zy and exclude broken bfzy`() {
+    fun `sources include verified dyttzy, ruyi, bfzy, ikun, and 360zy`() {
         val labels = CmsStreams.SOURCES.map { it.first }
         assertTrue("电影天堂" in labels)
         assertTrue("如意资源" in labels)
         assertTrue("魔都资源" in labels)
         assertTrue("无尽资源" in labels)
+        assertTrue("暴风资源" in labels)
         assertTrue("iKun资源" in labels)
         assertTrue("360资源" in labels)
-        assertFalse("暴风资源" in labels)
     }
 
     @Test

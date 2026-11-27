@@ -21,6 +21,7 @@ object CmsSources {
         CmsSource("builtin_ryi", "如意资源", "https://cj.rycjapi.com/api.php/provide/vod", enabled = true, builtIn = true),
         CmsSource("builtin_dytt", "电影天堂", "https://caiji.dyttzyapi.com/api.php/provide/vod", enabled = true, builtIn = true),
         CmsSource("builtin_wujin", "无尽资源", "https://api.wujinapi.com/api.php/provide/vod", enabled = true, builtIn = true),
+        CmsSource("builtin_bfzy", "暴风资源", "https://bfzyapi.com/api.php/provide/vod", enabled = true, builtIn = true),
         CmsSource("builtin_ikun", "iKun资源", "https://ikunzyapi.com/api.php/provide/vod", enabled = true, builtIn = true),
         CmsSource("builtin_360zy", "360资源", "https://360zy.com/api.php/provide/vod", enabled = true, builtIn = true),
     )

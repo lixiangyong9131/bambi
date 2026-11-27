@@ -56,6 +56,7 @@ class CmsSourcesTest {
         val labels = CmsSources.DEFAULT_SOURCES.map { it.name }
         assertTrue("魔都资源" in labels)
         assertTrue("无尽资源" in labels)
+        assertTrue("暴风资源" in labels)
         assertTrue(CmsSources.DEFAULT_SOURCES.first { it.id == "builtin_ffzy" }.url.startsWith("https://"))
         assertTrue(CmsSources.DEFAULT_SOURCES.first { it.id == "builtin_ryi" }.url.startsWith("https://"))
         assertTrue(CmsSources.DEFAULT_SOURCES.first { it.id == "builtin_dytt" }.url.startsWith("https://"))
