@@ -9,6 +9,8 @@ import com.shieldstream.tv.domain.SourceProvider
 import com.shieldstream.tv.domain.StremioAddonMetadata
 import com.shieldstream.tv.domain.StremioAddons
 import com.shieldstream.tv.model.AppLanguage
+import com.shieldstream.tv.model.CmsSource
+import com.shieldstream.tv.model.CmsSources
 import com.shieldstream.tv.model.SubtitlePreference
 import com.shieldstream.tv.settings.SetupAudioPreference
 import com.shieldstream.tv.strings.Texts
@@ -47,6 +49,7 @@ class PhoneConfigControllerTest {
         every { settings.spanishOnlySources } returns MutableStateFlow(false)
         every { settings.spanishFirst } returns MutableStateFlow(true)
         every { settings.subtitlePreference } returns MutableStateFlow(SubtitlePreference.SPANISH)
+        every { settings.cmsSources } returns MutableStateFlow(CmsSources.DEFAULT_SOURCES)
     }
 
     @Test
@@ -272,6 +275,75 @@ class PhoneConfigControllerTest {
         } catch (_: IllegalArgumentException) {
             coVerify(exactly = 0) { settings.setLanguage(any()) }
         }
+    }
+
+    @Test
+    fun `snapshot exposes all built-in cms sources with urls`() = runTest {
+        val config = controller.snapshot()
+
+        assertEquals(CmsSources.DEFAULT_SOURCES.size, config.cmsSources.size)
+        assertTrue(config.cmsSources.all { it.builtIn && it.enabled && it.url.startsWith("http") })
+    }
+
+    @Test
+    fun `cms update can disable a built-in source and add a valid custom source`() = runTest {
+        val builtIn = CmsSources.DEFAULT_SOURCES.first()
+        val customUrl = "https://custom.cms.example/api.php/provide/vod"
+        coEvery { apiKeys.checkCmsSource(customUrl) } returns KeyCheck.Valid("OK")
+        val savedSlot = mutableListOf<List<CmsSource>>()
+        coEvery { settings.setCmsSources(capture(savedSlot)) } returns Unit
+
+        val result = controller.update(
+            update().copy(
+                cmsSources = listOf(
+                    PhoneCmsSourceUpdateDto(id = builtIn.id, enabled = false),
+                    PhoneCmsSourceUpdateDto(name = "自定义源", url = "$customUrl/"),
+                ),
+            ),
+        )
+
+        assertTrue(result is PhoneConfigUpdateResult.Success)
+        val saved = savedSlot.single()
+        assertFalse(saved.first { it.id == builtIn.id }.enabled)
+        val custom = saved.first { !it.builtIn }
+        assertEquals("自定义源", custom.name)
+        assertEquals(customUrl, custom.url)
+        assertTrue(custom.enabled)
+    }
+
+    @Test
+    fun `cms update rejects deleting built-in source and invalid url`() = runTest {
+        val builtIn = CmsSources.DEFAULT_SOURCES.first()
+
+        val result = controller.update(
+            update().copy(
+                cmsSources = listOf(
+                    PhoneCmsSourceUpdateDto(id = builtIn.id, remove = true),
+                    PhoneCmsSourceUpdateDto(url = "not-a-url"),
+                ),
+            ),
+        )
+
+        assertTrue(result is PhoneConfigUpdateResult.ValidationFailed)
+        val errors = (result as PhoneConfigUpdateResult.ValidationFailed).errors
+        assertTrue(errors.containsKey("cms:0"))
+        assertTrue(errors.containsKey("cms:1"))
+        coVerify(exactly = 0) { settings.setCmsSources(any()) }
+    }
+
+    @Test
+    fun `cms test-only update records test result without overwriting other settings`() = runTest {
+        val builtIn = CmsSources.DEFAULT_SOURCES.first()
+        coEvery { apiKeys.checkCmsSource(builtIn.url) } returns KeyCheck.Valid("已连接 · 返回 20 条片源")
+
+        val result = controller.update(
+            update().copy(cmsSources = listOf(PhoneCmsSourceUpdateDto(id = builtIn.id, test = true))),
+        )
+
+        assertTrue(result is PhoneConfigUpdateResult.Success)
+        val dto = (result as PhoneConfigUpdateResult.Success).config.cmsSources.first { it.id == builtIn.id }
+        assertEquals("已连接 · 返回 20 条片源", dto.detail)
+        coVerify(exactly = 0) { settings.setDebridService(any()) }
     }
 
     private fun update(

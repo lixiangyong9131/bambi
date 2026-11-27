@@ -5,6 +5,13 @@ import com.shieldstream.tv.ui.theme.AppShapes
 import com.shieldstream.tv.strings.R as StringsR
 import com.shieldstream.tv.strings.localizedStringResource
 import com.shieldstream.tv.model.Lang
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.background
@@ -57,6 +64,7 @@ import com.shieldstream.tv.ui.component.onBackKey
 import com.shieldstream.tv.ui.component.requestFocusWithRetry
 import com.shieldstream.tv.ui.theme.LocalSoftBackdrops
 import com.shieldstream.tv.ui.theme.LocalHighResBackdrops
+import com.shieldstream.tv.ui.theme.LocalLightweightUi
 import com.shieldstream.tv.model.BackdropUrls
 import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
@@ -153,6 +161,22 @@ internal fun Billboard(
 @Composable
 internal fun HeroBackdrop(item: CatalogItem) {
     val artworkUrl = item.posterUrl ?: BackdropUrls.fullScreen(item.backdropUrl, lightweight = false, highRes = LocalHighResBackdrops.current)
+    val lightweight = LocalLightweightUi.current
+    if (lightweight) {
+        HeroBackdropContent(artworkUrl)
+    } else {
+        Crossfade(
+            targetState = artworkUrl,
+            animationSpec = tween(240),
+            label = "heroBackdrop",
+        ) { url ->
+            HeroBackdropContent(url)
+        }
+    }
+}
+
+@Composable
+private fun HeroBackdropContent(artworkUrl: String?) {
     Box(Modifier.fillMaxSize()) {
         if (artworkUrl != null) {
             AmbientBackdropImage(
@@ -195,6 +219,26 @@ internal fun HeroBackdrop(item: CatalogItem) {
 
 @Composable
 internal fun HeroInfo(item: CatalogItem) {
+    val lightweight = LocalLightweightUi.current
+    if (lightweight) {
+        HeroInfoContent(item)
+    } else {
+        AnimatedContent(
+            targetState = item,
+            contentKey = { it.key },
+            transitionSpec = {
+                (fadeIn(tween(190)) + slideInVertically(tween(190)) { it / 10 })
+                    .togetherWith(fadeOut(tween(110)))
+            },
+            label = "heroInfo",
+        ) { current ->
+            HeroInfoContent(current)
+        }
+    }
+}
+
+@Composable
+private fun HeroInfoContent(item: CatalogItem) {
     Column {
         Text(
             text = item.title,

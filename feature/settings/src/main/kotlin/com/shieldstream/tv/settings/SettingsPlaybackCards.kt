@@ -80,6 +80,46 @@ internal fun AutoNextCard(viewModel: SettingsViewModel = hiltViewModel()) {
 }
 
 @Composable
+internal fun SmartAdFilterCard(viewModel: SettingsViewModel = hiltViewModel()) {
+    val enabled by viewModel.smartAdFilter.collectAsStateWithLifecycle()
+    FocusCard(
+        onClick = { viewModel.setSmartAdFilter(!enabled) },
+        modifier = Modifier.onPreviewKeyEvent { event ->
+            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+            when (event.key) {
+                Key.DirectionLeft -> { viewModel.setSmartAdFilter(true); true }
+                Key.DirectionRight -> { viewModel.setSmartAdFilter(false); true }
+                else -> false
+            }
+        },
+    ) { _ ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    localizedStringResource(StringsR.string.settings_smart_ad_filter),
+                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                    color = Color.White,
+                )
+                Text(
+                    localizedStringResource(StringsR.string.settings_smart_ad_filter_detail),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = SettingsMuted,
+                )
+            }
+            Spacer(Modifier.width(24.dp))
+            Row(
+                Modifier
+                    .background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(50))
+                    .padding(4.dp),
+            ) {
+                SegmentOption(localizedStringResource(StringsR.string.settings_on), selected = enabled)
+                SegmentOption(localizedStringResource(StringsR.string.settings_off_9847b4), selected = !enabled)
+            }
+        }
+    }
+}
+
+@Composable
 internal fun SwitchPickedSourceCard(viewModel: SettingsViewModel = hiltViewModel()) {
     val enabled by viewModel.switchFromPickedSource.collectAsStateWithLifecycle()
     FocusCard(

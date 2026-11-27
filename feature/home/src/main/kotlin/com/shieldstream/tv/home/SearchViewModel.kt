@@ -5,6 +5,7 @@ import androidx.annotation.StringRes
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.shieldstream.tv.domain.CatalogRepository
+import com.shieldstream.tv.domain.MyListRepository
 import com.shieldstream.tv.domain.RequestRepository
 import com.shieldstream.tv.domain.SettingsRepository
 import com.shieldstream.tv.model.CatalogItem
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -84,8 +86,21 @@ class SearchViewModel @Inject constructor(
     private val settings: SettingsRepository,
     private val texts: Texts,
     private val requests: RequestRepository,
+    private val myList: MyListRepository,
     @param:ApplicationContext private val appContext: Context,
 ) : ViewModel() {
+
+    val myListKeys: StateFlow<Set<String>> = myList.entries
+        .map { entries -> entries.map { "${it.type.name}:${it.id}" }.toSet() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
+    fun toggleMyList(item: CatalogItem) {
+        val adding = !myList.contains(item.type, item.id)
+        if (adding) myList.add(item.type, item.id) else myList.remove(item.type, item.id)
+        _notice.value = texts.get(
+            if (adding) StringsR.string.home_added_to_my_list else StringsR.string.home_removed_from_my_list,
+        )
+    }
 
     private val _notice = MutableStateFlow<String?>(null)
     val notice: StateFlow<String?> = _notice.asStateFlow()

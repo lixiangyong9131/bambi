@@ -94,6 +94,8 @@ fun TracksPanel(
     introSec: Int = 0,
     outroSec: Int = 0,
     onToggleSkip: () -> Unit = {},
+    hasEpisodes: Boolean = false,
+    onOpenEpisodes: () -> Unit = {},
 ) {
     val texts = rememberTexts()
     var tracks by remember(player) { mutableStateOf(player.currentTracks) }
@@ -171,68 +173,91 @@ fun TracksPanel(
                     )
                 }
             }
-            val playback = remember(playbackSpeed, sleepTimer, sleepTimerRemainingMinutes, videoFit, skipEnabled, introSec, outroSec) {
-                listOf(
+            val playback = remember(playbackSpeed, sleepTimer, sleepTimerRemainingMinutes, videoFit, skipEnabled, introSec, outroSec, hasEpisodes) {
+                buildList {
+                    if (hasEpisodes) {
+                        add(
+                            TrackOption(
+                                key = "p_episodes",
+                                title = texts.get(StringsR.string.player_episodes) + " ›",
+                                detail = "",
+                                selected = false,
+                                onSelect = onOpenEpisodes,
+                            ),
+                        )
+                    }
                     // Modified build: skip controls first in the playback column.
-                    TrackOption(
-                        key = "p_skip_toggle",
-                        title = texts.get(StringsR.string.details_skip_enable),
-                        detail = if (skipEnabled) "ON" else "OFF",
-                        selected = skipEnabled,
-                        onSelect = onToggleSkip,
-                    ),
-                    TrackOption(
-                        key = "p_intro_point",
-                        title = texts.get(StringsR.string.player_skip_intro_short),
-                        detail = if (introSec > 0) formatSkipTime(introSec) else "",
-                        selected = introSec > 0,
-                        onSelect = { onSetIntroPoint((player.currentPosition / 1000).toInt()) },
-                    ),
-                    TrackOption(
-                        key = "p_outro_point",
-                        title = texts.get(StringsR.string.player_skip_outro_short),
-                        detail = if (outroSec > 0) "-" + formatSkipTime(outroSec) else "",
-                        selected = outroSec > 0,
-                        onSelect = {
-                            val remain = ((player.duration - player.currentPosition) / 1000).toInt()
-                                .coerceAtLeast(0)
-                            onSetOutroPoint(remain)
-                        },
-                    ),
-                    TrackOption(
-                        key = "p_speed",
-                        title = texts.get(StringsR.string.player_speed),
-                        detail = speedLabel(playbackSpeed) +
-                            if (playbackSpeed != 1f) " · " + texts.get(StringsR.string.player_speed_passthrough_note) else "",
-                        selected = playbackSpeed != 1f,
-                        onSelect = onCycleSpeed,
-                    ),
-                    TrackOption(
-                        key = "p_sleep",
-                        title = texts.get(StringsR.string.player_sleep_timer),
-                        detail = when (val timer = sleepTimer) {
-                            SleepTimer.Off -> texts.get(StringsR.string.player_sleep_timer_off)
-                            SleepTimer.EndOfEpisode -> texts.get(StringsR.string.player_sleep_timer_end_of_episode)
-                            is SleepTimer.Minutes -> texts.get(
-                                StringsR.string.player_sleep_timer_minutes,
-                                sleepTimerRemainingMinutes ?: timer.minutes,
-                            )
-                        },
-                        selected = sleepTimer != SleepTimer.Off,
-                        onSelect = onCycleSleepTimer,
-                    ),
-                    TrackOption(
-                        key = "p_fit",
-                        title = texts.get(StringsR.string.player_video_fit),
-                        detail = when (videoFit) {
-                            com.shieldstream.tv.model.VideoFit.FIT -> texts.get(StringsR.string.player_video_fit_original)
-                            com.shieldstream.tv.model.VideoFit.ZOOM -> texts.get(StringsR.string.player_video_fit_zoom)
-                            com.shieldstream.tv.model.VideoFit.STRETCH -> texts.get(StringsR.string.player_video_fit_stretch)
-                        },
-                        selected = videoFit != com.shieldstream.tv.model.VideoFit.FIT,
-                        onSelect = onCycleVideoFit,
-                    ),
-                )
+                    add(
+                        TrackOption(
+                            key = "p_skip_toggle",
+                            title = texts.get(StringsR.string.details_skip_enable),
+                            detail = if (skipEnabled) "ON" else "OFF",
+                            selected = skipEnabled,
+                            onSelect = onToggleSkip,
+                        ),
+                    )
+                    add(
+                        TrackOption(
+                            key = "p_intro_point",
+                            title = texts.get(StringsR.string.player_skip_intro_short),
+                            detail = if (introSec > 0) formatSkipTime(introSec) else "",
+                            selected = introSec > 0,
+                            onSelect = { onSetIntroPoint((player.currentPosition / 1000).toInt()) },
+                        ),
+                    )
+                    add(
+                        TrackOption(
+                            key = "p_outro_point",
+                            title = texts.get(StringsR.string.player_skip_outro_short),
+                            detail = if (outroSec > 0) "-" + formatSkipTime(outroSec) else "",
+                            selected = outroSec > 0,
+                            onSelect = {
+                                val remain = ((player.duration - player.currentPosition) / 1000).toInt()
+                                    .coerceAtLeast(0)
+                                onSetOutroPoint(remain)
+                            },
+                        ),
+                    )
+                    add(
+                        TrackOption(
+                            key = "p_speed",
+                            title = texts.get(StringsR.string.player_speed),
+                            detail = speedLabel(playbackSpeed) +
+                                if (playbackSpeed != 1f) " · " + texts.get(StringsR.string.player_speed_passthrough_note) else "",
+                            selected = playbackSpeed != 1f,
+                            onSelect = onCycleSpeed,
+                        ),
+                    )
+                    add(
+                        TrackOption(
+                            key = "p_sleep",
+                            title = texts.get(StringsR.string.player_sleep_timer),
+                            detail = when (val timer = sleepTimer) {
+                                SleepTimer.Off -> texts.get(StringsR.string.player_sleep_timer_off)
+                                SleepTimer.EndOfEpisode -> texts.get(StringsR.string.player_sleep_timer_end_of_episode)
+                                is SleepTimer.Minutes -> texts.get(
+                                    StringsR.string.player_sleep_timer_minutes,
+                                    sleepTimerRemainingMinutes ?: timer.minutes,
+                                )
+                            },
+                            selected = sleepTimer != SleepTimer.Off,
+                            onSelect = onCycleSleepTimer,
+                        ),
+                    )
+                    add(
+                        TrackOption(
+                            key = "p_fit",
+                            title = texts.get(StringsR.string.player_video_fit),
+                            detail = when (videoFit) {
+                                com.shieldstream.tv.model.VideoFit.FIT -> texts.get(StringsR.string.player_video_fit_original)
+                                com.shieldstream.tv.model.VideoFit.ZOOM -> texts.get(StringsR.string.player_video_fit_zoom)
+                                com.shieldstream.tv.model.VideoFit.STRETCH -> texts.get(StringsR.string.player_video_fit_stretch)
+                            },
+                            selected = videoFit != com.shieldstream.tv.model.VideoFit.FIT,
+                            onSelect = onCycleVideoFit,
+                        ),
+                    )
+                }
             }
             TracksView(audio = audio, text = text, playback = playback, cardStyle = cardStyle)
             }

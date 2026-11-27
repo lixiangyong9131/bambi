@@ -357,14 +357,26 @@ class DetailsViewModel @Inject constructor(
                 // Preload movie sources in parallel with details so clicking Play is instant.
                 loadSources(episode = null)
             }
-            val (details, prefs) = coroutineScope {
+            val earlySeason = if (item.type == MediaType.TV && !prefetchAutoplay) {
+                earlyUnfinishedSeason(item) ?: 1
+            } else {
+                null
+            }
+            val (details, prefs, earlyEpisodes) = coroutineScope {
                 val detailsJob = async { runCatching { catalogRepository.getDetails(item) }.getOrElse { CatalogDetails(item) } }
+                val episodesPrefetchJob = earlySeason?.let { season ->
+                    async { runCatching { catalogRepository.getEpisodes(item, season) }.getOrNull() }
+                }
                 val sFirst = async { settings.spanishFirst.first() }
                 val sOnly = async { settings.spanishOnlySources.first() }
                 val sExcl = async { settings.sourceExclusions.first() }
                 val sBroken = async { settings.brokenSourceIds.first() }
                 val sCast = async { settings.showCast.first() }
-                detailsJob.await() to listOf(sFirst.await(), sOnly.await(), sExcl.await(), sBroken.await(), sCast.await())
+                Triple(
+                    detailsJob.await(),
+                    listOf(sFirst.await(), sOnly.await(), sExcl.await(), sBroken.await(), sCast.await()),
+                    episodesPrefetchJob?.await(),
+                )
             }
             trace("details_ready")
             val spanishFirst = prefs[0] as Boolean
@@ -412,7 +424,30 @@ class DetailsViewModel @Inject constructor(
                     ?: continueTarget(details)
                     ?: (details.seasons.firstOrNull()?.number to null)
                 if (season != null) {
-                    selectSeason(season, preferredEpisode = episode, playImmediately = playImmediately)
+                    val prefetched = earlyEpisodes?.takeIf { season == earlySeason && !playImmediately }
+                    if (prefetched != null) {
+                        val selected = episode?.let { n -> prefetched.firstOrNull { it.number == n } }
+                            ?: prefetched.firstOrNull()
+                        updateContent { c ->
+                            c.copy(
+                                selectedSeason = season,
+                                episodes = EpisodesState.Ready(prefetched),
+                                selectedEpisode = selected,
+                            )
+                        }
+                        if (selected != null) {
+                            loadSources(selected)
+                        } else {
+                            updateContent { c ->
+                                c.copy(
+                                    sources = if (c.sources == SourcesState.Idle) SourcesState.Ready(emptyList()) else c.sources,
+                                    probingDone = true,
+                                )
+                            }
+                        }
+                    } else {
+                        selectSeason(season, preferredEpisode = episode, playImmediately = playImmediately)
+                    }
                 } else {
                     updateContent {
                         it.copy(
@@ -426,6 +461,15 @@ class DetailsViewModel @Inject constructor(
                 play()
             }
         }
+    }
+
+    private fun earlyUnfinishedSeason(item: com.shieldstream.tv.model.CatalogItem): Int? {
+        val prefix = WatchProgress.showPrefix(item.id)
+        val last = watchProgress.progress.value
+            .filterKeys { it.startsWith(prefix) }
+            .maxByOrNull { it.value.updatedAt } ?: return null
+        val season = last.key.removePrefix(prefix).split(':').getOrNull(0)?.toIntOrNull() ?: return null
+        return if (!last.value.isWatched) season else null
     }
 
     private fun continueTarget(details: CatalogDetails): Pair<Int, Int>? {

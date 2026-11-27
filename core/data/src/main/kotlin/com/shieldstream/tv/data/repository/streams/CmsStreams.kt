@@ -1,6 +1,9 @@
 package com.shieldstream.tv.data.repository.streams
 
+import com.shieldstream.tv.domain.SettingsRepository
 import com.shieldstream.tv.model.CatalogItem
+import com.shieldstream.tv.model.CmsSource
+import com.shieldstream.tv.model.CmsSources
 import com.shieldstream.tv.model.HdrType
 import com.shieldstream.tv.model.Quality
 import com.shieldstream.tv.model.StreamSource
@@ -8,9 +11,9 @@ import com.github.promeg.pinyinhelper.Pinyin
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -50,36 +53,10 @@ import kotlin.coroutines.resume
 class CmsStreams @Inject constructor(
     private val client: OkHttpClient,
     private val json: Json,
+    private val settings: SettingsRepository? = null,
 ) {
     companion object {
-        // Modified build: Moontv CMS sources. User-preferred order first.
-        private const val DYTT = "http://caiji.dyttzyapi.com/api.php/provide/vod"       // 电影天堂资源
-        private const val BFZY = "https://bfzyapi.com/api.php/provide/vod"               // 暴风资源
-        private const val API = "http://ffzy5.tv/api.php/provide/vod"                     // 非凡影视
-        private const val TAOPIAN = "https://taopianapi.com/cjapi/mc/vod/json.html"       // 淘片
-        // Modified build: extra CMS sites, verified reachable with direct m3u8 streams.
-        private const val IQIYI = "https://www.iqiyizyapi.com/api.php/provide/vod"        // iQIYI资源
-        private const val MODU = "https://www.mdzyapi.com/api.php/provide/vod"            // 魔都资源
-        // Modified build: newly verified sources (both titles -> 29-30 valid m3u8 lines).
-        private const val RYI = "http://cj.rycjapi.com/api.php/provide/vod"                    // 如意资源
-        private const val JISU = "https://www.jisuzy.com/api.php/provide/vod"             // 速播资源(备域名)
-        private const val HONGNIU = "https://www.hongniuzy2.com/api.php/provide/vod"      // 红牛资源
-        private const val IKUN = "https://ikunzyapi.com/api.php/provide/vod"              // iKun资源
-        private const val ZY360 = "https://360zy.com/api.php/provide/vod"                 // 360资源
-        // Put consistently low-latency direct sources first; optional/region-sensitive mirrors stay at the tail
-        // with automatic per-device cooldown so blocked/poisoned devices pay zero ongoing cost.
-        internal val SOURCES = listOf(
-            "非凡影视" to API,
-            "iQIYI" to IQIYI,
-            "红牛资源" to HONGNIU,
-            "速播资源" to JISU,
-            "如意资源" to RYI,
-            "电影天堂" to DYTT,
-            "iKun资源" to IKUN,
-            "360资源" to ZY360,
-        )
-        // Metadata & search use fast responsive endpoints first so Details/Search never stall on blocked edges.
-        private val SEARCH_SOURCES = listOf(API, IQIYI, HONGNIU, JISU)
+        internal val SOURCES = CmsSources.DEFAULT_SOURCES.map { it.name to it.url }
         private const val CACHE_TTL_MS = 10 * 60_000L
         private const val DNS_TTL_MS = 5 * 60_000L
         internal const val SITE_COOLDOWN_MS = 30 * 60_000L
@@ -185,6 +162,34 @@ class CmsStreams @Inject constructor(
         siteCooldownUntil[base] = nowMs + SITE_COOLDOWN_MS
     }
 
+    private suspend fun activeSources(): List<CmsSource> {
+        val configured = settings?.let { repo ->
+            runCatching { repo.cmsSources.first() }.getOrNull()
+        }?.takeIf { it.isNotEmpty() } ?: CmsSources.DEFAULT_SOURCES
+        return configured.filter { it.enabled }
+    }
+
+    private suspend fun searchSources(): List<String> =
+        activeSources().take(4).map { it.url }
+
+    suspend fun checkSite(rawUrl: String): Result<Int> = withContext(Dispatchers.IO) {
+        val normalized = CmsSources.normalizeUrl(rawUrl)
+            ?: return@withContext Result.failure(IllegalArgumentException("Invalid CMS API URL"))
+        runCatching {
+            val req = Request.Builder()
+                .url("$normalized?ac=vod&pg=1")
+                .header("User-Agent", "Mozilla/5.0")
+                .build()
+            cmsClient.newCall(req).execute().use { resp ->
+                check(resp.isSuccessful) { "HTTP ${resp.code}" }
+                val body = resp.body?.string()
+                val rows = parseList(body) ?: error("Invalid CMS JSON response")
+                siteCooldownUntil.remove(normalized)
+                rows.size
+            }
+        }
+    }
+
     /** Match pinyin initials / full pinyin (xxrj -> title) against recently updated CMS titles. */
     suspend fun searchByInitials(query: String): List<String> {
         val q = query.lowercase().replace(" ", "")
@@ -203,7 +208,7 @@ class CmsStreams @Inject constructor(
     private suspend fun getInitialPool(): List<InitialEntry> = initialPoolLock.withLock {
         val now = System.currentTimeMillis()
         initialPool?.takeIf { now - it.at < CACHE_TTL_MS }?.let { return@withLock it.entries }
-        val base = SEARCH_SOURCES.firstOrNull() ?: return@withLock emptyList()
+        val base = searchSources().firstOrNull() ?: return@withLock emptyList()
         val pool = withContext(Dispatchers.IO) {
             val pages = (1..5).map { pg ->
                 async {
@@ -228,11 +233,13 @@ class CmsStreams @Inject constructor(
 
     suspend fun searchTitles(query: String): List<Hit> {
         if (query.isBlank()) return emptyList()
+        val searchUrls = searchSources()
+        if (searchUrls.isEmpty()) return emptyList()
         // Modified build: query all search sources in parallel and merge. The old
         // "first source with hits wins" loop meant 如意 (best Chinese substring matching,
         // 211 rows for "谷") was never reached because 非凡 answered first with fewer rows.
         val perSource = withContext(Dispatchers.IO) {
-            SEARCH_SOURCES.map { base ->
+            searchUrls.map { base ->
                 async {
                     val body = (getForSite(base, "$base?ac=vod&wd=" + URLEncoder.encode(query, "UTF-8")) as? SiteResponse.Ok)?.body
                     val rows = parseList(body) ?: return@async emptyList()
@@ -269,6 +276,8 @@ class CmsStreams @Inject constructor(
         val raw = title.trim()
         val key = clean(raw).ifBlank { raw }
         if (key.isBlank()) return TitleBundle(0L, "", emptyList())
+        val searchUrls = searchSources()
+        if (searchUrls.isEmpty()) return TitleBundle(0L, "", emptyList())
         return titleBundleLocks.getOrPut(key) { Mutex() }.withLock {
             val now = System.currentTimeMillis()
             titleBundleCache[key]?.takeIf { now - it.at < CACHE_TTL_MS }?.let { return@withLock it }
@@ -286,10 +295,10 @@ class CmsStreams @Inject constructor(
                         if (candidateEps.size > eps.size) eps = candidateEps
                     }
                 }
-                probeSources(SEARCH_SOURCES.take(2))
+                probeSources(searchUrls.take(2))
                 // Fall back to remaining fast search sources when the primary two lack episode lists.
                 if (desc.isBlank() || eps.isEmpty()) {
-                    probeSources(SEARCH_SOURCES.drop(2))
+                    probeSources(searchUrls.drop(2))
                 }
                 TitleBundle(System.currentTimeMillis(), desc, eps)
             }
@@ -367,11 +376,15 @@ class CmsStreams @Inject constructor(
         val rawTitle = item.title.trim()
         android.util.Log.i("CmsStream", "find(title=${item.title})")
         if (rawTitle.isBlank()) return@channelFlow
+        val active = activeSources()
+        if (active.isEmpty()) return@channelFlow
         val lock = Mutex()
-        val bySite = arrayOfNulls<List<StreamSource>>(SOURCES.size)
+        val bySite = arrayOfNulls<List<StreamSource>>(active.size)
         withContext(Dispatchers.IO) {
             withTimeoutOrNull(8_000L) {
-                SOURCES.mapIndexed { idx, (label, base) ->
+                active.mapIndexed { idx, cmsSource ->
+                    val label = cmsSource.name
+                    val base = cmsSource.url
                     launch {
                         val probed = withTimeoutOrNull(4_500L) {
                             runCatching { searchAndBuild(base, rawTitle, episode, label) }.getOrDefault(emptyList())

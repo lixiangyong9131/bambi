@@ -185,6 +185,11 @@ class NextEpisodeResolver @Inject constructor(
         )
     }
 
+    internal suspend fun episodesForSeason(
+        context: SeriesPlaybackContext,
+        season: Int,
+    ): List<Episode> = findSeasonEpisodes(context, season).filter { it.season == season }
+
     private suspend fun findSeasonEpisodes(
         context: SeriesPlaybackContext,
         season: Int,

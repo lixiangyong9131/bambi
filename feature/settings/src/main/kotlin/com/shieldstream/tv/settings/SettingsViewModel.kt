@@ -19,6 +19,8 @@ import com.shieldstream.tv.domain.SettingsRepository
 import com.shieldstream.tv.domain.StremioAddons
 import com.shieldstream.tv.media.PlaybackPolicyProvider
 import com.shieldstream.tv.model.AudioCodec
+import com.shieldstream.tv.model.CmsSource
+import com.shieldstream.tv.model.CmsSources
 import com.shieldstream.tv.model.DeviceCapabilities
 import com.shieldstream.tv.model.DeviceOptimization
 import com.shieldstream.tv.model.HdrType
@@ -96,6 +98,10 @@ class SettingsViewModel @Inject constructor(
 
     private val statuses = MutableStateFlow<Map<ApiService, ServiceStatus>>(emptyMap())
     private val editor = MutableStateFlow<KeyEditor?>(null)
+
+    val cmsSources: StateFlow<List<CmsSource>> = settings.cmsSources
+        .map { it.ifEmpty { CmsSources.DEFAULT_SOURCES } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CmsSources.DEFAULT_SOURCES)
 
     private val playback = combine(
         settings.maxBufferSeconds,
@@ -345,6 +351,13 @@ class SettingsViewModel @Inject constructor(
 
     fun setSwitchFromPickedSource(enabled: Boolean) {
         viewModelScope.launch { settings.setSwitchFromPickedSource(enabled) }
+    }
+
+    val smartAdFilter: StateFlow<Boolean> = settings.smartAdFilter
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun setSmartAdFilter(enabled: Boolean) {
+        viewModelScope.launch { settings.setSmartAdFilter(enabled) }
     }
 
     val autoSkipIntro: StateFlow<Boolean> = settings.autoSkipIntro

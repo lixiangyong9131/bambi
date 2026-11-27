@@ -92,6 +92,8 @@ class CmsStreamsTest {
         val labels = CmsStreams.SOURCES.map { it.first }
         assertTrue("电影天堂" in labels)
         assertTrue("如意资源" in labels)
+        assertTrue("魔都资源" in labels)
+        assertTrue("无尽资源" in labels)
         assertTrue("iKun资源" in labels)
         assertTrue("360资源" in labels)
         assertFalse("暴风资源" in labels)

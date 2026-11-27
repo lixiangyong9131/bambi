@@ -36,11 +36,13 @@ import com.shieldstream.tv.media.Media3Factory
 import com.shieldstream.tv.media.PlaybackPolicyProvider
 import com.shieldstream.tv.media.VideoFormatInspector
 import androidx.media3.common.PlaybackException
+import com.shieldstream.tv.model.Episode
 import com.shieldstream.tv.model.ExternalSubtitle
 import com.shieldstream.tv.model.PlaybackMedia
 import com.shieldstream.tv.model.PlaybackVideoInfo
 import com.shieldstream.tv.model.SubtitleAppearance
 import com.shieldstream.tv.model.SubtitlePreference
+import com.shieldstream.tv.model.WatchProgress
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
@@ -106,7 +108,31 @@ class PlayerViewModel @Inject constructor(
     private var playbackSnapshot = holder.playback.value
     private var queueSnapshot = playbackSnapshot?.sources.orEmpty()
     private val _media = MutableStateFlow(playbackSnapshot?.media)
+    val media: StateFlow<PlaybackMedia?> = _media.asStateFlow()
     private val mediaSnapshot: PlaybackMedia? get() = _media.value
+
+    private val _seriesContext = MutableStateFlow(playbackSnapshot?.seriesContext)
+    val seriesContext: StateFlow<SeriesPlaybackContext?> = _seriesContext.asStateFlow()
+    val episodeProgress: StateFlow<Map<String, WatchProgress>> = watchProgress.progress
+
+    private val seasonEpisodesCache = mutableMapOf<Int, List<Episode>>().apply {
+        playbackSnapshot?.seriesContext?.episodes?.groupBy { it.season }?.forEach { (s, list) ->
+            put(s, list)
+        }
+    }
+    private val _pickerSeason = MutableStateFlow(
+        playbackSnapshot?.media?.season
+            ?: playbackSnapshot?.seriesContext?.seasons?.firstOrNull()?.number
+            ?: 1,
+    )
+    val pickerSeason: StateFlow<Int> = _pickerSeason.asStateFlow()
+    private val _pickerEpisodes = MutableStateFlow(
+        seasonEpisodesCache[_pickerSeason.value].orEmpty(),
+    )
+    val pickerEpisodes: StateFlow<List<Episode>> = _pickerEpisodes.asStateFlow()
+    private val _pickerLoading = MutableStateFlow(false)
+    val pickerLoading: StateFlow<Boolean> = _pickerLoading.asStateFlow()
+    private var pickerEpisodesJob: Job? = null
 
     private val _player = MutableStateFlow<ExoPlayer?>(null)
     val player: StateFlow<ExoPlayer?> = _player.asStateFlow()
@@ -747,6 +773,14 @@ class PlayerViewModel @Inject constructor(
             progressKey = resolved.progressKey
             nextSnapshot = resolved.next
             _media.value = resolved.media
+            _seriesContext.value = resolved.seriesContext
+            resolved.seriesContext.episodes.groupBy { it.season }.forEach { (s, list) ->
+                seasonEpisodesCache[s] = list
+            }
+            resolved.media.season?.let { currentSeason ->
+                _pickerSeason.value = currentSeason
+                _pickerEpisodes.value = seasonEpisodesCache[currentSeason].orEmpty()
+            }
             _title.value = resolved.label
             sourceFailover = createSourceFailover(resolved.queue)
             wentNext = false
@@ -756,6 +790,51 @@ class PlayerViewModel @Inject constructor(
             loadSegments()
             playFrom(0)
         }
+    }
+
+    fun openEpisodePicker() {
+        val currentSeason = _media.value?.season
+            ?: _seriesContext.value?.seasons?.firstOrNull()?.number
+            ?: 1
+        selectPickerSeason(currentSeason)
+    }
+
+    fun selectPickerSeason(season: Int) {
+        val ctx = _seriesContext.value ?: return
+        _pickerSeason.value = season
+        val cached = seasonEpisodesCache[season]
+        if (!cached.isNullOrEmpty()) {
+            _pickerLoading.value = false
+            _pickerEpisodes.value = cached
+            return
+        }
+        pickerEpisodesJob?.cancel()
+        _pickerLoading.value = true
+        _pickerEpisodes.value = emptyList()
+        pickerEpisodesJob = viewModelScope.launch {
+            val loaded = nextEpisodeResolver.episodesForSeason(ctx, season)
+            if (loaded.isNotEmpty()) seasonEpisodesCache[season] = loaded
+            if (_pickerSeason.value == season) {
+                _pickerEpisodes.value = loaded
+                _pickerLoading.value = false
+            }
+        }
+    }
+
+    fun switchToEpisode(season: Int, episodeNumber: Int) {
+        val ctx = _seriesContext.value ?: return
+        val current = _media.value
+        if (current?.season == season && current.episode == episodeNumber) return
+        saveProgress()
+        scrobble(ScrobbleAction.STOP)
+        _nextUp.value = NextUpUiState.Hidden
+        wentNext = false
+        val ep = seasonEpisodesCache[season]?.firstOrNull { it.number == episodeNumber }
+            ?: ctx.episodes.firstOrNull { it.season == season && it.number == episodeNumber }
+        val code = "S%02dE%02d".format(season, episodeNumber)
+        val label = if (ep != null && ep.title.isNotBlank()) "$code · ${ep.title}" else code
+        val target = com.shieldstream.tv.domain.NextEpisode(ctx.item.id, season, episodeNumber, label)
+        switchToNextEpisodeDirect(ctx, target)
     }
 
     fun dismissNextUp() {

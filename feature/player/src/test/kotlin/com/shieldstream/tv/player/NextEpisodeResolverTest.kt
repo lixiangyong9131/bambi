@@ -4,12 +4,18 @@ import com.shieldstream.tv.domain.CatalogRepository
 import com.shieldstream.tv.domain.DebridCacheRepository
 import com.shieldstream.tv.domain.DownloadsRepository
 import com.shieldstream.tv.domain.PrioritizeSourcesUseCase
+import com.shieldstream.tv.domain.SeriesPlaybackContext
 import com.shieldstream.tv.domain.SettingsRepository
 import com.shieldstream.tv.media.DeviceCapabilityDetector
+import com.shieldstream.tv.model.CatalogItem
+import com.shieldstream.tv.model.Episode
 import com.shieldstream.tv.model.HdrType
+import com.shieldstream.tv.model.MediaType
 import com.shieldstream.tv.model.Quality
 import com.shieldstream.tv.model.StreamSource
 import com.shieldstream.tv.strings.Texts
+import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -58,6 +64,32 @@ class NextEpisodeResolverTest {
         )
 
         assertEquals(listOf("fast", "slow", "debrid", "broken"), reordered.map { it.id })
+    }
+
+    @Test
+    fun `episodesForSeason uses cached episodes for current season and fetches missing season`() = runTest {
+        val s1 = Episode(season = 1, number = 1, title = "S1E1", overview = "", runtimeMinutes = 42, airDate = null, stillUrl = null)
+        val s2 = Episode(season = 2, number = 1, title = "S2E1", overview = "", runtimeMinutes = 44, airDate = null, stillUrl = null)
+        val item = CatalogItem("show-1", null, MediaType.TV, "Show", "", null, null, 2025, 8.5f)
+        val catalog = mockk<CatalogRepository>(relaxed = true) {
+            coEvery { getEpisodes(item, 2) } returns listOf(s2)
+        }
+        val localResolver = NextEpisodeResolver(
+            catalogRepository = catalog,
+            prioritizeSourcesUseCase = PrioritizeSourcesUseCase(),
+            deviceCapabilities = mockk(relaxed = true),
+            settings = mockk(relaxed = true),
+            downloads = mockk(relaxed = true),
+            debridCache = mockk(relaxed = true),
+            texts = mockk(relaxed = true),
+        )
+        val ctx = SeriesPlaybackContext(item = item, episodes = listOf(s1))
+
+        assertEquals(listOf(s1), localResolver.episodesForSeason(ctx, 1))
+        coVerify(exactly = 0) { catalog.getEpisodes(item, 1) }
+
+        assertEquals(listOf(s2), localResolver.episodesForSeason(ctx, 2))
+        coVerify(exactly = 1) { catalog.getEpisodes(item, 2) }
     }
 
     private fun directSource(id: String, url: String) = StreamSource(

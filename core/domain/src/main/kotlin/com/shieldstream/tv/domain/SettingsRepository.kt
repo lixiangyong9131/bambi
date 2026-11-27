@@ -1,6 +1,8 @@
 package com.shieldstream.tv.domain
 
 import com.shieldstream.tv.model.AppLanguage
+import com.shieldstream.tv.model.CmsSource
+import com.shieldstream.tv.model.CmsSources
 import com.shieldstream.tv.model.DeviceOptimization
 import com.shieldstream.tv.model.SourceExclusions
 import com.shieldstream.tv.model.SubtitleAppearance
@@ -72,6 +74,10 @@ interface SettingsRepository {
      */
     val switchFromPickedSource: Flow<Boolean> get() = kotlinx.coroutines.flow.flowOf(true)
 
+    /** Filtra automáticamente segmentos de anuncios en listas HLS (.m3u8) durante la reproducción. */
+    val smartAdFilter: Flow<Boolean> get() = kotlinx.coroutines.flow.flowOf(true)
+    suspend fun setSmartAdFilter(enabled: Boolean) {}
+
     /** Formato de imagen del reproductor (bandas negras, ampliar o estirar); se recuerda para lo siguiente. */
     val videoFit: Flow<com.shieldstream.tv.model.VideoFit> get() = kotlinx.coroutines.flow.flowOf(com.shieldstream.tv.model.VideoFit.FIT)
     suspend fun setVideoFit(fit: com.shieldstream.tv.model.VideoFit) {}
@@ -116,6 +122,10 @@ interface SettingsRepository {
     /** Servicio debrid en uso (Real-Debrid por defecto). */
     val debridService: Flow<DebridService>
     suspend fun setDebridService(service: DebridService)
+
+    /** Direct CMS V10 playback sources (built-in + user-added). */
+    val cmsSources: Flow<List<CmsSource>> get() = kotlinx.coroutines.flow.flowOf(CmsSources.DEFAULT_SOURCES)
+    suspend fun setCmsSources(sources: List<CmsSource>) {}
 
     companion object {
         const val DEFAULT_HOME_ROW_ITEM_LIMIT = 20

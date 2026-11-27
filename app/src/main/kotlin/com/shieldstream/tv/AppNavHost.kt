@@ -35,6 +35,7 @@ import com.shieldstream.tv.intro.ProfileLoadingScreen
 import com.shieldstream.tv.model.Lang
 import com.shieldstream.tv.player.PlayerScreen
 import com.shieldstream.tv.settings.AddonsScreen
+import com.shieldstream.tv.settings.CmsSourcesScreen
 import com.shieldstream.tv.settings.SettingsScreen
 import com.shieldstream.tv.settings.SetupScreen
 import com.shieldstream.tv.settings.profiles.ProfileEditScreen
@@ -283,11 +284,18 @@ fun AppNavHost(
                 onOpenSetup = { navController.navigate("setup_again") },
                 onOpenPhoneConfig = { navController.navigate("phone_config") },
                 onOpenAddons = { navController.navigate("addons") },
+                onOpenCmsSources = { navController.navigate("cms_sources") },
                 onOpenRequests = { navController.navigate("requests") },
             )
         }
         composable("addons") { entry ->
             AddonsScreen(onBack = { if (entry.isVisible()) navController.popBackStack() })
+        }
+        composable("cms_sources") { entry ->
+            CmsSourcesScreen(
+                onBack = { if (entry.isVisible()) navController.popBackStack() },
+                onOpenPhoneConfig = { navController.navigate("phone_config") },
+            )
         }
         composable("requests") { entry ->
             RequestsScreen(onBack = { if (entry.isVisible()) navController.popBackStack() })

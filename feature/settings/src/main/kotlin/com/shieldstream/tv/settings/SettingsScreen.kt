@@ -83,12 +83,14 @@ fun SettingsScreen(
     onOpenSetup: () -> Unit = {},
     onOpenPhoneConfig: () -> Unit = {},
     onOpenAddons: () -> Unit = {},
+    onOpenCmsSources: () -> Unit = {},
     onOpenRequests: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val ready = state as? SettingsUiState.Ready
     val context = LocalContext.current
+    val cmsSources by viewModel.cmsSources.collectAsStateWithLifecycle()
     val providers by viewModel.providers.collectAsStateWithLifecycle()
     val sourceExclusions by viewModel.sourceExclusions.collectAsStateWithLifecycle()
     val brokenSourceCount by viewModel.brokenSourceCount.collectAsStateWithLifecycle()
@@ -119,6 +121,9 @@ fun SettingsScreen(
                     onMatchContentFrameRate = viewModel::setMatchContentFrameRate,
                     onOpenSetup = onOpenSetup,
                     onOpenPhoneConfig = onOpenPhoneConfig,
+                    onOpenCmsSources = onOpenCmsSources,
+                    cmsEnabledCount = cmsSources.count { it.enabled },
+                    cmsTotalCount = cmsSources.size,
                     onOpenRequests = onOpenRequests,
                     showRequests = isAdmin,
                     pendingRequestCount = pendingRequestCount,
@@ -160,6 +165,9 @@ private fun NetflixSettingsLayout(
     onMatchContentFrameRate: (Boolean) -> Unit,
     onOpenSetup: () -> Unit,
     onOpenPhoneConfig: () -> Unit,
+    onOpenCmsSources: () -> Unit,
+    cmsEnabledCount: Int,
+    cmsTotalCount: Int,
     onOpenRequests: () -> Unit,
     showRequests: Boolean,
     pendingRequestCount: Int,
@@ -302,12 +310,20 @@ private fun NetflixSettingsLayout(
 
                     when (activeTab) {
                         SettingsSectionTab.SOURCES -> {
+                            item(key = "sec_cms_sources") { SectionTitle(localizedStringResource(StringsR.string.settings_cms_sources_title)) }
+                            item(key = "cms_sources_entry") {
+                                CmsSourcesEntryCard(
+                                    enabledCount = cmsEnabledCount,
+                                    totalCount = cmsTotalCount,
+                                    onClick = onOpenCmsSources,
+                                    modifier = Modifier.focusRequester(contentFirstRequester),
+                                )
+                            }
                             item(key = "sec_debrid") { SectionTitle(localizedStringResource(StringsR.string.settings_debrid_service)) }
                             item(key = "debrid_selector") {
                                 DebridSelectorCard(
                                     active = state.debrid,
                                     onChange = onDebrid,
-                                    modifier = Modifier.focusRequester(contentFirstRequester),
                                 )
                             }
                             item(key = "debrid_key") {
@@ -460,6 +476,7 @@ private fun NetflixSettingsLayout(
                             }
                             item(key = "preferred_quality") { PreferredQualityCard() }
                             item(key = "switch_picked") { SwitchPickedSourceCard() }
+                            item(key = "smart_ad_filter") { SmartAdFilterCard() }
                             item(key = "frame_rate") { MatchContentFrameRateCard(enabled = matchContentFrameRate, onChange = onMatchContentFrameRate) }
                             item(key = "exp_sync") { ExperimentalSyncCard(enabled = state.experimentalSubtitleSync, onChange = onExperimentalSync) }
                             item(key = "device_opt") {
@@ -573,5 +590,40 @@ private fun SettingsNavTabRow(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+    }
+}
+
+@Composable
+private fun CmsSourcesEntryCard(
+    enabledCount: Int,
+    totalCount: Int,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    FocusCard(modifier = modifier, onClick = onClick) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = localizedStringResource(StringsR.string.settings_cms_sources_title),
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Medium),
+                    color = Color.White,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = localizedStringResource(StringsR.string.settings_cms_sources_summary),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = SettingsMuted,
+                )
+            }
+            Spacer(Modifier.width(16.dp))
+            Text(
+                text = localizedStringResource(StringsR.string.settings_cms_sources_count, enabledCount, totalCount),
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                color = if (enabledCount > 0) SettingsGreen else SettingsAmber,
+            )
+        }
     }
 }

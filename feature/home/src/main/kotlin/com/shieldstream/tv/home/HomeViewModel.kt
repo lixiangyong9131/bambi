@@ -43,6 +43,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
@@ -119,6 +120,16 @@ class HomeViewModel @Inject constructor(
 
     val hiddenCategories: StateFlow<Set<String>> = settings.hiddenCategories
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
+    val myListKeys: StateFlow<Set<String>> = myList.entries
+        .map { entries -> entries.map { "${it.type.name}:${it.id}" }.toSet() }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
+    fun toggleMyList(item: CatalogItem): Boolean {
+        val adding = !myList.contains(item.type, item.id)
+        if (adding) myList.add(item.type, item.id) else myList.remove(item.type, item.id)
+        return adding
+    }
 
     private val _uiState = MutableStateFlow<HomeUiState>(HomeUiState.Loading)
 

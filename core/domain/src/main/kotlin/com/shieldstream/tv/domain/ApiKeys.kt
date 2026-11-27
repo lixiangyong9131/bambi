@@ -63,5 +63,7 @@ interface ApiKeysRepository {
 
     suspend fun check(service: ApiService, value: String): KeyCheck
 
+    suspend fun checkCmsSource(url: String): KeyCheck = KeyCheck.Valid()
+
     suspend fun addonMetadata(manifestUrl: String): StremioAddonMetadata? = null
 }

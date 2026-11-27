@@ -110,6 +110,9 @@ internal fun RowsBrowser(
     onBackToTop: () -> Unit = {},
     onEnterImmersive: () -> Unit = {},
     onLoadMoreRow: ((String) -> Unit)? = null,
+    myListKeys: Set<String> = emptySet(),
+    onQuickPlay: ((CatalogItem) -> Unit)? = null,
+    onToggleMyList: ((CatalogItem) -> Boolean)? = null,
 ) = RowsBrowser(
     sectionedRows = rows.map { SectionedRow(RailDestination.HOME, null, it) },
     onItemClick = onItemClick,
@@ -129,6 +132,9 @@ internal fun RowsBrowser(
     onBackToTop = onBackToTop,
     onEnterImmersive = onEnterImmersive,
     onLoadMoreRow = onLoadMoreRow?.let { fn -> { _, rowId -> fn(rowId) } },
+    myListKeys = myListKeys,
+    onQuickPlay = onQuickPlay,
+    onToggleMyList = onToggleMyList,
 )
 
 @Composable
@@ -159,6 +165,9 @@ internal fun RowsBrowser(
     onActiveSectionChange: (RailDestination) -> Unit = {},
     scrollToSectionRequest: Pair<RailDestination, Int>? = null,
     onScrollToSectionConsumed: () -> Unit = {},
+    myListKeys: Set<String> = emptySet(),
+    onQuickPlay: ((CatalogItem) -> Unit)? = null,
+    onToggleMyList: ((CatalogItem) -> Boolean)? = null,
 ) {
     val rows = remember(sectionedRows) { sectionedRows.map { it.row } }
     fun loopsFor(row: CatalogRow): Boolean =
@@ -176,6 +185,14 @@ internal fun RowsBrowser(
     var continueMenu by remember { mutableStateOf<ItemMenu?>(null) }
     var myListMenu by remember { mutableStateOf<ItemMenu?>(null) }
     var upNextMenu by remember { mutableStateOf<UpNextMenu?>(null) }
+    var quickMenuItem by remember { mutableStateOf<CatalogItem?>(null) }
+    var quickNoticeRes by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(quickNoticeRes) {
+        if (quickNoticeRes != null) {
+            delay(2_400)
+            quickNoticeRes = null
+        }
+    }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var focusedSection by remember {
@@ -193,8 +210,8 @@ internal fun RowsBrowser(
     LaunchedEffect(rows) {
         snapshotFlow { savedFocus.value }.collectLatest { key ->
             val target = findByKey(rows, validKey(key)) ?: return@collectLatest
-            // Debounce above VERTICAL_REPEAT_MS (130ms) so holding Up/Down skips intermediate hero backdrop decodes.
-            delay(180)
+            // Debounce rapid D-pad sweeps so holding keys skips intermediate hero image loads.
+            delay(220)
             heroState.value = target
         }
     }
@@ -355,6 +372,7 @@ internal fun RowsBrowser(
                             onContinueMenu = { virtual, item -> continueMenu = ItemMenu(row, virtual, item) },
                             onMyListMenu = { virtual, item -> myListMenu = ItemMenu(row, virtual, item) },
                             onUpNextMenu = { virtual, item, episode -> upNextMenu = UpNextMenu(row, virtual, item, episode) },
+                            onQuickMenu = { item -> quickMenuItem = item },
                             modifier = if (rowIndex == 0 && onExitTop != null) {
                                 Modifier.onPreviewKeyEvent { event ->
                                     if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
@@ -383,6 +401,18 @@ internal fun RowsBrowser(
                     ),
                 ),
         )
+        quickNoticeRes?.let { msgRes ->
+            Text(
+                text = localizedStringResource(msgRes),
+                color = Color.White,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 24.dp, end = 40.dp)
+                    .background(Color(0xE6141416), RoundedCornerShape(50))
+                    .padding(horizontal = 18.dp, vertical = 9.dp),
+            )
+        }
     }
 
     continueMenu?.let { menu ->
@@ -402,18 +432,61 @@ internal fun RowsBrowser(
     }
 
     myListMenu?.let { menu ->
-        ActionMenuDialog(
-            title = menu.item.title,
-            onDismiss = { myListMenu = null },
-            consumeOpeningKeyRelease = true,
-            actions = listOf(
-                ActionMenuItem(localizedStringResource(StringsR.string.home_cancel), LineIcons.Close, { myListMenu = null }),
+        val actions = buildList {
+            if (onQuickPlay != null) {
+                add(
+                    ActionMenuItem(localizedStringResource(StringsR.string.home_play_now), AppIcons.Play) {
+                        myListMenu = null
+                        onQuickPlay(menu.item)
+                    },
+                )
+            }
+            add(
+                ActionMenuItem(localizedStringResource(StringsR.string.home_view_details), AppIcons.List) {
+                    myListMenu = null
+                    onItemClick(menu.item)
+                },
+            )
+            add(
                 ActionMenuItem(localizedStringResource(StringsR.string.home_remove), LineIcons.Delete) {
                     myListMenu = null
                     pendingFocus = PendingFocus(menu.row.id, itemKey = null, fallbackKey = neighbourKey(rows, menu.row, menu.virtual, loopsFor(menu.row)))
                     onRemoveMyList(menu.item)
                 },
-            ),
+            )
+            add(ActionMenuItem(localizedStringResource(StringsR.string.home_cancel), LineIcons.Close) { myListMenu = null })
+        }
+        ActionMenuDialog(
+            title = menu.item.title,
+            onDismiss = { myListMenu = null },
+            consumeOpeningKeyRelease = true,
+            actions = actions,
+        )
+    }
+
+    quickMenuItem?.let { item ->
+        val inList = "${item.type.name}:${item.id}" in myListKeys
+        PosterQuickActionsDialog(
+            item = item,
+            inMyList = inList,
+            onPlayNow = onQuickPlay?.let { play ->
+                {
+                    quickMenuItem = null
+                    play(item)
+                }
+            },
+            onToggleMyList = onToggleMyList?.let { toggle ->
+                {
+                    quickMenuItem = null
+                    val added = toggle(item)
+                    quickNoticeRes = if (added) StringsR.string.home_added_to_my_list else StringsR.string.home_removed_from_my_list
+                }
+            },
+            onDetails = {
+                quickMenuItem = null
+                onItemClick(item)
+            },
+            onDismiss = { quickMenuItem = null },
         )
     }
 
@@ -457,6 +530,42 @@ private fun HeroBackdropSlot(heroState: StateFlow<CatalogItem>) {
 private fun HeroInfoSlot(heroState: StateFlow<CatalogItem>) {
     val hero by heroState.collectAsState()
     HeroInfo(item = hero)
+}
+
+@Composable
+internal fun PosterQuickActionsDialog(
+    item: CatalogItem,
+    inMyList: Boolean,
+    onPlayNow: (() -> Unit)?,
+    onToggleMyList: (() -> Unit)?,
+    onDetails: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val actions = buildList {
+        if (onPlayNow != null) {
+            add(ActionMenuItem(localizedStringResource(StringsR.string.home_play_now), AppIcons.Play, onPlayNow))
+        }
+        if (onToggleMyList != null) {
+            add(
+                ActionMenuItem(
+                    text = localizedStringResource(
+                        if (inMyList) StringsR.string.home_remove_from_my_list
+                        else StringsR.string.home_add_to_my_list,
+                    ),
+                    icon = if (inMyList) AppIcons.Check else AppIcons.Add,
+                    onClick = onToggleMyList,
+                ),
+            )
+        }
+        add(ActionMenuItem(localizedStringResource(StringsR.string.home_view_details), AppIcons.List, onDetails))
+        add(ActionMenuItem(localizedStringResource(StringsR.string.home_cancel), LineIcons.Close, onDismiss))
+    }
+    ActionMenuDialog(
+        title = item.title,
+        onDismiss = onDismiss,
+        consumeOpeningKeyRelease = true,
+        actions = actions,
+    )
 }
 
 @Composable
@@ -515,6 +624,7 @@ private fun CatalogRowView(
     onContinueMenu: (Int, CatalogItem) -> Unit,
     onMyListMenu: (Int, CatalogItem) -> Unit,
     onUpNextMenu: (Int, CatalogItem, Episode) -> Unit,
+    onQuickMenu: (CatalogItem) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.fillMaxWidth()) {
@@ -642,6 +752,7 @@ private fun CatalogRowView(
                                 onContinueMenu = { onContinueMenu(virtual, item) },
                                 onMyListMenu = { onMyListMenu(virtual, item) },
                                 onUpNextMenu = { episode -> onUpNextMenu(virtual, item, episode) },
+                                onQuickMenu = { onQuickMenu(item) },
                             )
                         }
                     } else {
@@ -691,6 +802,7 @@ private fun CatalogRowView(
                                 onContinueMenu = { onContinueMenu(index, item) },
                                 onMyListMenu = { onMyListMenu(index, item) },
                                 onUpNextMenu = { episode -> onUpNextMenu(index, item, episode) },
+                                onQuickMenu = { onQuickMenu(item) },
                             )
                         }
                     }
@@ -715,12 +827,14 @@ private fun RowItemCard(
     onContinueMenu: () -> Unit,
     onMyListMenu: () -> Unit,
     onUpNextMenu: (Episode) -> Unit,
+    onQuickMenu: () -> Unit = {},
 ) {
     when (row.style) {
         RowStyle.POSTER -> CatalogPosterCard(
             item = item,
             onClick = { onItemClick(item) },
             onFocused = onFocused,
+            onLongClick = onQuickMenu,
             newEpisodeCount = row.newEpisodeCounts[item.key] ?: 0,
             modifier = modifier,
         )
@@ -764,6 +878,7 @@ private fun RowItemCard(
                     if (episode == null || onNewEpisodeClick == null) onItemClick(item)
                     else onNewEpisodeClick(item, episode)
                 },
+                onLongClick = onQuickMenu,
                 onFocused = onFocused,
                 modifier = modifier,
             )
@@ -813,6 +928,7 @@ private fun RowItemCard(
             item = item,
             onClick = { onItemClick(item) },
             onFocused = onFocused,
+            onLongClick = onQuickMenu,
             newEpisodeCount = row.newEpisodeCounts[item.key] ?: 0,
             modifier = modifier,
         )

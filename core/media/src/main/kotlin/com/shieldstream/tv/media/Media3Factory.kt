@@ -44,6 +44,7 @@ class Media3Factory @Inject constructor(
     // resolve to real IPs despite the box's poisoned system DNS.
     private val mediaOkHttp = okhttp3.OkHttpClient.Builder()
         .dns(DohDns)
+        .addInterceptor(HlsAdFilterInterceptor())
         .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
         .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
         .followRedirects(true)

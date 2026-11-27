@@ -2,8 +2,13 @@ package com.shieldstream.tv.ui.component
 
 import com.shieldstream.tv.ui.theme.AppColors
 import com.shieldstream.tv.ui.theme.LocalLightweightUi
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -61,7 +66,11 @@ private fun focusScale(focused: Boolean, target: Float): Float =
     if (LocalLightweightUi.current) {
         if (focused) target else 1f
     } else {
-        animateFloatAsState(if (focused) target else 1f, tween(90), label = "posterScale").value
+        animateFloatAsState(
+            if (focused) target else 1f,
+            tween(120, easing = FastOutSlowInEasing),
+            label = "posterScale",
+        ).value
     }
 
 /**
@@ -78,11 +87,12 @@ fun PosterCard(
     width: Dp = PosterWidth,
     onLongClick: (() -> Unit)? = null,
     newEpisodeCount: Int = 0,
+    showYearOnFocus: Boolean = false,
     @Suppress("UNUSED_PARAMETER") caption: (@Composable ColumnScope.() -> Unit)? = null,
     overlay: @Composable BoxScope.() -> Unit = {},
 ) {
     var focused by remember { mutableStateOf(false) }
-    val scale = focusScale(focused, 1.05f)
+    val scale = focusScale(focused, 1.06f)
     val context = LocalContext.current
     val posterRequest = remember(item.posterUrl, context) {
         item.posterUrl?.let { url ->
@@ -151,12 +161,34 @@ fun PosterCard(
                         .padding(horizontal = 5.dp, vertical = 2.dp),
                 ) {
                     Text(
-                        text = ratingText,
+                        text = "★ $ratingText",
                         color = Color(0xFFFFC145),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                     )
                 }
+            }
+        }
+        val focusYear = remember(item.year) { item.year?.toString() }
+        if (showYearOnFocus && focusYear != null) {
+            AnimatedVisibility(
+                visible = focused,
+                enter = fadeIn(tween(120)),
+                exit = fadeOut(tween(90)),
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(6.dp),
+            ) {
+                Text(
+                    text = focusYear,
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color.Black.copy(alpha = 0.78f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
             }
         }
     }
@@ -181,12 +213,13 @@ fun CatalogPosterCard(
         width = width,
         onLongClick = onLongClick,
         newEpisodeCount = newEpisodeCount,
+        showYearOnFocus = true,
     )
 }
 
 /** Degradado inferior con una o dos líneas de texto (y barra de progreso opcional), como "Seguir viendo". */
 @Composable
-private fun BoxScope.BottomLabel(label: String, fraction: Float?) {
+private fun BoxScope.BottomLabel(label: String, fraction: Float?, barHeight: Dp = 3.dp) {
     Box(
         Modifier
             .align(Alignment.BottomCenter)
@@ -219,7 +252,7 @@ private fun BoxScope.BottomLabel(label: String, fraction: Float?) {
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(3.dp)
+                    .height(barHeight)
                     .clip(RoundedCornerShape(2.dp))
                     .background(Color.White.copy(alpha = 0.3f)),
             ) {
@@ -249,15 +282,17 @@ fun ContinueCard(
     onFocused: () -> Unit = {},
     newEpisodeCount: Int = 0,
 ) {
+    var focused by remember { mutableStateOf(false) }
+    val barHeight by animateDpAsState(if (focused) 5.dp else 3.dp, tween(120), label = "continueBar")
     PosterCard(
         item = item,
         onClick = onClick,
-        modifier = modifier,
+        modifier = modifier.onFocusChanged { focused = it.hasFocus },
         onFocused = onFocused,
         onLongClick = onLongClick,
         newEpisodeCount = newEpisodeCount,
     ) {
-        BottomLabel(label, fraction)
+        BottomLabel(label, fraction, barHeight = barHeight)
     }
 }
 
@@ -336,6 +371,7 @@ fun Top10Card(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onFocused: () -> Unit = {},
+    onLongClick: (() -> Unit)? = null,
     newEpisodeCount: Int = 0,
 ) {
     // Modified build: no big rank number - just the poster at normal size.
@@ -344,7 +380,9 @@ fun Top10Card(
             item = item,
             onClick = onClick,
             onFocused = onFocused,
+            onLongClick = onLongClick,
             newEpisodeCount = newEpisodeCount,
+            showYearOnFocus = true,
             modifier = Modifier.align(Alignment.BottomEnd),
         )
     }

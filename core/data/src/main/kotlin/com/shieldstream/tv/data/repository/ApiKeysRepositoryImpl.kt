@@ -2,6 +2,7 @@ package com.shieldstream.tv.data.repository
 
 import com.shieldstream.tv.strings.R as StringsR
 import com.shieldstream.tv.strings.Texts
+import com.shieldstream.tv.data.repository.streams.CmsStreams
 import com.shieldstream.tv.data.security.TokenStore
 import com.shieldstream.tv.data.subtitles.SubtitleHttp
 import com.shieldstream.tv.domain.ApiKeysRepository
@@ -10,6 +11,7 @@ import com.shieldstream.tv.domain.KeyCheck
 import com.shieldstream.tv.domain.SettingsRepository
 import com.shieldstream.tv.domain.StremioAddonMetadata
 import com.shieldstream.tv.domain.StremioAddons
+import com.shieldstream.tv.model.CmsSources
 import com.shieldstream.tv.network.api.AllDebridApi
 import com.shieldstream.tv.network.api.RealDebridApi
 import com.shieldstream.tv.network.api.TmdbApi
@@ -42,6 +44,7 @@ class ApiKeysRepositoryImpl @Inject constructor(
     private val http: SubtitleHttp,
     private val torrentioApi: TorrentioApi,
     private val texts: Texts,
+    private val cmsStreams: CmsStreams? = null,
 ) : ApiKeysRepository {
 
     private val _keys = MutableStateFlow(read())
@@ -78,6 +81,19 @@ class ApiKeysRepositoryImpl @Inject constructor(
                 ApiService.DEBRID_LINK, ApiService.OFFCLOUD -> checkViaTorrentio(service, key)
             }
         }.getOrElse { describe(it) }
+    }
+
+    override suspend fun checkCmsSource(url: String): KeyCheck = withContext(Dispatchers.IO) {
+        val normalized = CmsSources.normalizeUrl(url)
+            ?: return@withContext KeyCheck.Invalid(texts.get(StringsR.string.data_invalid_cms_url))
+        val checker = cmsStreams
+            ?: return@withContext KeyCheck.Valid()
+        checker.checkSite(normalized).fold(
+            onSuccess = { count ->
+                KeyCheck.Valid(texts.get(StringsR.string.data_cms_source_connected, count))
+            },
+            onFailure = { e -> describe(e) },
+        )
     }
 
     override suspend fun addonMetadata(manifestUrl: String): StremioAddonMetadata? = withContext(Dispatchers.IO) {

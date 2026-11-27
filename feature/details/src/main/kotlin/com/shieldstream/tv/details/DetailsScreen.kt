@@ -6,6 +6,7 @@ import com.shieldstream.tv.strings.localizedStringResource
 import com.shieldstream.tv.domain.TraktRatingTarget
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -38,6 +39,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
@@ -317,37 +319,51 @@ private fun DetailsContent(
             }
 
             val interactive = !panelOpen && !actionsOpen && episodeMenu == null
-            state.collection?.let { saga ->
-                Spacer(Modifier.height(28.dp))
-                SectionTitle(localizedStringResource(StringsR.string.details_collection, saga.name))
-                PosterStrip(
-                    items = saga.parts,
-                    highlightId = item.id,
-                    onItem = { if (interactive && it.id != item.id) onOpenItem(it) },
-                )
+            AnimatedVisibility(
+                visible = state.collection != null,
+                enter = fadeIn(tween(220)),
+            ) {
+                state.collection?.let { saga ->
+                    Column {
+                        Spacer(Modifier.height(28.dp))
+                        SectionTitle(localizedStringResource(StringsR.string.details_collection, saga.name))
+                        PosterStrip(
+                            items = saga.parts,
+                            highlightId = item.id,
+                            onItem = { if (interactive && it.id != item.id) onOpenItem(it) },
+                        )
+                    }
+                }
             }
             val people = if (state.showCast) state.details.directors + state.details.cast else emptyList()
-            if (people.isNotEmpty()) {
-                Spacer(Modifier.height(28.dp))
-                val shown = people.distinctBy { it.id }
-                Row(verticalAlignment = Alignment.Bottom) {
-                    SectionTitle(localizedStringResource(StringsR.string.details_cast))
-                    Text(
-                        text = shown.size.toString(),
-                        color = Grey,
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(start = 10.dp, bottom = 5.dp),
-                    )
+            AnimatedVisibility(
+                visible = people.isNotEmpty(),
+                enter = fadeIn(tween(220)),
+            ) {
+                if (people.isNotEmpty()) {
+                    Column {
+                        Spacer(Modifier.height(28.dp))
+                        val shown = people.distinctBy { it.id }
+                        Row(verticalAlignment = Alignment.Bottom) {
+                            SectionTitle(localizedStringResource(StringsR.string.details_cast))
+                            Text(
+                                text = shown.size.toString(),
+                                color = Grey,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(start = 10.dp, bottom = 5.dp),
+                            )
+                        }
+                        PeopleRow(
+                            people = shown,
+                            enabled = interactive,
+                            onPerson = { onOpenPerson(it.id) },
+                            crewIds = state.details.directors.map { it.id }.toSet(),
+                            crewLabel = localizedStringResource(
+                                if (state.isSeries) StringsR.string.details_crew_creator else StringsR.string.details_crew_director,
+                            ),
+                        )
+                    }
                 }
-                PeopleRow(
-                    people = shown,
-                    enabled = interactive,
-                    onPerson = { onOpenPerson(it.id) },
-                    crewIds = state.details.directors.map { it.id }.toSet(),
-                    crewLabel = localizedStringResource(
-                        if (state.isSeries) StringsR.string.details_crew_creator else StringsR.string.details_crew_director,
-                    ),
-                )
             }
         }
         }
@@ -515,7 +531,7 @@ private fun InfoBlock(
     val skeletonPulse = rememberDetailsSkeletonPulse()
     val skeletonPrimary = Color.White.copy(alpha = 0.24f * skeletonPulse)
     val skeletonSecondary = Color.White.copy(alpha = 0.16f * skeletonPulse)
-    Column(modifier.widthIn(max = 580.dp)) {
+    Column(modifier.widthIn(max = 580.dp).animateContentSize(tween(200))) {
         if (details.logoUrl != null) {
             AsyncImage(
                 model = details.logoUrl,
@@ -734,6 +750,40 @@ private fun InfoBlock(
                 )
             }
         }
+        val readyHint = remember(
+            state.sources,
+            state.sourceExclusions,
+            state.brokenSources,
+            state.spanishOnly,
+            state.selectedEpisode,
+            state.progress,
+            state.sourceProbes,
+        ) {
+            buildReadyStreamHint(state)
+        }
+        if (readyHint != null) {
+            Spacer(Modifier.height(8.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+            ) {
+                Box(
+                    Modifier
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (readyHint.isReady) Color(0xFF46D369) else Color.White.copy(alpha = 0.40f),
+                        ),
+                )
+                Text(
+                    text = readyHint.text,
+                    color = if (readyHint.isReady) Color.White.copy(alpha = 0.78f) else Color.White.copy(alpha = 0.50f),
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
         // Modified build: probed sources shown right under the play buttons, one card per
         // completed probe. Always show either probed cards, pulsing skeletons while checking,
         // or a clear fallback message if nothing could be probed.
@@ -846,6 +896,7 @@ private fun DoubanRatingCard(
             .clip(cardShape)
             .background(cardBg)
             .border(1.dp, borderCol, cardShape)
+            .animateContentSize(tween(180))
             .padding(horizontal = 16.dp, vertical = 14.dp),
     ) {
         Text(

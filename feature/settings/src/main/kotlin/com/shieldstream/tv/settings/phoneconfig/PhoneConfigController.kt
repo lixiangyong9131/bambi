@@ -9,6 +9,8 @@ import com.shieldstream.tv.domain.SourceProvider
 import com.shieldstream.tv.domain.StremioAddons
 import com.shieldstream.tv.domain.mapConcurrent
 import com.shieldstream.tv.model.AppLanguage
+import com.shieldstream.tv.model.CmsSource
+import com.shieldstream.tv.model.CmsSources
 import com.shieldstream.tv.model.SubtitlePreference
 import com.shieldstream.tv.settings.SetupAudioPreference
 import com.shieldstream.tv.strings.R as StringsR
@@ -61,6 +63,27 @@ data class PhoneAddonUpdateDto(
 )
 
 @Serializable
+data class PhoneCmsSourceDto(
+    val id: String,
+    val name: String,
+    val url: String,
+    val enabled: Boolean,
+    val builtIn: Boolean,
+    val detail: String? = null,
+)
+
+@Serializable
+data class PhoneCmsSourceUpdateDto(
+    val id: String? = null,
+    val name: String? = null,
+    val url: String? = null,
+    val enabled: Boolean? = null,
+    val remove: Boolean = false,
+    val test: Boolean = false,
+    val resetDefaults: Boolean = false,
+)
+
+@Serializable
 data class PhonePreferencesDto(
     val lightweightUi: Boolean,
     val experimentalSubtitleSync: Boolean,
@@ -83,6 +106,7 @@ data class PhoneConfigDto(
     val providerGroups: List<PhoneProviderGroupDto>,
     val preferences: PhonePreferencesDto,
     val addons: List<PhoneAddonDto>,
+    val cmsSources: List<PhoneCmsSourceDto> = emptyList(),
     val setup: PhoneSetupDto? = null,
 )
 
@@ -102,6 +126,7 @@ data class PhoneConfigUpdateDto(
     val autoNextEpisode: Boolean,
     val keys: List<PhoneKeyUpdateDto> = emptyList(),
     val addons: List<PhoneAddonUpdateDto> = emptyList(),
+    val cmsSources: List<PhoneCmsSourceUpdateDto> = emptyList(),
     val language: String? = null,
     val audio: String? = null,
     val subtitles: String? = null,
@@ -119,6 +144,13 @@ class PhoneConfigController @Inject constructor(
 ) {
     private var selectedSetupLanguage: AppLanguage? = null
     private val addonTestResults = mutableMapOf<String, String>()
+    private val cmsTestResults = mutableMapOf<String, String>()
+
+    private suspend fun loadCmsSources(): List<CmsSource> =
+        runCatching { settings.cmsSources.first() }
+            .getOrNull()
+            ?.takeIf { it.isNotEmpty() }
+            ?: CmsSources.DEFAULT_SOURCES
 
     suspend fun snapshot(mode: PhoneConfigMode = PhoneConfigMode.EDIT): PhoneConfigDto {
         val keys = apiKeys.keys.value
@@ -141,6 +173,7 @@ class PhoneConfigController @Inject constructor(
         val metadata = addons.mapConcurrent { addon ->
             runCatching { apiKeys.addonMetadata(addon.manifestUrl) }.getOrNull()
         }
+        val cms = loadCmsSources()
         return PhoneConfigDto(
             language = (if (mode == PhoneConfigMode.SETUP) selectedSetupLanguage ?: settings.language else settings.language).name.lowercase(),
             debrid = debrid.name,
@@ -180,6 +213,16 @@ class PhoneConfigController @Inject constructor(
                     valid = addon.isValid,
                     detail = addonTestResults[addon.id],
                     logoUrl = metadata[index]?.logoUrl?.takeUnless { it.isBlank() },
+                )
+            },
+            cmsSources = cms.map { src ->
+                PhoneCmsSourceDto(
+                    id = src.id,
+                    name = src.name,
+                    url = src.url,
+                    enabled = src.enabled,
+                    builtIn = src.builtIn,
+                    detail = cmsTestResults[src.id],
                 )
             },
             setup = setup,
@@ -276,6 +319,7 @@ class PhoneConfigController @Inject constructor(
                 is KeyCheck.Invalid -> errors[errorKey] = result.message
             }
         }
+        val (updatedCmsSources, cmsModified) = applyCmsChanges(request.cmsSources, errors)
         if (errors.isNotEmpty()) return PhoneConfigUpdateResult.ValidationFailed(errors)
 
         for ((service, value, remove) in changes) {
@@ -287,7 +331,12 @@ class PhoneConfigController @Inject constructor(
         }
         if (errors.isNotEmpty()) return PhoneConfigUpdateResult.ValidationFailed(errors)
 
-        if (request.keys.isEmpty() && request.addons.isNotEmpty() && request.addons.all { it.test }) {
+        val addonsTestOnly = request.addons.isNotEmpty() && request.addons.all { it.test }
+        val cmsTestOnly = request.cmsSources.isNotEmpty() && request.cmsSources.all { it.test } && !cmsModified
+        if (request.keys.isEmpty() && (addonsTestOnly || cmsTestOnly) &&
+            (request.addons.isEmpty() || addonsTestOnly) &&
+            (request.cmsSources.isEmpty() || cmsTestOnly)
+        ) {
             return PhoneConfigUpdateResult.Success(snapshot(mode))
         }
         for ((service, value, remove) in changes) {
@@ -298,6 +347,9 @@ class PhoneConfigController @Inject constructor(
         }
         if (request.addons.any { !it.test }) {
             apiKeys.set(ApiService.AIOSTREAMS, StremioAddons.serialize(updatedAddons))
+        }
+        if (cmsModified) {
+            settings.setCmsSources(updatedCmsSources)
         }
         settings.setDebridService(debrid)
         settings.setSourceProviders(providers)
@@ -317,6 +369,152 @@ class PhoneConfigController @Inject constructor(
             if (subtitles != null) settings.setSubtitlePreference(subtitles)
         }
         return PhoneConfigUpdateResult.Success(snapshot(mode))
+    }
+
+    private suspend fun applyCmsChanges(
+        changes: List<PhoneCmsSourceUpdateDto>,
+        errors: MutableMap<String, String>,
+    ): Pair<List<CmsSource>, Boolean> {
+        if (changes.isEmpty()) return emptyList<CmsSource>() to false
+        var updated = loadCmsSources().toMutableList()
+        var modified = false
+        changes.forEachIndexed { index, change ->
+            val errorKey = "cms:$index"
+            if (change.resetDefaults) {
+                val customOnly = updated.filterNot { it.builtIn }
+                updated = (CmsSources.DEFAULT_SOURCES + customOnly).toMutableList()
+                modified = true
+                return@forEachIndexed
+            }
+            val existingIndex = change.id?.let { id -> updated.indexOfFirst { it.id == id } } ?: -1
+            if (change.id != null && existingIndex < 0) {
+                errors[errorKey] = texts.get(StringsR.string.settings_phone_config_invalid_request)
+                return@forEachIndexed
+            }
+            if (change.test) {
+                val targetUrl = change.url?.trim()?.takeIf { it.isNotEmpty() }
+                    ?: updated.getOrNull(existingIndex)?.url
+                if (targetUrl == null || change.remove) {
+                    errors[errorKey] = texts.get(StringsR.string.settings_phone_config_invalid_request)
+                    return@forEachIndexed
+                }
+                when (val result = apiKeys.checkCmsSource(targetUrl)) {
+                    is KeyCheck.Valid -> {
+                        val key = change.id ?: CmsSources.stableId(targetUrl)
+                        cmsTestResults[key] = result.detail ?: texts.get(StringsR.string.settings_connected)
+                    }
+                    is KeyCheck.Invalid -> {
+                        change.id?.let { cmsTestResults.remove(it) }
+                        errors[errorKey] = result.message
+                    }
+                }
+                return@forEachIndexed
+            }
+            if (change.remove) {
+                if (existingIndex < 0) {
+                    errors[errorKey] = texts.get(StringsR.string.settings_phone_config_invalid_request)
+                    return@forEachIndexed
+                }
+                val existing = updated[existingIndex]
+                if (existing.builtIn) {
+                    errors[errorKey] = texts.get(StringsR.string.settings_cms_sources_remove_builtin_error)
+                    return@forEachIndexed
+                }
+                updated.removeAt(existingIndex)
+                cmsTestResults.remove(existing.id)
+                modified = true
+                return@forEachIndexed
+            }
+            if (existingIndex >= 0) {
+                val current = updated[existingIndex]
+                val hasNameOrUrl = change.name != null || change.url != null
+                if (!hasNameOrUrl) {
+                    val nextEnabled = change.enabled ?: current.enabled
+                    if (nextEnabled != current.enabled) {
+                        updated[existingIndex] = current.copy(enabled = nextEnabled)
+                        modified = true
+                    }
+                    return@forEachIndexed
+                }
+                if (current.builtIn) {
+                    val urlNorm = change.url?.let { CmsSources.normalizeUrl(it) }
+                    val nameTrim = change.name?.trim()
+                    if ((urlNorm != null && !urlNorm.equals(current.url, ignoreCase = true)) ||
+                        (nameTrim != null && nameTrim != current.name)
+                    ) {
+                        errors[errorKey] = texts.get(StringsR.string.settings_phone_config_invalid_request)
+                        return@forEachIndexed
+                    }
+                    val nextEnabled = change.enabled ?: current.enabled
+                    if (nextEnabled != current.enabled) {
+                        updated[existingIndex] = current.copy(enabled = nextEnabled)
+                        modified = true
+                    }
+                    return@forEachIndexed
+                }
+                val rawUrl = (change.url ?: current.url).trim()
+                val normalized = CmsSources.normalizeUrl(rawUrl)
+                if (normalized == null) {
+                    errors[errorKey] = texts.get(StringsR.string.settings_cms_sources_invalid_url)
+                    return@forEachIndexed
+                }
+                if (updated.any { it.id != current.id && it.url.equals(normalized, ignoreCase = true) }) {
+                    errors[errorKey] = texts.get(StringsR.string.settings_cms_sources_exists)
+                    return@forEachIndexed
+                }
+                val urlChanged = !normalized.equals(current.url, ignoreCase = true)
+                if (urlChanged) {
+                    when (val result = apiKeys.checkCmsSource(normalized)) {
+                        is KeyCheck.Valid -> {
+                            cmsTestResults.remove(current.id)
+                            val newId = CmsSources.stableId(normalized)
+                            result.detail?.let { cmsTestResults[newId] = it }
+                            val cleanName = (change.name ?: current.name).trim().ifBlank { CmsSources.hostLabel(normalized) }
+                            updated[existingIndex] = current.copy(
+                                id = newId,
+                                name = cleanName,
+                                url = normalized,
+                                enabled = change.enabled ?: current.enabled,
+                            )
+                            modified = true
+                        }
+                        is KeyCheck.Invalid -> errors[errorKey] = result.message
+                    }
+                } else {
+                    val cleanName = (change.name ?: current.name).trim().ifBlank { CmsSources.hostLabel(normalized) }
+                    val nextEnabled = change.enabled ?: current.enabled
+                    if (cleanName != current.name || nextEnabled != current.enabled) {
+                        updated[existingIndex] = current.copy(name = cleanName, enabled = nextEnabled)
+                        modified = true
+                    }
+                }
+                return@forEachIndexed
+            }
+
+            val normalized = CmsSources.normalizeUrl(change.url.orEmpty())
+            if (normalized == null) {
+                errors[errorKey] = texts.get(StringsR.string.settings_cms_sources_invalid_url)
+                return@forEachIndexed
+            }
+            if (updated.any { it.url.equals(normalized, ignoreCase = true) }) {
+                errors[errorKey] = texts.get(StringsR.string.settings_cms_sources_exists)
+                return@forEachIndexed
+            }
+            when (val result = apiKeys.checkCmsSource(normalized)) {
+                is KeyCheck.Valid -> {
+                    val created = CmsSources.createCustom(
+                        name = change.name.orEmpty(),
+                        rawUrl = normalized,
+                        enabled = change.enabled ?: true,
+                    )!!
+                    result.detail?.let { cmsTestResults[created.id] = it }
+                    updated.add(0, created)
+                    modified = true
+                }
+                is KeyCheck.Invalid -> errors[errorKey] = result.message
+            }
+        }
+        return updated to modified
     }
 
     private fun setupComplete(keys: Map<ApiService, String?>, debrid: DebridService): Boolean =

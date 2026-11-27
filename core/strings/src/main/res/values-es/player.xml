@@ -108,4 +108,10 @@
     <string name="player_outro_point_set">Cierre fijado en los últimos %1$d s</string>
     <string name="player_skip_intro_short">Intro</string>
     <string name="player_skip_outro_short">Cierre</string>
+    <string name="player_episodes">Episodios</string>
+    <string name="player_episodes_season">Temporada %1$d · Episodios</string>
+    <string name="player_playing_now">Reproduciendo</string>
+    <string name="player_episode_picker_hint">◀ ▶ Elegir · OK cambiar · Atrás cerrar</string>
+    <string name="player_ok_pause_seek_episodes_tracks">OK pausa · ◀ ▶ buscar · ▲ Episodios · ▼ Audio y subtítulos</string>
+    <string name="player_ok_pause_10_s_episodes_tracks">OK pausa · ◀ ▶ 10 s · ▲ Episodios · ▼ Audio y subtítulos</string>
 </resources>

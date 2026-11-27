@@ -116,6 +116,13 @@ fun PlayerScreen(
     val sleepTimerRemainingMinutes by viewModel.sleepTimerRemainingMinutes.collectAsStateWithLifecycle()
     val thumbnailsEnabled by viewModel.seekThumbnails.collectAsStateWithLifecycle()
     val nextUp by viewModel.nextUp.collectAsStateWithLifecycle()
+    val seriesContext by viewModel.seriesContext.collectAsStateWithLifecycle()
+    val currentMedia by viewModel.media.collectAsStateWithLifecycle()
+    val pickerSeason by viewModel.pickerSeason.collectAsStateWithLifecycle()
+    val pickerEpisodes by viewModel.pickerEpisodes.collectAsStateWithLifecycle()
+    val pickerLoading by viewModel.pickerLoading.collectAsStateWithLifecycle()
+    val episodeProgress by viewModel.episodeProgress.collectAsStateWithLifecycle()
+    val hasEpisodes = seriesContext?.item?.type == com.shieldstream.tv.model.MediaType.TV
     val context = LocalContext.current
     val skipPrompt by viewModel.skipPrompt.collectAsStateWithLifecycle()
     val skipCfg by viewModel.skipConfig.collectAsStateWithLifecycle()
@@ -140,6 +147,8 @@ fun PlayerScreen(
 
     var tracksOpen by remember { mutableStateOf(false) }
     BackHandler(enabled = tracksOpen) { tracksOpen = false }
+    var episodesOpen by remember { mutableStateOf(false) }
+    BackHandler(enabled = episodesOpen) { episodesOpen = false }
     var syncOpen by remember { mutableStateOf(false) }
     BackHandler(enabled = syncOpen) { syncOpen = false }
     LaunchedEffect(activeExternal) { if (activeExternal == null) syncOpen = false }
@@ -237,7 +246,9 @@ fun PlayerScreen(
     }
 
     val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(tracksOpen) { if (!tracksOpen) runCatching { focusRequester.requestFocus() } }
+    LaunchedEffect(tracksOpen, episodesOpen) {
+        if (!tracksOpen && !episodesOpen) runCatching { focusRequester.requestFocus() }
+    }
 
     val skipTarget = (skipPrompt as? SkipPromptUiState.Showing)?.targetMs
     var skipExpired by remember { mutableStateOf(false) }
@@ -266,6 +277,17 @@ fun PlayerScreen(
             showControls()
         }
 
+        if (episodesOpen) {
+            return when (event.key) {
+                Key.MediaPlayPause, Key.Spacebar -> {
+                    if (p.isPlaying) p.pause() else p.play()
+                    true
+                }
+                Key.MediaPlay -> { p.play(); true }
+                Key.MediaPause -> { p.pause(); true }
+                else -> false
+            }
+        }
         if (tracksOpen || syncOpen) {
             return when (event.key) {
                 Key.DirectionLeft -> if (syncOpen) {
@@ -369,7 +391,16 @@ fun PlayerScreen(
                 }
                 true
             }
-            Key.DirectionUp, Key.Info -> { showControls(); true }
+            Key.DirectionUp, Key.Info -> {
+                if (hasEpisodes && controlsVisible && event.key == Key.DirectionUp) {
+                    controlsVisible = false
+                    viewModel.openEpisodePicker()
+                    episodesOpen = true
+                } else {
+                    showControls()
+                }
+                true
+            }
             else -> false
         }
     }
@@ -384,6 +415,7 @@ fun PlayerScreen(
                 showControls()
             }
             .onBackKey(enabled = tracksOpen) { tracksOpen = false }
+            .onBackKey(enabled = episodesOpen) { episodesOpen = false }
             .onBackKey(enabled = syncOpen) { syncOpen = false }
             .onBackKey(enabled = nextUp is NextUpUiState.Showing && !tracksOpen && !syncOpen && scrubMs == null) {
                 viewModel.dismissNextUp()
@@ -468,7 +500,7 @@ fun PlayerScreen(
         }
 
         if (state == PlayerUiState.Playing) {
-            AnimatedVisibility(visible = controlsVisible && !syncOpen, enter = fadeIn(), exit = fadeOut()) {
+            AnimatedVisibility(visible = controlsVisible && !syncOpen && !episodesOpen, enter = fadeIn(), exit = fadeOut()) {
                 ControlsOverlay(
                     title = title,
                     videoInfo = videoInfo,
@@ -476,6 +508,7 @@ fun PlayerScreen(
                     scrubMs = scrubMs,
                     thumbs = thumbs,
                     thumbnailsEnabled = thumbnailsEnabled,
+                    hasEpisodes = hasEpisodes,
                 )
             }
             seekFeedback?.let {
@@ -552,13 +585,37 @@ fun PlayerScreen(
                     onAudioSelected = viewModel::rememberAudioLanguage,
                     onSubtitleSelected = viewModel::rememberSubtitleLanguage,
                     onSubtitlesOff = viewModel::rememberSubtitlesOff,
+                    hasEpisodes = hasEpisodes,
+                    onOpenEpisodes = {
+                        tracksOpen = false
+                        viewModel.openEpisodePicker()
+                        episodesOpen = true
+                    },
+                )
+            }
+        }
+
+        if (episodesOpen && state == PlayerUiState.Playing) {
+            seriesContext?.let { ctx ->
+                EpisodePickerOverlay(
+                    context = ctx,
+                    currentMedia = currentMedia,
+                    selectedSeason = pickerSeason,
+                    episodes = pickerEpisodes,
+                    loading = pickerLoading,
+                    progressMap = episodeProgress,
+                    onSelectSeason = viewModel::selectPickerSeason,
+                    onSelectEpisode = { ep ->
+                        episodesOpen = false
+                        viewModel.switchToEpisode(ep.season, ep.number)
+                    },
                 )
             }
         }
 
         val pillBottom by animateDpAsState(if (controlsVisible) 116.dp else 48.dp, label = "pillBottom")
         val pillModifier = Modifier.align(Alignment.BottomEnd).padding(end = 48.dp, bottom = pillBottom)
-        if (state == PlayerUiState.Playing && !tracksOpen) {
+        if (state == PlayerUiState.Playing && !tracksOpen && !episodesOpen) {
             (nextUp as? NextUpUiState.Showing)?.let { next ->
                 val target = if (next.secondsLeft <= NEXT_FILL_SECONDS) 1f - next.secondsLeft / NEXT_FILL_SECONDS.toFloat() else 0f
                 val fill by animateFloatAsState(target, animationSpec = tween(500, easing = LinearEasing), label = "nextFill")
@@ -651,6 +708,7 @@ private fun ControlsOverlay(
     scrubMs: Long?,
     thumbs: SeekThumbnails?,
     thumbnailsEnabled: Boolean,
+    hasEpisodes: Boolean = false,
 ) {
     val shownMs = scrubMs ?: playback.positionMs
     Box(Modifier.fillMaxSize()) {
@@ -706,6 +764,8 @@ private fun ControlsOverlay(
                 Text(
                     text = when {
                         scrubMs != null -> localizedStringResource(StringsR.string.player_ok_jump_here_back_return)
+                        hasEpisodes && thumbnailsEnabled -> localizedStringResource(StringsR.string.player_ok_pause_seek_episodes_tracks)
+                        hasEpisodes -> localizedStringResource(StringsR.string.player_ok_pause_10_s_episodes_tracks)
                         thumbnailsEnabled -> localizedStringResource(StringsR.string.player_ok_pause_seek_audio_subtitles)
                         else -> localizedStringResource(StringsR.string.player_ok_pause_10_s_audio_subtitles)
                     },

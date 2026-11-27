@@ -91,6 +91,8 @@
     <string name="data_no_premium">%1$s · sin Premium</string>
     <string name="data_torrentio_no_links">Torrentio no devolvió enlaces de %1$s. Prueba más tarde.</string>
     <string name="data_test_sources">Conectado · %1$d fuentes de prueba</string>
+    <string name="data_cms_source_connected">Conectado · %1$d títulos en respuesta</string>
+    <string name="data_invalid_cms_url">Introduce una URL CMS V10 válida (empieza por http:// o https://)</string>
     <string name="data_addons_test_sources">%1$d de %2$d addons · %3$d fuentes de prueba</string>
     <string name="data_subdl_http_error">SubDL respondió con error %1$d</string>
     <string name="data_service_http_error">El servicio respondió con error %1$d</string>

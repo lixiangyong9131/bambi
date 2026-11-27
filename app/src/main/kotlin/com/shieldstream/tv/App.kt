@@ -10,6 +10,8 @@ import androidx.work.Configuration
 import androidx.hilt.work.HiltWorkerFactory
 import com.shieldstream.tv.domain.ApiService
 import com.shieldstream.tv.domain.EpisodeTrackingRepository
+import com.shieldstream.tv.domain.SettingsRepository
+import com.shieldstream.tv.media.HlsAdFilter
 import com.shieldstream.tv.watchnext.WatchNextManager
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
@@ -37,6 +39,9 @@ class App : Application(), ImageLoaderFactory, Configuration.Provider {
     @Inject
     lateinit var watchNext: dagger.Lazy<WatchNextManager>
 
+    @Inject
+    lateinit var settingsRepository: dagger.Lazy<SettingsRepository>
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setWorkerFactory(workerFactory).build()
 
@@ -58,6 +63,11 @@ class App : Application(), ImageLoaderFactory, Configuration.Provider {
             StartupTrace.mark("App claves")
             watchNext.get().start()
             StartupTrace.mark("App watchNext")
+            launch {
+                settingsRepository.get().smartAdFilter.collect { enabled ->
+                    HlsAdFilter.enabled = enabled
+                }
+            }
             episodeTracking.get().notificationsEnabled.collect { enabled ->
                 EpisodeNotificationScheduler.sync(this@App, enabled)
             }

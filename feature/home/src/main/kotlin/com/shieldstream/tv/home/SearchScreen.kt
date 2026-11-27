@@ -102,6 +102,7 @@ private const val COMPACT_GENRE_COUNT = 9
 @Composable
 fun SearchScreen(
     onItemClick: (CatalogItem) -> Unit,
+    onQuickPlay: ((CatalogItem) -> Unit)? = null,
     initialFocusRequester: FocusRequester? = null,
     onOpenRail: (() -> Unit)? = null,
     viewModel: SearchViewModel = hiltViewModel(),
@@ -110,7 +111,9 @@ fun SearchScreen(
     val state by viewModel.uiState.collectAsStateWithLifecycle()
     val filterState by viewModel.filterState.collectAsStateWithLifecycle()
     val notice by viewModel.notice.collectAsStateWithLifecycle()
+    val myListKeys by viewModel.myListKeys.collectAsStateWithLifecycle()
     var lockedPick by remember { mutableStateOf<CatalogItem?>(null) }
+    var quickMenuItem by remember { mutableStateOf<CatalogItem?>(null) }
     var keyboardOpen by rememberSaveable { mutableStateOf(false) }
     var genresExpanded by rememberSaveable { mutableStateOf(false) }
 
@@ -131,6 +134,29 @@ fun SearchScreen(
                     lockedPick = null
                 },
             ),
+        )
+    }
+
+    quickMenuItem?.let { item ->
+        val inList = "${item.type.name}:${item.id}" in myListKeys
+        PosterQuickActionsDialog(
+            item = item,
+            inMyList = inList,
+            onPlayNow = onQuickPlay?.let { play ->
+                {
+                    quickMenuItem = null
+                    play(item)
+                }
+            },
+            onToggleMyList = {
+                quickMenuItem = null
+                viewModel.toggleMyList(item)
+            },
+            onDetails = {
+                quickMenuItem = null
+                onItemClick(item)
+            },
+            onDismiss = { quickMenuItem = null },
         )
     }
 
@@ -582,11 +608,13 @@ fun SearchScreen(
                             PosterCard(
                                 item = item,
                                 onClick = { onItemClick(item) },
+                                onLongClick = { quickMenuItem = item },
                                 onFocused = {
                                     lastCardKey = item.key
                                     activeGridIndex = index
                                 },
                                 width = 118.dp,
+                                showYearOnFocus = true,
                                 modifier = mod,
                             )
                         }

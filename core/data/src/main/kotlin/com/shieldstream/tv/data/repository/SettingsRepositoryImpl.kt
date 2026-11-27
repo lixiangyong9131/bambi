@@ -13,6 +13,8 @@ import com.shieldstream.tv.domain.ProfileRepository
 import com.shieldstream.tv.domain.SettingsRepository
 import com.shieldstream.tv.domain.enabledSourceProviders
 import com.shieldstream.tv.model.AudioCodec
+import com.shieldstream.tv.model.CmsSource
+import com.shieldstream.tv.model.CmsSources
 import com.shieldstream.tv.model.DeviceProfile
 import com.shieldstream.tv.model.HdrType
 import com.shieldstream.tv.model.Quality
@@ -24,6 +26,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -154,6 +159,14 @@ class SettingsRepositoryImpl @Inject constructor(
     override suspend fun setSwitchFromPickedSource(enabled: Boolean) {
         prefs.edit().putBoolean(KEY_SWITCH_PICKED_SOURCE, enabled).apply()
         switchPickedFlow.value = enabled
+    }
+
+    private val smartAdFilterFlow = MutableStateFlow(prefs.getBoolean(KEY_SMART_AD_FILTER, true))
+    override val smartAdFilter: Flow<Boolean> = smartAdFilterFlow
+
+    override suspend fun setSmartAdFilter(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_SMART_AD_FILTER, enabled).apply()
+        smartAdFilterFlow.value = enabled
     }
 
     private val autoSkipIntroFlow = MutableStateFlow(prefs.getBoolean(KEY_AUTO_SKIP_INTRO, false))
@@ -298,6 +311,29 @@ class SettingsRepositoryImpl @Inject constructor(
         debridFlow.value = service
     }
 
+    private val cmsJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+    private val cmsSourcesFlow = MutableStateFlow(loadCmsSources())
+    override val cmsSources: Flow<List<CmsSource>> = cmsSourcesFlow
+
+    private fun loadCmsSources(): List<CmsSource> {
+        val raw = prefs.getString(KEY_CMS_SOURCES, null)?.takeIf { it.isNotBlank() } ?: return CmsSources.DEFAULT_SOURCES
+        val decoded = runCatching {
+            cmsJson.decodeFromString<List<StoredCmsSource>>(raw).map {
+                CmsSource(id = it.id, name = it.name, url = it.url, enabled = it.enabled, builtIn = it.builtIn)
+            }
+        }.getOrNull()
+        return CmsSources.mergeWithDefaults(decoded)
+    }
+
+    override suspend fun setCmsSources(sources: List<CmsSource>) {
+        val merged = CmsSources.mergeWithDefaults(sources)
+        val encoded = cmsJson.encodeToString(
+            merged.map { StoredCmsSource(it.id, it.name, it.url, it.enabled, it.builtIn) },
+        )
+        prefs.edit().putString(KEY_CMS_SOURCES, encoded).apply()
+        cmsSourcesFlow.value = merged
+    }
+
     override val language: AppLanguage get() = Lang.current
 
     override suspend fun setLanguage(language: AppLanguage) {
@@ -347,6 +383,7 @@ class SettingsRepositoryImpl @Inject constructor(
         const val KEY_SEARCH_QWERTY = "search_qwerty"
         const val KEY_AUTO_NEXT = "auto_next_episode"
         const val KEY_SWITCH_PICKED_SOURCE = "switch_from_picked_source"
+        const val KEY_SMART_AD_FILTER = "smart_ad_filter"
         const val KEY_VIDEO_FIT = "video_fit"
         const val KEY_AUTO_SKIP_INTRO = "auto_skip_intro"
         const val KEY_SHOW_CAST = "show_cast"
@@ -359,8 +396,18 @@ class SettingsRepositoryImpl @Inject constructor(
         const val KEY_EXCLUDED_HDR_TYPES = "source_excluded_hdr_types"
         const val KEY_EXCLUDED_AUDIO_CODECS = "source_excluded_audio_codecs"
         const val KEY_BROKEN_SOURCES = "source_broken_ids"
+        const val KEY_CMS_SOURCES = "cms_sources_json"
         const val BROKEN_SOURCE_TTL_MS = 60L * 24 * 60 * 60 * 1000
         const val MIN_BUFFER = 20
         const val MAX_BUFFER = 100
     }
+
+    @Serializable
+    private data class StoredCmsSource(
+        val id: String,
+        val name: String,
+        val url: String,
+        val enabled: Boolean = true,
+        val builtIn: Boolean = false,
+    )
 }

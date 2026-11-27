@@ -2,6 +2,8 @@ package com.shieldstream.tv.home
 
 import android.content.Context
 import com.shieldstream.tv.domain.CatalogRepository
+import com.shieldstream.tv.domain.MyListEntry
+import com.shieldstream.tv.domain.MyListRepository
 import com.shieldstream.tv.domain.RequestRepository
 import com.shieldstream.tv.domain.SettingsRepository
 import com.shieldstream.tv.model.CatalogItem
@@ -63,6 +65,7 @@ class SearchViewModelTest {
             settings = settings,
             texts = mockk<Texts>(relaxed = true),
             requests = mockk<RequestRepository>(relaxed = true),
+            myList = mockk<MyListRepository>(relaxed = true),
             appContext = context,
         )
     }
@@ -205,5 +208,47 @@ class SearchViewModelTest {
         assertEquals("", viewModel.query.value)
         val afterFilter = viewModel.uiState.value as SearchUiState.Browse
         assertEquals(listOf("com-1"), afterFilter.items.map { it.id })
+    }
+
+    @Test
+    fun `toggleMyList adds and removes item while updating notice`() = runTest {
+        val entriesFlow = MutableStateFlow<List<MyListEntry>>(emptyList())
+        val myListRepo = mockk<MyListRepository>(relaxed = true) {
+            every { entries } returns entriesFlow
+            every { contains(MediaType.TV, "tv-9") } answers {
+                entriesFlow.value.any { it.type == MediaType.TV && it.id == "tv-9" }
+            }
+            every { add(MediaType.TV, "tv-9") } answers {
+                entriesFlow.value = listOf(MyListEntry(MediaType.TV, "tv-9", 1L))
+            }
+            every { remove(MediaType.TV, "tv-9") } answers {
+                entriesFlow.value = emptyList()
+            }
+        }
+        val catalog = mockk<CatalogRepository>(relaxed = true) {
+            coEvery { browseCategoryFilter(any(), any(), any(), any()) } returns emptyList()
+        }
+        val viewModel = SearchViewModel(
+            catalogRepository = catalog,
+            settings = mockk<SettingsRepository>(relaxed = true) {
+                every { searchQwerty } returns MutableStateFlow(false)
+            },
+            texts = mockk<Texts>(relaxed = true) {
+                every { get(any(), *anyVararg()) } returns "ok"
+            },
+            requests = mockk<RequestRepository>(relaxed = true),
+            myList = myListRepo,
+            appContext = mockk<Context>(relaxed = true) { every { assets } returns mockk(relaxed = true) },
+        )
+        advanceUntilIdle()
+        val item = testItem("tv-9", MediaType.TV, "Test Show")
+
+        viewModel.toggleMyList(item)
+        advanceUntilIdle()
+        assertTrue("TV:tv-9" in viewModel.myListKeys.value)
+
+        viewModel.toggleMyList(item)
+        advanceUntilIdle()
+        assertFalse("TV:tv-9" in viewModel.myListKeys.value)
     }
 }

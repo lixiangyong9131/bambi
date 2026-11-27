@@ -91,6 +91,8 @@
     <string name="data_no_premium">%1$s · 无 Premium</string>
     <string name="data_torrentio_no_links">Torrentio 未返回 %1$s 链接，请稍后重试。</string>
     <string name="data_test_sources">已连接 · %1$d 个测试源</string>
+    <string name="data_cms_source_connected">已连接 · 返回 %1$d 条片源</string>
+    <string name="data_invalid_cms_url">请输入有效的 CMS V10 接口地址（以 http:// 或 https:// 开头）</string>
     <string name="data_addons_test_sources">%1$d / %2$d 个插件 · %3$d 个测试源</string>
     <string name="data_subdl_http_error">SubDL 返回错误 %1$d</string>
     <string name="data_service_http_error">服务返回错误 %1$d</string>

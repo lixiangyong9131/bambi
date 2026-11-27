@@ -165,6 +165,7 @@ fun MainScreen(
                 saveable.SaveableStateProvider("tab_search") {
                     SearchScreen(
                         onItemClick = onOpenItem,
+                        onQuickPlay = { item -> onPlaySomething(item, null) },
                         initialFocusRequester = searchRequester,
                         onOpenRail = openRail,
                     )
@@ -176,6 +177,7 @@ fun MainScreen(
                         onContinueClick = onContinue,
                         onNewEpisodeClick = onOpenNewEpisode,
                         onUpNextClick = onUpNext,
+                        onQuickPlay = { item -> onPlaySomething(item, null) },
                         onBackToTop = openRail,
                         contentFocusRequester = feedRequester,
                         onOpenRail = openRail,

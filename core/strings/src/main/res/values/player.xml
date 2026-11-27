@@ -109,4 +109,10 @@
     <string name="player_outro_point_set">片尾已设为末尾 %1$d 秒</string>
     <string name="player_skip_intro_short">片头</string>
     <string name="player_skip_outro_short">片尾</string>
+    <string name="player_episodes">选集</string>
+    <string name="player_episodes_season">第 %1$d 季 · 选集</string>
+    <string name="player_playing_now">正在播放</string>
+    <string name="player_episode_picker_hint">◀ ▶ 选集 · OK 立即切换 · 返回键关闭</string>
+    <string name="player_ok_pause_seek_episodes_tracks">OK 暂停 · ◀ ▶ 快进 · ▲ 选集 · ▼ 音频与字幕</string>
+    <string name="player_ok_pause_10_s_episodes_tracks">OK 暂停 · ◀ ▶ 10秒 · ▲ 选集 · ▼ 音频与字幕</string>
 </resources>

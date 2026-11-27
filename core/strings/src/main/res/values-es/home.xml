@@ -91,6 +91,11 @@
     <string name="home_search_open_keyboard_hint">Pulsa OK para escribir</string>
     <string name="home_search_close_keyboard">Ocultar teclado</string>
     <string name="home_search_filter_results_header">Filtros: %1$s</string>
+    <string name="home_play_now">Reproducir ahora</string>
+    <string name="home_add_to_my_list">Añadir a Mi lista</string>
+    <string name="home_remove_from_my_list">Quitar de Mi lista</string>
+    <string name="home_added_to_my_list">Añadida a Mi lista</string>
+    <string name="home_removed_from_my_list">Quitada de Mi lista</string>
     <string name="home_filter_cat_domestic">China continental</string>
     <string name="home_filter_cat_hk">Hong Kong</string>
     <string name="home_filter_cat_tw">Taiwán</string>

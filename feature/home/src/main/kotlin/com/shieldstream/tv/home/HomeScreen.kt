@@ -52,6 +52,7 @@ fun UnifiedHomeScreen(
     onContinueClick: (CatalogItem, ContinueInfo) -> Unit,
     onNewEpisodeClick: (CatalogItem, Episode) -> Unit,
     onUpNextClick: (CatalogItem, Episode) -> Unit,
+    onQuickPlay: ((CatalogItem) -> Unit)? = null,
     onBackToTop: () -> Unit,
     railRequester: FocusRequester? = null,
     contentFocusRequester: FocusRequester,
@@ -65,6 +66,7 @@ fun UnifiedHomeScreen(
 ) {
     LaunchedEffect(Unit) { viewModel.loadUnified() }
     val state by viewModel.unifiedState.collectAsStateWithLifecycle()
+    val myListKeys by viewModel.myListKeys.collectAsStateWithLifecycle()
 
     when (val s = state) {
         UnifiedHomeUiState.Loading -> HomeSkeleton(modifier = Modifier.fillMaxSize())
@@ -101,6 +103,14 @@ fun UnifiedHomeScreen(
                     },
                     onRemoveContinue = viewModel::removeFromContinue,
                     onRemoveMyList = viewModel::removeFromMyList,
+                    myListKeys = myListKeys,
+                    onQuickPlay = onQuickPlay?.let { play ->
+                        { item ->
+                            viewModel.cancelBackgroundPrefetch()
+                            play(item)
+                        }
+                    },
+                    onToggleMyList = viewModel::toggleMyList,
                     onMarkUpNextWatched = viewModel::markUpNextWatched,
                     onRemoveUpNext = viewModel::removeUpNext,
                     onExitTop = null,
