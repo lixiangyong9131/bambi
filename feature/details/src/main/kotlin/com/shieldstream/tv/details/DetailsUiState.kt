@@ -39,6 +39,13 @@ sealed interface TraktRatingsState {
     ) : TraktRatingsState
 }
 
+sealed interface SeriesWorksState {
+    data object Idle : SeriesWorksState
+    data object Loading : SeriesWorksState
+    data class Ready(val items: List<com.shieldstream.tv.model.CatalogItem>) : SeriesWorksState
+    data class Error(val message: String) : SeriesWorksState
+}
+
 sealed interface DetailsUiState {
     data object Loading : DetailsUiState
     data class Error(val message: String) : DetailsUiState
@@ -64,6 +71,8 @@ sealed interface DetailsUiState {
         val ratings: TraktRatingsState = TraktRatingsState.Idle,
         /** Resto de películas de la saga (sin la actual), cuando la hay. */
         val collection: com.shieldstream.tv.model.CollectionDetails? = null,
+        val seriesWorks: SeriesWorksState = SeriesWorksState.Idle,
+        val hasMultiSeasonSeries: Boolean = false,
         /** Modified build: per-source probe results, filled one by one as they complete. */
         val sourceProbes: Map<String, SourceProber.Result> = emptyMap(),
         val probingDone: Boolean = false,

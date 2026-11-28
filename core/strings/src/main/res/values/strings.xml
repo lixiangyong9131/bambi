@@ -176,4 +176,14 @@
     <string name="subtitle_sample">字幕示例
 这是字幕的显示效果</string>
     <string name="subtitle_reset">重置</string>
+    <string name="details_series_works">同系列</string>
+    <string name="details_series_works_title">豆瓣同系列作品</string>
+    <string name="details_series_works_subtitle">%1$s · 共 %2$d 部</string>
+    <string name="details_series_works_loading">正在查询豆瓣同系列作品…</string>
+    <string name="details_series_works_empty">豆瓣暂未收录其他同系列作品</string>
+    <string name="details_series_works_current">当前作品</string>
+    <string name="details_series_works_retry">重新查询</string>
+    <string name="details_series_works_error">查询同系列作品失败</string>
+    <string name="data_movie_hidden_gems">冷门佳片</string>
+    <string name="home_filter_cat_hidden_gems">冷门佳片</string>
 </resources>

@@ -1,6 +1,7 @@
 package com.shieldstream.tv.ui.component
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -26,9 +27,17 @@ object AppIcons {
         "M21,3H3c-1.1,0 -2,0.9 -2,2v12c0,1.1 0.9,2 2,2h5v2h8v-2h5c1.1,0 1.99,-0.9 1.99,-2L23,5c0,-1.1 -0.9,-2 -2,-2z" +
             "M21,17H3V5h18v12z",
     )
+    // Cartoon TV with cat/rabbit antennae and happy anime eyes (EvenOdd hollows the screen so eyes pop).
     val Anime = icon(
-        "anime",
-        "M12,2L14.3,8.1L20.5,9L16,13.3L17.2,19.5L12,16.4L6.8,19.5L8,13.3L3.5,9L9.7,8.1Z",
+        name = "anime",
+        path = "M6.2,2.4L8.0,1.8L10.6,6.0L8.5,6.0Z " +
+            "M17.8,2.4L16.0,1.8L13.4,6.0L15.5,6.0Z " +
+            "M5.5,6.0H18.5A2.5,2.5 0,0 1,21.0,8.5V17.5A2.5,2.5 0,0 1,18.5,20.0H5.5A2.5,2.5 0,0 1,3.0,17.5V8.5A2.5,2.5 0,0 1,5.5,6.0Z " +
+            "M5.2,8.3H18.8V17.7H5.2Z " +
+            "M7.6,11.2L10.4,12.7L10.0,14.1L7.1,12.5Z " +
+            "M16.4,11.2L16.9,12.5L14.0,14.1L13.6,12.7Z " +
+            "M10.4,15.3H13.6V16.4H10.4Z",
+        fillType = PathFillType.EvenOdd,
     )
     val Settings = icon(
         "settings",
@@ -81,7 +90,11 @@ object AppIcons {
     val SkipNext = icon("skip_next", "M6,18l8.5,-6L6,6v12zM16,6v12h2V6h-2z")
     val FastForward = icon("fast_forward", "M4,18l8.5,-6L4,6v12zM13,6v12l8.5,-6L13,6z")
 
-    private fun icon(name: String, path: String): ImageVector =
+    private fun icon(
+        name: String,
+        path: String,
+        fillType: PathFillType = PathFillType.NonZero,
+    ): ImageVector =
         ImageVector.Builder(
             name = name,
             defaultWidth = 24.dp,
@@ -91,6 +104,7 @@ object AppIcons {
         ).addPath(
             pathData = addPathNodes(path),
             fill = SolidColor(Color.White),
+            pathFillType = fillType,
         ).build()
 }
 

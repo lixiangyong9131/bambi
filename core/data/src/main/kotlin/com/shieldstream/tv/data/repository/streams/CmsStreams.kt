@@ -5,6 +5,7 @@ import com.shieldstream.tv.model.CatalogItem
 import com.shieldstream.tv.model.CmsSource
 import com.shieldstream.tv.model.CmsSources
 import com.shieldstream.tv.model.HdrType
+import com.shieldstream.tv.model.MediaType
 import com.shieldstream.tv.model.Quality
 import com.shieldstream.tv.model.StreamSource
 import com.github.promeg.pinyinhelper.Pinyin
@@ -59,7 +60,7 @@ class CmsStreams @Inject constructor(
         internal val SOURCES = CmsSources.DEFAULT_SOURCES.map { it.name to it.url }
         private const val CACHE_TTL_MS = 10 * 60_000L
         private const val DNS_TTL_MS = 5 * 60_000L
-        internal const val SITE_COOLDOWN_MS = 30 * 60_000L
+        internal const val SITE_COOLDOWN_MS = 5 * 60_000L
 
         /**
          * System DNS first (0ms overhead for clean hosts), falling back to DoH only when system DNS
@@ -101,13 +102,14 @@ class CmsStreams @Inject constructor(
             }
         }
 
-        // Fast timeouts so unresponsive/DNS-poisoned mirrors fail quickly once and enter cooldown.
+        // Fast timeouts so unresponsive mirrors fail quickly once and enter cooldown,
+        // while giving proxied overseas CMS endpoints enough margin for TLS handshake.
         private val cmsClient: OkHttpClient = OkHttpClient.Builder()
             .dns(SmartDns)
-            .connectTimeout(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
-            .readTimeout(3500, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .connectTimeout(2500, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .readTimeout(4500, java.util.concurrent.TimeUnit.MILLISECONDS)
             .writeTimeout(3500, java.util.concurrent.TimeUnit.MILLISECONDS)
-            .callTimeout(4000, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .callTimeout(5500, java.util.concurrent.TimeUnit.MILLISECONDS)
             .build()
     }
 
@@ -187,6 +189,8 @@ class CmsStreams @Inject constructor(
                 siteCooldownUntil.remove(normalized)
                 rows.size
             }
+        }.onFailure { e ->
+            android.util.Log.w("CmsStream", "checkSite $normalized failed: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
 
@@ -262,20 +266,30 @@ class CmsStreams @Inject constructor(
         return out.values.toList()
     }
 
+    /** Metadata hints used to disambiguate same-title remakes / animated adaptations in CMS results. */
+    data class MatchHint(
+        val year: Int? = null,
+        val isTv: Boolean? = null,
+        val isAnime: Boolean? = null,
+    )
+
     /** Fetch the synopsis (vod_content) for a title from the CMS, plain text. */
-    suspend fun getDescription(title: String): String = getTitleBundle(title).description
+    suspend fun getDescription(title: String, hint: MatchHint = MatchHint()): String =
+        getTitleBundle(title, hint).description
 
     /** A CMS episode: number, title and its direct m3u8 URL. */
     data class EpisodeInfo(val number: Int, val title: String, val url: String)
 
     /** Fetch the full episode list of a TV show from the CMS detail (第01集$url#第02集$url...). */
-    suspend fun getEpisodes(title: String): List<EpisodeInfo> = getTitleBundle(title).episodes
+    suspend fun getEpisodes(title: String, hint: MatchHint = MatchHint()): List<EpisodeInfo> =
+        getTitleBundle(title, hint).episodes
 
     /** Fetch both description and episodes across CMS sources and cache across Details/Playback. */
-    private suspend fun getTitleBundle(title: String): TitleBundle {
+    private suspend fun getTitleBundle(title: String, hint: MatchHint = MatchHint()): TitleBundle {
         val raw = title.trim()
-        val key = clean(raw).ifBlank { raw }
-        if (key.isBlank()) return TitleBundle(0L, "", emptyList())
+        val normTitle = clean(raw).ifBlank { raw }
+        if (normTitle.isBlank()) return TitleBundle(0L, "", emptyList())
+        val key = "$normTitle|${hint.year ?: ""}|${hint.isTv ?: ""}|${hint.isAnime ?: ""}"
         val searchUrls = searchSources()
         if (searchUrls.isEmpty()) return TitleBundle(0L, "", emptyList())
         return titleBundleLocks.getOrPut(key) { Mutex() }.withLock {
@@ -286,7 +300,7 @@ class CmsStreams @Inject constructor(
                 var eps: List<EpisodeInfo> = emptyList()
                 suspend fun probeSources(bases: List<String>) {
                     val details = bases.map { base ->
-                        async { fetchDetailForTitle(base, raw) }
+                        async { fetchDetailForTitle(base, raw, hint) }
                     }.awaitAll()
                     for (v in details) {
                         if (v == null) continue
@@ -309,11 +323,15 @@ class CmsStreams @Inject constructor(
         }
     }
 
-    internal suspend fun fetchDetailForTitle(base: String, rawTitle: String): JsonObject? {
+    internal suspend fun fetchDetailForTitle(
+        base: String,
+        rawTitle: String,
+        hint: MatchHint = MatchHint(),
+    ): JsonObject? {
         if (isSiteCoolingDown(base)) return null
         val queries = queryCandidates(rawTitle)
         if (queries.isEmpty()) return null
-        val cacheKey = "$base|${queries.first()}"
+        val cacheKey = "$base|${queries.first()}|${hint.year ?: ""}|${hint.isTv ?: ""}|${hint.isAnime ?: ""}"
         siteDetailCache[cacheKey]?.takeIf { System.currentTimeMillis() - it.at < CACHE_TTL_MS }?.let { return it.detail }
         return siteDetailLocks.getOrPut(cacheKey) { Mutex() }.withLock {
             if (isSiteCoolingDown(base)) return@withLock null
@@ -326,7 +344,7 @@ class CmsStreams @Inject constructor(
                 if (resp !is SiteResponse.Ok) return@withLock null
                 val rows = parseList(resp.body) ?: continue
                 if (rows.isEmpty()) continue
-                val matched = pickBestMatch(rows, rawTitle)
+                val matched = pickBestMatch(rows, rawTitle, hint)
                 if (matched != null) {
                     bestMatch = matched
                     break
@@ -374,22 +392,22 @@ class CmsStreams @Inject constructor(
     /** Stream CMS sources as each site responds so playback can start without waiting for slow mirrors. */
     fun findFlow(item: CatalogItem, episode: com.shieldstream.tv.model.Episode? = null): Flow<List<StreamSource>> = channelFlow {
         val rawTitle = item.title.trim()
-        android.util.Log.i("CmsStream", "find(title=${item.title})")
+        val hint = matchHintFor(item)
+        android.util.Log.i("CmsStream", "find(title=${item.title}, year=${hint.year}, tv=${hint.isTv}, anime=${hint.isAnime})")
         if (rawTitle.isBlank()) return@channelFlow
         val active = activeSources()
         if (active.isEmpty()) return@channelFlow
         val lock = Mutex()
         val bySite = arrayOfNulls<List<StreamSource>>(active.size)
         withContext(Dispatchers.IO) {
-            withTimeoutOrNull(8_000L) {
+            withTimeoutOrNull(8_500L) {
                 active.mapIndexed { idx, cmsSource ->
                     val label = cmsSource.name
                     val base = cmsSource.url
                     launch {
-                        val probed = withTimeoutOrNull(4_500L) {
-                            runCatching { searchAndBuild(base, rawTitle, episode, label) }.getOrDefault(emptyList())
+                        val probed = withTimeoutOrNull(7_000L) {
+                            runCatching { searchAndBuild(base, rawTitle, episode, label, hint) }.getOrDefault(emptyList())
                         }
-                        if (probed == null) markSiteUnavailable(base)
                         val sources = probed.orEmpty()
                         android.util.Log.i("CmsStream", "$label -> ${sources.size} sources")
                         if (sources.isNotEmpty()) {
@@ -420,8 +438,14 @@ class CmsStreams @Inject constructor(
         return latest
     }
 
-    private suspend fun searchAndBuild(base: String, title: String, episode: com.shieldstream.tv.model.Episode?, siteLabel: String = "CMS"): List<StreamSource> {
-        val v = fetchDetailForTitle(base, title) ?: return emptyList()
+    private suspend fun searchAndBuild(
+        base: String,
+        title: String,
+        episode: com.shieldstream.tv.model.Episode?,
+        siteLabel: String = "CMS",
+        hint: MatchHint = MatchHint(),
+    ): List<StreamSource> {
+        val v = fetchDetailForTitle(base, title, hint) ?: return emptyList()
         val vid = str(v, "vod_id")
         val urls = pickPlayUrls(v, episode?.number)
         if (urls.isEmpty()) return emptyList()
@@ -553,11 +577,16 @@ class CmsStreams @Inject constructor(
         return out.toList()
     }
 
-    internal fun pickBestMatch(rows: List<JsonObject>, rawTitle: String): JsonObject? {
+    internal fun pickBestMatch(
+        rows: List<JsonObject>,
+        rawTitle: String,
+        hint: MatchHint = MatchHint(),
+    ): JsonObject? {
         val targetNorm = normalizeForMatch(rawTitle)
         val targetBase = normalizeForMatch(rawTitle.replace(Regex("(?:第[一二三四五六七八九十百\\d]+季|Season\\s*\\d+|S\\d+|年番\\s*\\d*)$", RegexOption.IGNORE_CASE), ""))
         val targetColonBase = normalizeForMatch(rawTitle.replace(Regex("[:：].*$"), ""))
         val targetSeason = extractSeasonNumber(rawTitle)
+        val trailingYearRegex = Regex("(?:19\\d{2}|20\\d{2})$")
 
         var bestRow: JsonObject? = null
         var bestScore = 0
@@ -565,12 +594,14 @@ class CmsStreams @Inject constructor(
             val vodName = str(row, "vod_name")
             val candNorm = normalizeForMatch(vodName)
             if (candNorm.isBlank()) continue
+            val candNoTrailingYear = candNorm.replace(trailingYearRegex, "")
             val candBase = normalizeForMatch(vodName.replace(Regex("(?:第[一二三四五六七八九十百\\d]+季|Season\\s*\\d+|S\\d+|年番\\s*\\d*)$", RegexOption.IGNORE_CASE), ""))
             val candSeason = extractSeasonNumber(vodName)
 
             var score = when {
                 candNorm == targetNorm -> 100
                 candBase == targetBase && targetSeason != null && candSeason == targetSeason -> 95
+                candNoTrailingYear.isNotBlank() && candNoTrailingYear == targetNorm -> 95
                 candNorm == targetBase && targetSeason == 1 -> 90
                 candBase == targetBase && targetSeason == null -> 85
                 targetColonBase.length >= 2 && (candBase == targetColonBase || candNorm == targetColonBase) -> 80
@@ -579,9 +610,68 @@ class CmsStreams @Inject constructor(
                 targetBase.length >= 3 && candBase.contains(targetBase) -> 55
                 else -> 0
             }
+            if (score <= 0) continue
+
             if (targetSeason != null && candSeason != null && targetSeason != candSeason) {
                 score -= 50
             }
+
+            // Disambiguate same-title remakes / animated adaptations using year & category metadata.
+            val vodYear = Regex("(19\\d{2}|20\\d{2})").find(str(row, "vod_year"))?.value?.toIntOrNull()
+                ?: trailingYearRegex.find(candNorm)?.value?.toIntOrNull()
+            val targetYear = hint.year
+            val typeName = str(row, "type_name")
+            val candIsTrailer = typeName.contains("预告") || typeName.contains("花絮") ||
+                typeName.contains("解说") || typeName.contains("资讯") ||
+                vodName.contains("预告")
+            val candIsMicroDrama = typeName.contains("短剧") || typeName.contains("漫剧")
+            val candIsAnime = !candIsTrailer && !candIsMicroDrama && (
+                typeName.contains("动漫") || typeName.contains("动画") ||
+                    typeName.contains("番剧") || typeName.contains("少儿")
+                )
+            val candIsTv = !candIsTrailer && !candIsMicroDrama && (
+                typeName.contains("剧") || typeName.contains("连续") ||
+                    typeName.contains("综艺") || candIsAnime
+                )
+            val candIsMovie = !candIsTrailer && (
+                typeName.contains("电影") ||
+                    (typeName.contains("片") && !typeName.contains("纪录") && !candIsTv)
+                )
+            val hasLiveActionMarker = vodName.contains("真人版") || vodName.contains("剧版")
+            val hasAnimeMarker = vodName.contains("动漫") || vodName.contains("动画")
+
+            if (candIsTrailer) score -= 80
+            if (candIsMicroDrama) score -= 45
+
+            if (targetYear != null && vodYear != null) {
+                val diff = kotlin.math.abs(vodYear - targetYear)
+                // Long-running multi-season anime (e.g. 年番/第N季) often stay grouped under the premiere year in CMS.
+                val continuousAnimeOlderYear = hint.isAnime == true && candIsAnime && candSeason == null && vodYear < targetYear
+                score += when {
+                    diff == 0 -> 25
+                    diff == 1 -> 15
+                    diff >= 3 && !continuousAnimeOlderYear -> -40
+                    else -> 0
+                }
+            }
+
+            if (typeName.isNotBlank() || hasLiveActionMarker || hasAnimeMarker) {
+                when (hint.isAnime) {
+                    false -> score += if (candIsAnime || hasAnimeMarker) -45 else if (!candIsMicroDrama && !candIsTrailer) 10 else 0
+                    true -> score += when {
+                        hasLiveActionMarker -> -45
+                        candIsAnime -> 30
+                        else -> -45
+                    }
+                    null -> Unit
+                }
+                when (hint.isTv) {
+                    true -> if (candIsMovie && !candIsTv) score -= 30
+                    false -> if (candIsTv && !candIsMovie && hint.isAnime != true) score -= 25
+                    null -> Unit
+                }
+            }
+
             if (score > bestScore) {
                 bestScore = score
                 bestRow = row
@@ -589,6 +679,19 @@ class CmsStreams @Inject constructor(
         }
         return if (bestScore >= 50) bestRow else null
     }
+
+    internal fun matchHintFor(item: CatalogItem): MatchHint = MatchHint(
+        year = item.year,
+        isTv = item.type == MediaType.TV,
+        // Keep anime intent unknown (null) when genres haven't been populated yet rather than penalizing anime.
+        isAnime = if (item.genres.isEmpty()) {
+            null
+        } else {
+            item.genres.any {
+                it.contains("动画") || it.contains("动漫") || it.equals("Animation", ignoreCase = true)
+            }
+        },
+    )
 
     private fun normalizeForMatch(t: String): String {
         val noYear = t.replace(Regex("[（(].*?[)）]"), "").trim()

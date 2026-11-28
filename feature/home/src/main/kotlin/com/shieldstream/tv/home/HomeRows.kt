@@ -19,30 +19,36 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusTarget
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -178,6 +184,18 @@ internal fun RowsBrowser(
             !(onLoadMoreRow != null && row.style == RowStyle.POSTER)
 
     val savedFocus = rememberSaveable { mutableStateOf(firstKey(rows.first(), loopsFor(rows.first()))) }
+    val savedRowSlots = rememberSaveable(
+        saver = listSaver<MutableMap<String, Int>, String>(
+            save = { map -> map.entries.flatMap { listOf(it.key, it.value.toString()) } },
+            restore = { saved ->
+                mutableMapOf<String, Int>().apply {
+                    for (i in 0 until saved.size - 1 step 2) {
+                        saved[i + 1].toIntOrNull()?.let { slot -> put(saved[i], slot) }
+                    }
+                }
+            },
+        ),
+    ) { mutableMapOf() }
     fun validKey(key: String) = if (findByKey(rows, key) != null) key else firstKey(rows.first(), loopsFor(rows.first()))
     var restoreKey by remember { mutableStateOf(Snapshot.withoutReadObservation { validKey(savedFocus.value) }) }
     var lastVerticalRepeat by remember { mutableStateOf(0L) }
@@ -195,6 +213,10 @@ internal fun RowsBrowser(
     }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val rowHandles = remember { HashMap<String, RowFocusHandle>() }
+    val verticalState = remember { VerticalFocusState() }
+    var verticalParkingActive by remember { mutableStateOf(false) }
+    val verticalParkingRequester = remember { FocusRequester() }
     var focusedSection by remember {
         mutableStateOf(
             Snapshot.withoutReadObservation {
@@ -221,28 +243,159 @@ internal fun RowsBrowser(
         val current = validKey(savedFocus.value)
         if (restoreKey != current) restoreKey = current
     }
+    fun defaultSlotFor(row: CatalogRow, loops: Boolean): Int =
+        if (loops) firstVirtualIndex(row.items.size) else 0
+
+    fun resolveTargetSlot(entry: SectionedRow): Int {
+        val row = entry.row
+        if (row.items.isEmpty()) return 0
+        val loops = loopsFor(row)
+        val saved = savedRowSlots[rowStorageKey(entry)]
+        return if (loops) {
+            if (saved != null && saved >= 0) saved else firstVirtualIndex(row.items.size)
+        } else {
+            (saved ?: 0).coerceIn(0, row.items.lastIndex)
+        }
+    }
+
+    suspend fun scrollAndFocusRow(
+        targetRowIndex: Int,
+        slotOverride: Int? = null,
+        useRestoreRequester: Boolean = false,
+    ): Boolean {
+        val entry = sectionedRows.getOrNull(targetRowIndex) ?: return false
+        val row = entry.row
+        if (row.items.isEmpty()) return false
+        val storageKey = rowStorageKey(entry)
+        val rawSlot = slotOverride ?: resolveTargetSlot(entry)
+        val clampedSlot = if (loopsFor(row)) rawSlot.coerceAtLeast(0) else rawSlot.coerceIn(0, row.items.lastIndex)
+        savedRowSlots[storageKey] = clampedSlot
+        val targetKey = keyOf(row, clampedSlot)
+        savedFocus.value = targetKey
+        restoreKey = targetKey
+        focusedSection = entry.section
+        onActiveSectionChange(entry.section)
+        onEnterImmersive()
+
+        val rowVisible = listState.layoutInfo.visibleItemsInfo.any { it.index == targetRowIndex }
+        if (!rowVisible) {
+            listState.scrollToItem(targetRowIndex)
+        }
+        for (attempt in 0 until 12) {
+            val handle = rowHandles[storageKey]
+            if (handle != null) {
+                val primary = if (useRestoreRequester) restoreRequester else null
+                if (handle.scrollToAndFocusSlot(clampedSlot, primary)) {
+                    return true
+                }
+            }
+            if (attempt == 2 && listState.layoutInfo.visibleItemsInfo.none { it.index == targetRowIndex }) {
+                listState.scrollToItem(targetRowIndex)
+            }
+            withFrameNanos { }
+        }
+        return if (useRestoreRequester) {
+            runCatching { restoreRequester.requestFocus() }.getOrDefault(false)
+        } else {
+            false
+        }
+    }
+
+    fun moveVertical(delta: Int): Boolean {
+        val activeIndex = if (verticalState.job?.isActive == true && verticalState.pendingRowIndex in sectionedRows.indices) {
+            verticalState.pendingRowIndex
+        } else if (verticalState.currentRowIndex in sectionedRows.indices) {
+            verticalState.currentRowIndex
+        } else {
+            val rowId = validKey(savedFocus.value).substringBeforeLast('/')
+            sectionedRows.indexOfFirst { it.row.id == rowId }.takeIf { it >= 0 } ?: 0
+        }
+        if (delta < 0 && activeIndex <= 0) {
+            verticalState.job?.cancel()
+            verticalState.pendingRowIndex = -1
+            verticalParkingActive = false
+            return if (onExitTop != null) {
+                onExitTop()
+                true
+            } else {
+                false
+            }
+        }
+        var targetIndex = activeIndex + delta
+        while (targetIndex in sectionedRows.indices && sectionedRows[targetIndex].row.items.isEmpty()) {
+            targetIndex += delta
+        }
+        if (targetIndex !in sectionedRows.indices) return true
+
+        sectionedRows.getOrNull(activeIndex)?.let { current ->
+            rowHandles[rowStorageKey(current)]?.cancelHorizontalScroll()
+        }
+        verticalState.pendingRowIndex = targetIndex
+
+        val targetEntry = sectionedRows[targetIndex]
+        val targetStorageKey = rowStorageKey(targetEntry)
+        val targetSlot = resolveTargetSlot(targetEntry)
+        val targetKey = keyOf(targetEntry.row, targetSlot)
+        savedRowSlots[targetStorageKey] = targetSlot
+        savedFocus.value = targetKey
+        restoreKey = targetKey
+        focusedSection = targetEntry.section
+        onActiveSectionChange(targetEntry.section)
+        onEnterImmersive()
+
+        val rowVisible = listState.layoutInfo.visibleItemsInfo.any { it.index == targetIndex }
+        if (rowVisible && rowHandles[targetStorageKey]?.focusSlotImmediate(targetSlot) == true) {
+            verticalState.job?.cancel()
+            verticalState.pendingRowIndex = -1
+            verticalParkingActive = false
+            return true
+        }
+
+        // Keep focus parked inside RowsBrowser while LazyColumn scrolls an off-screen row into composition.
+        verticalParkingActive = true
+        runCatching { verticalParkingRequester.requestFocus() }
+        verticalState.job?.cancel()
+        verticalState.job = scope.launch {
+            try {
+                scrollAndFocusRow(targetIndex, slotOverride = targetSlot, useRestoreRequester = true)
+            } finally {
+                if (verticalState.pendingRowIndex == targetIndex) {
+                    verticalState.pendingRowIndex = -1
+                }
+                verticalParkingActive = false
+            }
+        }
+        return true
+    }
+
     LaunchedEffect(railFocused) {
         if (railFocused) syncRestoreKey()
     }
     LaunchedEffect(Unit) {
-        val currentRow = findByKey(rows, validKey(savedFocus.value))
-        if (currentRow != null) {
-            val section = sectionedRows.firstOrNull { entry ->
-                entry.row.id == validKey(savedFocus.value).substringBeforeLast('/')
-            }?.section ?: sectionedRows.first().section
-            focusedSection = section
-            onActiveSectionChange(section)
+        val currentKey = validKey(savedFocus.value)
+        val currentRowId = currentKey.substringBeforeLast('/')
+        val currentRowIndex = sectionedRows.indexOfFirst { it.row.id == currentRowId }.takeIf { it >= 0 } ?: 0
+        val currentEntry = sectionedRows[currentRowIndex]
+        val section = currentEntry.section
+        focusedSection = section
+        onActiveSectionChange(section)
+        if (!railFocused) {
+            val parsedSlot = currentKey.substringAfterLast('/').toIntOrNull()
+            val slot = parsedSlot ?: resolveTargetSlot(currentEntry)
+            scrollAndFocusRow(currentRowIndex, slotOverride = slot, useRestoreRequester = true)
         }
-        if (!railFocused) restoreRequester.requestFocusWithRetry()
     }
     LaunchedEffect(backToTopTick) {
         if (backToTopTick > 0 && rows.isNotEmpty()) {
-            val topKey = firstKey(rows.first(), loopsFor(rows.first()))
+            val firstEntry = sectionedRows.first()
+            val topSlot = defaultSlotFor(firstEntry.row, loopsFor(firstEntry.row))
+            val topKey = keyOf(firstEntry.row, topSlot)
+            savedRowSlots[rowStorageKey(firstEntry)] = topSlot
             savedFocus.value = topKey
             restoreKey = topKey
-            heroState.value = rows.first().items.first()
-            focusedSection = sectionedRows.first().section
-            onActiveSectionChange(sectionedRows.first().section)
+            heroState.value = firstEntry.row.items.first()
+            focusedSection = firstEntry.section
+            onActiveSectionChange(firstEntry.section)
             listState.scrollToItem(0)
         }
     }
@@ -253,24 +406,25 @@ internal fun RowsBrowser(
             ?: if (request.first == RailDestination.HOME && sectionedRows.isNotEmpty()) 0 else -1
         if (targetIndex < 0) return@LaunchedEffect
         val targetEntry = sectionedRows[targetIndex]
-        val topKey = firstKey(targetEntry.row, loopsFor(targetEntry.row))
+        val topSlot = defaultSlotFor(targetEntry.row, loopsFor(targetEntry.row))
+        val topKey = keyOf(targetEntry.row, topSlot)
+        savedRowSlots[rowStorageKey(targetEntry)] = topSlot
         savedFocus.value = topKey
         restoreKey = topKey
         targetEntry.row.items.firstOrNull()?.let { heroState.value = it }
         focusedSection = targetEntry.section
         onActiveSectionChange(targetEntry.section)
-        listState.scrollToItem(targetIndex)
-        withFrameNanos { }
-        restoreRequester.requestFocusWithRetry()
+        scrollAndFocusRow(targetIndex, slotOverride = topSlot, useRestoreRequester = true)
         onScrollToSectionConsumed()
     }
     LaunchedEffect(rows) {
         val pending = pendingFocus ?: return@LaunchedEffect
-        restoreKey = pending.itemKey
+        val targetKey = pending.itemKey
             ?.let { itemKey -> focusKeyForItem(rows, pending.rowId, itemKey) }
             ?: pending.fallbackKey
-        savedFocus.value = restoreKey
-        restoreRequester.requestFocusWithRetry()
+        val targetRowIndex = sectionedRows.indexOfFirst { it.row.id == pending.rowId }.takeIf { it >= 0 } ?: 0
+        val targetSlot = targetKey.substringAfterLast('/').toIntOrNull()
+        scrollAndFocusRow(targetRowIndex, slotOverride = targetSlot, useRestoreRequester = true)
         pendingFocus = null
     }
 
@@ -295,10 +449,7 @@ internal fun RowsBrowser(
                 Modifier.onPreviewKeyEvent { event ->
                     if (topBarFocused && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && rows.isNotEmpty()) {
                         scope.launch {
-                            if (listState.firstVisibleItemIndex != 0 || listState.firstVisibleItemScrollOffset != 0) {
-                                listState.scrollToItem(0)
-                            }
-                            restoreRequester.requestFocusWithRetry()
+                            scrollAndFocusRow(0, useRestoreRequester = true)
                         }
                         true
                     } else {
@@ -327,65 +478,115 @@ internal fun RowsBrowser(
                     HeroInfoSlot(heroState)
                 }
             }
-            ProvidePivotScroll(leading = 51.dp) {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxWidth().weight(1f).clipToBounds().graphicsLayer {},
-                    contentPadding = PaddingValues(bottom = 260.dp),
-                ) {
-                    itemsIndexed(sectionedRows, key = { _, entry -> "${entry.section.name}:${entry.row.id}" }, contentType = { _, entry -> entry.row.style }) { rowIndex, entry ->
-                        val row = entry.row
-                        val isSectionStart = entry.section != RailDestination.HOME &&
-                            (rowIndex == 0 || sectionedRows[rowIndex - 1].section != entry.section)
-                        val sectionHeaderLabel = if (isSectionStart) sectionLabel(entry.section) else null
-                        val rowLoops = loopsFor(row)
-                        CatalogRowView(
-                            row = row,
-                            sectionLabel = sectionHeaderLabel,
-                            startPadding = startPadding,
-                            loops = rowLoops,
-                            focusKey = restoreKey,
-                            restoreRequester = restoreRequester,
-                            railRequester = railRequester,
-                            onOpenRail = onOpenRail?.let { open ->
-                                {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .onPreviewKeyEvent { event ->
+                        if (topBarFocused || railFocused || event.type != KeyEventType.KeyDown || sectionedRows.isEmpty()) {
+                            return@onPreviewKeyEvent false
+                        }
+                        when (event.key) {
+                            Key.DirectionDown -> moveVertical(+1)
+                            Key.DirectionUp -> moveVertical(-1)
+                            else -> false
+                        }
+                    },
+            ) {
+                Box(
+                    Modifier
+                        .size(1.dp)
+                        .focusRequester(verticalParkingRequester)
+                        .focusProperties { canFocus = verticalParkingActive }
+                        .focusTarget(),
+                )
+                ProvidePivotScroll(leading = 51.dp) {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.fillMaxSize().clipToBounds().graphicsLayer {},
+                        contentPadding = PaddingValues(bottom = 260.dp),
+                    ) {
+                        itemsIndexed(sectionedRows, key = { _, entry -> rowStorageKey(entry) }, contentType = { _, entry -> entry.row.style }) { rowIndex, entry ->
+                            val row = entry.row
+                            val storageKey = rowStorageKey(entry)
+                            val isSectionStart = entry.section != RailDestination.HOME &&
+                                (rowIndex == 0 || sectionedRows[rowIndex - 1].section != entry.section)
+                            val sectionHeaderLabel = if (isSectionStart) sectionLabel(entry.section) else null
+                            val rowLoops = loopsFor(row)
+                            val initialSlot = if (rowLoops) {
+                                savedRowSlots[storageKey]?.takeIf { it >= 0 } ?: firstVirtualIndex(row.items.size)
+                            } else {
+                                (savedRowSlots[storageKey] ?: 0).coerceIn(0, row.items.lastIndex.coerceAtLeast(0))
+                            }
+                            val syncAndClick: (CatalogItem) -> Unit = { clicked ->
+                                syncRestoreKey()
+                                onItemClick(clicked)
+                            }
+                            val syncAndContinue: ((CatalogItem, ContinueInfo) -> Unit)? = onContinueClick?.let { fn ->
+                                { clicked, info ->
                                     syncRestoreKey()
-                                    open()
+                                    fn(clicked, info)
                                 }
-                            },
-                            resetScrollTick = if (rowIndex == 0) backToTopTick else 0,
-                            onLoadMore = if (row.style == RowStyle.POSTER && onLoadMoreRow != null) {
-                                { rowId -> onLoadMoreRow(entry.filter, rowId) }
-                            } else {
-                                null
-                            },
-                            onFocused = { virtual ->
-                                savedFocus.value = keyOf(row, virtual)
-                                focusedSection = entry.section
-                                onActiveSectionChange(entry.section)
-                                onEnterImmersive()
-                            },
-                            onItemClick = onItemClick,
-                            onNewEpisodeClick = onNewEpisodeClick,
-                            onContinueClick = onContinueClick,
-                            onUpNextClick = onUpNextClick,
-                            onContinueMenu = { virtual, item -> continueMenu = ItemMenu(row, virtual, item) },
-                            onMyListMenu = { virtual, item -> myListMenu = ItemMenu(row, virtual, item) },
-                            onUpNextMenu = { virtual, item, episode -> upNextMenu = UpNextMenu(row, virtual, item, episode) },
-                            onQuickMenu = { item -> quickMenuItem = item },
-                            modifier = if (rowIndex == 0 && onExitTop != null) {
-                                Modifier.onPreviewKeyEvent { event ->
-                                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
-                                        onExitTop()
-                                        true
+                            }
+                            val syncAndNewEp: ((CatalogItem, Episode) -> Unit)? = onNewEpisodeClick?.let { fn ->
+                                { clicked, ep ->
+                                    syncRestoreKey()
+                                    fn(clicked, ep)
+                                }
+                            }
+                            val syncAndUpNext: ((CatalogItem, Episode) -> Unit)? = onUpNextClick?.let { fn ->
+                                { clicked, ep ->
+                                    syncRestoreKey()
+                                    fn(clicked, ep)
+                                }
+                            }
+                            CatalogRowView(
+                                row = row,
+                                storageKey = storageKey,
+                                initialSlot = initialSlot,
+                                onRegisterHandle = { handle ->
+                                    if (handle != null) {
+                                        rowHandles[storageKey] = handle
                                     } else {
-                                        false
+                                        rowHandles.remove(storageKey)
                                     }
-                                }
-                            } else {
-                                Modifier
-                            },
-                        )
+                                },
+                                sectionLabel = sectionHeaderLabel,
+                                startPadding = startPadding,
+                                loops = rowLoops,
+                                focusKey = restoreKey,
+                                restoreRequester = restoreRequester,
+                                railRequester = railRequester,
+                                onOpenRail = onOpenRail?.let { open ->
+                                    {
+                                        syncRestoreKey()
+                                        open()
+                                    }
+                                },
+                                resetScrollTick = if (rowIndex == 0) backToTopTick else 0,
+                                onLoadMore = if (row.style == RowStyle.POSTER && onLoadMoreRow != null) {
+                                    { rowId -> onLoadMoreRow(entry.filter, rowId) }
+                                } else {
+                                    null
+                                },
+                                onFocused = { virtual ->
+                                    verticalState.currentRowIndex = rowIndex
+                                    savedRowSlots[storageKey] = virtual
+                                    savedFocus.value = keyOf(row, virtual)
+                                    focusedSection = entry.section
+                                    onActiveSectionChange(entry.section)
+                                    onEnterImmersive()
+                                },
+                                onItemClick = syncAndClick,
+                                onNewEpisodeClick = syncAndNewEp,
+                                onContinueClick = syncAndContinue,
+                                onUpNextClick = syncAndUpNext,
+                                onContinueMenu = { virtual, item -> continueMenu = ItemMenu(row, virtual, item) },
+                                onMyListMenu = { virtual, item -> myListMenu = ItemMenu(row, virtual, item) },
+                                onUpNextMenu = { virtual, item, episode -> upNextMenu = UpNextMenu(row, virtual, item, episode) },
+                                onQuickMenu = { item -> quickMenuItem = item },
+                            )
+                        }
                     }
                 }
             }
@@ -607,6 +808,9 @@ private fun UpNextActions(
 @Composable
 private fun CatalogRowView(
     row: CatalogRow,
+    storageKey: String,
+    initialSlot: Int,
+    onRegisterHandle: (RowFocusHandle?) -> Unit,
     sectionLabel: String? = null,
     startPadding: Dp = ContentStart,
     loops: Boolean = false,
@@ -680,17 +884,104 @@ private fun CatalogRowView(
         val expandable = onLoadMore != null && row.style == RowStyle.POSTER
         key(loops) {
             ProvidePivotScroll(leading = startPadding + 6.dp) {
-                val rowState = rememberLoopingRowState(if (loops) row.items.size else 0)
-                var rowHasFocus by remember { mutableStateOf(false) }
-                var activeIndex by remember { mutableStateOf(-1) }
-                var activeItemKey by remember { mutableStateOf<String?>(null) }
-                var paginationAnchorKey by remember { mutableStateOf<String?>(null) }
-                var paginationAnchorIndex by remember { mutableStateOf(-1) }
+                val rowState = rememberLoopingRowState(if (loops) row.items.size else 0, initialIndex = initialSlot)
+                val tracker = remember { RowFocusTracker() }
+                val slotRequesters = remember { HashMap<Int, FocusRequester>() }
+                val rowScope = rememberCoroutineScope()
+                var fastScrollJob by remember { mutableStateOf<Job?>(null) }
+                var parkingActive by remember { mutableStateOf(false) }
+                val rowParkingRequester = remember { FocusRequester() }
+                var pendingRestoreKey by remember { mutableStateOf<String?>(null) }
+                var pendingRestoreSlot by remember { mutableStateOf(-1) }
                 var lastSizeSeen by remember { mutableStateOf(row.items.size) }
-                val paginationAnchorRequester = remember { FocusRequester() }
+                val paginationRestoreRequester = remember { FocusRequester() }
+
+                DisposableEffect(storageKey, rowState, loops, row.items.size, focusKey) {
+                    val cancelHorizontal = {
+                        tracker.pendingSlot = -1
+                        fastScrollJob?.cancel()
+                        parkingActive = false
+                    }
+                    val clampSlot: (Int) -> Int = { raw ->
+                        if (loops) raw.coerceAtLeast(0) else raw.coerceIn(0, row.items.lastIndex.coerceAtLeast(0))
+                    }
+                    val handle = RowFocusHandle(
+                        cancelHorizontalScroll = cancelHorizontal,
+                        focusSlotImmediate = { rawSlot ->
+                            if (row.items.isEmpty()) {
+                                false
+                            } else {
+                                val target = clampSlot(rawSlot)
+                                val layout = rowState.layoutInfo
+                                val info = layout.visibleItemsInfo.firstOrNull { it.index == target }
+                                val fullyVisible = info != null &&
+                                    info.offset >= 0 &&
+                                    info.offset + info.size <= layout.viewportEndOffset
+                                if (!fullyVisible) {
+                                    false
+                                } else {
+                                    cancelHorizontal()
+                                    slotRequesters[target]?.let { req ->
+                                        runCatching { req.requestFocus() }.getOrDefault(false)
+                                    } == true
+                                }
+                            }
+                        },
+                        scrollToAndFocusSlot = { rawSlot, primaryRequester ->
+                            if (row.items.isEmpty()) {
+                                false
+                            } else {
+                                cancelHorizontal()
+                                val target = clampSlot(rawSlot)
+                                val layout = rowState.layoutInfo
+                                val info = layout.visibleItemsInfo.firstOrNull { it.index == target }
+                                val fullyVisible = info != null &&
+                                    info.offset >= 0 &&
+                                    info.offset + info.size <= layout.viewportEndOffset
+                                if (!fullyVisible) {
+                                    rowState.scrollToItem(target)
+                                    withFrameNanos { }
+                                }
+                                var focused = false
+                                for (attempt in 0 until 8) {
+                                    val tryPrimary = primaryRequester != null &&
+                                        keyOf(row, target) == focusKey &&
+                                        runCatching { primaryRequester.requestFocus() }.getOrDefault(false)
+                                    if (tryPrimary) {
+                                        focused = true
+                                        break
+                                    }
+                                    val req = slotRequesters[target]
+                                    if (req != null && runCatching { req.requestFocus() }.getOrDefault(false)) {
+                                        focused = true
+                                        break
+                                    }
+                                    if (attempt == 2) {
+                                        rowState.scrollToItem(target)
+                                    }
+                                    withFrameNanos { }
+                                }
+                                if (!focused) {
+                                    val visibleFallback = rowState.layoutInfo.visibleItemsInfo.firstNotNullOfOrNull { vis ->
+                                        slotRequesters[vis.index]?.takeIf { req ->
+                                            runCatching { req.requestFocus() }.getOrDefault(false)
+                                        }
+                                    }
+                                    focused = visibleFallback != null
+                                }
+                                focused
+                            }
+                        },
+                    )
+                    onRegisterHandle(handle)
+                    onDispose { onRegisterHandle(null) }
+                }
 
                 LaunchedEffect(resetScrollTick) {
                     if (resetScrollTick > 0) {
+                        tracker.pendingSlot = -1
+                        fastScrollJob?.cancel()
+                        parkingActive = false
                         rowState.scrollToItem(if (loops) firstVirtualIndex(row.items.size) else 0)
                     }
                 }
@@ -698,45 +989,149 @@ private fun CatalogRowView(
                     LaunchedEffect(rowState, row.items.size) {
                         snapshotFlow { rowState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
                             .collectLatest { lastVisible ->
-                                if (lastVisible >= row.items.lastIndex - 4 && row.items.isNotEmpty()) {
-                                    if (rowHasFocus && activeItemKey != null) {
-                                        paginationAnchorKey = activeItemKey
-                                        paginationAnchorIndex = activeIndex
-                                    }
+                                if (lastVisible >= row.items.lastIndex - 6 && row.items.isNotEmpty()) {
                                     onLoadMore?.invoke(row.id)
                                 }
                             }
                     }
                     LaunchedEffect(row.items.size) {
                         val grew = row.items.size > lastSizeSeen
+                        val wasFocused = tracker.hasFocus
+                        val restoreTarget = tracker.key
+                        val restoreSlot = tracker.slot
                         lastSizeSeen = row.items.size
-                        val anchorKey = paginationAnchorKey
-                        val anchorIdx = paginationAnchorIndex
-                        if (grew && anchorKey != null) {
+                        if (grew && wasFocused && restoreTarget != null) {
                             withFrameNanos { }
-                            val driftedBack = !rowHasFocus || (activeItemKey != anchorKey && activeIndex in 0 until anchorIdx)
-                            if (driftedBack) {
-                                runCatching { paginationAnchorRequester.requestFocus() }
+                            // Only restore if focus was actually dropped off the row (not when user actively moved).
+                            if (!tracker.hasFocus && !parkingActive) {
+                                pendingRestoreSlot = restoreSlot
+                                pendingRestoreKey = restoreTarget
                             }
                         }
-                        if (grew) {
-                            paginationAnchorKey = null
-                            paginationAnchorIndex = -1
+                    }
+                    LaunchedEffect(pendingRestoreKey) {
+                        if (pendingRestoreKey != null) {
+                            withFrameNanos { }
+                            val restored = runCatching { paginationRestoreRequester.requestFocus() }.isSuccess
+                            if (!restored && pendingRestoreSlot >= 0) {
+                                runCatching { slotRequesters[pendingRestoreSlot]?.requestFocus() }
+                            }
+                            pendingRestoreKey = null
+                            pendingRestoreSlot = -1
                         }
                     }
                 }
-                LazyRow(
-                    state = rowState,
-                    modifier = Modifier.onFocusChanged { rowHasFocus = it.hasFocus },
-                    contentPadding = PaddingValues(horizontal = startPadding, vertical = 14.dp),
-                    horizontalArrangement = Arrangement.spacedBy(if (row.style == RowStyle.TOP10) 6.dp else 12.dp),
+                fun driveFocusToSlot(targetSlot: Int) {
+                    tracker.pendingSlot = targetSlot
+                    val layout = rowState.layoutInfo
+                    val visibleInfo = layout.visibleItemsInfo.firstOrNull { it.index == targetSlot }
+                    val fullyVisible = visibleInfo != null &&
+                        visibleInfo.offset >= 0 &&
+                        visibleInfo.offset + visibleInfo.size <= layout.viewportEndOffset
+                    if (fullyVisible) {
+                        val moved = slotRequesters[targetSlot]?.let { req ->
+                            runCatching { req.requestFocus() }.getOrDefault(false)
+                        } == true
+                        if (moved) {
+                            if (tracker.pendingSlot == targetSlot) tracker.pendingSlot = -1
+                            parkingActive = false
+                            return
+                        }
+                    }
+                    // Keep focus parked inside this row while LazyRow scrolls so off-screen item
+                    // disposal cannot drop focus out of the row or snap back to slot 0.
+                    parkingActive = true
+                    runCatching { rowParkingRequester.requestFocus() }
+                    if (fastScrollJob?.isActive == true) return
+                    fastScrollJob = rowScope.launch {
+                        while (tracker.pendingSlot >= 0) {
+                            val target = tracker.pendingSlot
+                            rowState.scrollToItem(target)
+                            var focused = false
+                            for (attempt in 0 until 8) {
+                                withFrameNanos { }
+                                if (tracker.pendingSlot != target) break
+                                val req = slotRequesters[target]
+                                if (req != null && runCatching { req.requestFocus() }.getOrDefault(false)) {
+                                    focused = true
+                                    break
+                                }
+                            }
+                            if (tracker.pendingSlot == target) {
+                                tracker.pendingSlot = -1
+                                if (focused || attemptRestoreCurrent(slotRequesters, tracker.slot)) break
+                                break
+                            }
+                        }
+                        parkingActive = false
+                    }
+                }
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { tracker.hasFocus = it.hasFocus }
+                        .onPreviewKeyEvent { event ->
+                            if (event.type != KeyEventType.KeyDown || row.items.isEmpty()) return@onPreviewKeyEvent false
+                            val currentSlot = if (tracker.pendingSlot >= 0) tracker.pendingSlot else tracker.slot
+                            if (currentSlot < 0) return@onPreviewKeyEvent false
+                            when (event.key) {
+                                Key.DirectionRight -> {
+                                    if (!loops && currentSlot >= row.items.lastIndex) {
+                                        if (expandable) onLoadMore?.invoke(row.id)
+                                        return@onPreviewKeyEvent true
+                                    }
+                                    val targetSlot = if (loops) currentSlot + 1 else (currentSlot + 1).coerceAtMost(row.items.lastIndex)
+                                    if (expandable && targetSlot >= row.items.lastIndex - 6) {
+                                        onLoadMore?.invoke(row.id)
+                                    }
+                                    driveFocusToSlot(targetSlot)
+                                    true
+                                }
+                                Key.DirectionLeft -> {
+                                    if (!loops && currentSlot <= 0) {
+                                        // Stop cleanly at item 0 while holding Left; a fresh press at 0 opens the rail.
+                                        return@onPreviewKeyEvent event.nativeKeyEvent.repeatCount > 0
+                                    }
+                                    driveFocusToSlot(currentSlot - 1)
+                                    true
+                                }
+                                Key.DirectionUp, Key.DirectionDown -> {
+                                    tracker.pendingSlot = -1
+                                    fastScrollJob?.cancel()
+                                    parkingActive = false
+                                    false
+                                }
+                                else -> false
+                            }
+                        },
                 ) {
+                    Box(
+                        Modifier
+                            .size(1.dp)
+                            .focusRequester(rowParkingRequester)
+                            .focusProperties { canFocus = parkingActive }
+                            .focusTarget(),
+                    )
+                    LazyRow(
+                        state = rowState,
+                        contentPadding = PaddingValues(horizontal = startPadding, vertical = 14.dp),
+                        horizontalArrangement = Arrangement.spacedBy(if (row.style == RowStyle.TOP10) 6.dp else 12.dp),
+                    ) {
                     if (loops) {
                         loopingItems(row.items) { virtual, index, item ->
+                            val slotReq = remember(virtual) { FocusRequester() }
+                            DisposableEffect(virtual) {
+                                slotRequesters[virtual] = slotReq
+                                onDispose {
+                                    if (slotRequesters[virtual] === slotReq) {
+                                        slotRequesters.remove(virtual)
+                                    }
+                                }
+                            }
                             val itemModifier = if (keyOf(row, virtual) == focusKey) {
-                                Modifier.focusRequester(restoreRequester)
+                                Modifier.focusRequester(restoreRequester).focusRequester(slotReq)
                             } else {
-                                Modifier
+                                Modifier.focusRequester(slotReq)
                             }
                             RowItemCard(
                                 row = row,
@@ -744,7 +1139,13 @@ private fun CatalogRowView(
                                 virtual = virtual,
                                 item = item,
                                 modifier = itemModifier,
-                                onFocused = { onFocused(virtual) },
+                                onFocused = {
+                                    tracker.slot = virtual
+                                    tracker.key = item.key
+                                    if (tracker.pendingSlot == virtual) tracker.pendingSlot = -1
+                                    if (parkingActive) parkingActive = false
+                                    onFocused(virtual)
+                                },
                                 onItemClick = onItemClick,
                                 onNewEpisodeClick = onNewEpisodeClick,
                                 onContinueClick = onContinueClick,
@@ -757,13 +1158,22 @@ private fun CatalogRowView(
                         }
                     } else {
                         itemsIndexed(row.items, key = { _, item -> item.key }) { index, item ->
-                            val baseFocusMod = if (keyOf(row, index) == focusKey) {
-                                Modifier.focusRequester(restoreRequester)
-                            } else {
-                                Modifier
+                            val slotReq = remember(index) { FocusRequester() }
+                            DisposableEffect(index) {
+                                slotRequesters[index] = slotReq
+                                onDispose {
+                                    if (slotRequesters[index] === slotReq) {
+                                        slotRequesters.remove(index)
+                                    }
+                                }
                             }
-                            val focusMod = if (item.key == paginationAnchorKey) {
-                                baseFocusMod.focusRequester(paginationAnchorRequester)
+                            val baseFocusMod = if (keyOf(row, index) == focusKey) {
+                                Modifier.focusRequester(restoreRequester).focusRequester(slotReq)
+                            } else {
+                                Modifier.focusRequester(slotReq)
+                            }
+                            val focusMod = if (item.key == pendingRestoreKey) {
+                                baseFocusMod.focusRequester(paginationRestoreRequester)
                             } else {
                                 baseFocusMod
                             }
@@ -786,12 +1196,12 @@ private fun CatalogRowView(
                                 item = item,
                                 modifier = edgeMod,
                                 onFocused = {
-                                    activeIndex = index
-                                    activeItemKey = item.key
+                                    tracker.slot = index
+                                    tracker.key = item.key
+                                    if (tracker.pendingSlot == index) tracker.pendingSlot = -1
+                                    if (parkingActive) parkingActive = false
                                     onFocused(index)
-                                    if (expandable && index >= row.items.lastIndex - 4) {
-                                        paginationAnchorKey = item.key
-                                        paginationAnchorIndex = index
+                                    if (expandable && index >= row.items.lastIndex - 6) {
                                         onLoadMore?.invoke(row.id)
                                     }
                                 },
@@ -805,6 +1215,7 @@ private fun CatalogRowView(
                                 onQuickMenu = { onQuickMenu(item) },
                             )
                         }
+                    }
                     }
                 }
             }
@@ -934,6 +1345,30 @@ private fun RowItemCard(
         )
     }
 }
+
+private fun rowStorageKey(entry: SectionedRow): String = "${entry.section.name}:${entry.row.id}"
+
+private class RowFocusHandle(
+    val cancelHorizontalScroll: () -> Unit,
+    val focusSlotImmediate: (Int) -> Boolean,
+    val scrollToAndFocusSlot: suspend (Int, FocusRequester?) -> Boolean,
+)
+
+private class VerticalFocusState {
+    var currentRowIndex: Int = -1
+    var pendingRowIndex: Int = -1
+    var job: Job? = null
+}
+
+private class RowFocusTracker {
+    var hasFocus: Boolean = false
+    var key: String? = null
+    var slot: Int = -1
+    var pendingSlot: Int = -1
+}
+
+private fun attemptRestoreCurrent(slotRequesters: Map<Int, FocusRequester>, slot: Int): Boolean =
+    slot >= 0 && runCatching { slotRequesters[slot]?.requestFocus() }.getOrDefault(false) == true
 
 private fun keyOf(row: CatalogRow, virtual: Int) = "${row.id}/$virtual"
 

@@ -56,6 +56,9 @@ interface CatalogRepository {
     /** Ficha de un actor, director o creador con sus títulos más conocidos. */
     suspend fun getPerson(id: Int): com.shieldstream.tv.model.PersonDetails
 
+    /** Same-series Douban works (e.g. multiple seasons / sequels) for multi-season TV shows. */
+    suspend fun getSeriesWorks(item: CatalogItem): List<CatalogItem> = emptyList()
+
     suspend fun getShowAiring(id: String): ShowAiring?
 
     suspend fun getEpisodes(item: CatalogItem, season: Int): List<Episode>

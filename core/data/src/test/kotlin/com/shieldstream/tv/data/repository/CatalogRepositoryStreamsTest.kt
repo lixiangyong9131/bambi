@@ -12,8 +12,10 @@ import com.shieldstream.tv.model.MediaType
 import com.shieldstream.tv.model.Profile
 import com.shieldstream.tv.network.api.TmdbApi
 import com.shieldstream.tv.network.api.TorrentioApi
+import com.shieldstream.tv.network.dto.TmdbGenreDto
 import com.shieldstream.tv.network.dto.TmdbMovieDto
 import com.shieldstream.tv.network.dto.TmdbPaginated
+import com.shieldstream.tv.network.dto.TmdbTvDetailDto
 import com.shieldstream.tv.network.dto.TmdbTvDto
 import com.shieldstream.tv.strings.Texts
 import io.mockk.coEvery
@@ -121,6 +123,44 @@ class CatalogRepositoryStreamsTest {
         assertEquals(listOf("Hot Movie"), repo.browseCategoryFilter(HomeFilter.MOVIES, "", "U", 1).map { it.title })
         assertEquals(listOf("Hot Anime"), repo.browseCategoryFilter(HomeFilter.ANIME, "", "U", 1).map { it.title })
         assertEquals(listOf("Mystery Anime"), repo.browseCategoryFilter(HomeFilter.ANIME, "日本,悬疑", "S", 1).map { it.title })
+    }
+
+    @Test
+    fun `getDetails propagates genres and year onto details item`() = runTest {
+        val tmdbApi = mockk<TmdbApi>()
+        coEvery { tmdbApi.tvDetails(37457082, any(), any(), any(), any()) } returns TmdbTvDetailDto(
+            id = 37457082,
+            name = "凡人修仙传 年番4",
+            first_air_date = "2026",
+            genres = listOf(TmdbGenreDto(name = "动作"), TmdbGenreDto(name = "动画"), TmdbGenreDto(name = "奇幻")),
+        )
+        val tmdbStore = mockk<TokenStore>(relaxed = true) {
+            every { tmdbKey } returns "douban-key"
+        }
+        val repo = CatalogRepositoryImpl(
+            tmdb = tmdbApi,
+            torrentio = torrentio,
+            extras = mockk<HomeExtrasSource>(),
+            store = tmdbStore,
+            settings = settings,
+            profiles = profiles,
+            texts = texts,
+        )
+
+        val stub = CatalogItem(
+            id = "37457082",
+            imdbId = null,
+            type = MediaType.TV,
+            title = "凡人修仙传 年番4",
+            overview = "",
+            posterUrl = null,
+            backdropUrl = null,
+            year = null,
+            rating = null,
+        )
+        val details = repo.getDetails(stub)
+        assertEquals(listOf("动作", "动画", "奇幻"), details.item.genres)
+        assertEquals(2026, details.item.year)
     }
 
     private val item = CatalogItem(

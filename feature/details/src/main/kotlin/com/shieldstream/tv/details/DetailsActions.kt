@@ -20,9 +20,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
+import com.shieldstream.tv.model.CatalogItem
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -321,7 +325,7 @@ private const val NEXT_EPISODES = 5
 
 /** Netflix TV style right-hand side drawer with hairline border and crisp inverted focus rows. */
 @Composable
-private fun MoreSidePanel(
+internal fun MoreSidePanel(
     title: String,
     subtitle: String?,
     onBack: () -> Unit,
@@ -532,4 +536,154 @@ internal fun EpisodeActions(
             ),
         ),
     )
+}
+
+@Composable
+internal fun SeriesWorksPanel(
+    currentTitle: String,
+    currentItemId: String,
+    seriesState: SeriesWorksState,
+    onSelect: (CatalogItem) -> Unit,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val works = (seriesState as? SeriesWorksState.Ready)?.items.orEmpty()
+    val subtitle = if (works.isNotEmpty()) {
+        localizedStringResource(StringsR.string.details_series_works_subtitle, currentTitle, works.size)
+    } else {
+        currentTitle
+    }
+    MoreSidePanel(
+        title = localizedStringResource(StringsR.string.details_series_works_title),
+        subtitle = subtitle,
+        onBack = onDismiss,
+    ) {
+        val requester = remember { FocusRequester() }
+        when (seriesState) {
+            SeriesWorksState.Idle, SeriesWorksState.Loading -> {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 20.dp),
+                ) {
+                    CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(14.dp))
+                    Text(
+                        text = localizedStringResource(StringsR.string.details_series_works_loading),
+                        color = Color.White.copy(alpha = 0.8f),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+            is SeriesWorksState.Error -> {
+                Text(
+                    text = seriesState.message,
+                    color = Color.White.copy(alpha = 0.72f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
+                )
+                LaunchedEffect(Unit) { requester.requestFocusWithRetry() }
+                MoreRow(
+                    text = localizedStringResource(StringsR.string.details_series_works_retry),
+                    icon = AppIcons.List,
+                    onClick = onRetry,
+                    modifier = Modifier.focusRequester(requester),
+                )
+            }
+            is SeriesWorksState.Ready -> {
+                if (works.isEmpty()) {
+                    Text(
+                        text = localizedStringResource(StringsR.string.details_series_works_empty),
+                        color = Color.White.copy(alpha = 0.65f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 16.dp),
+                    )
+                } else {
+                    LaunchedEffect(works.size) { requester.requestFocusWithRetry() }
+                    works.forEachIndexed { idx, work ->
+                        SeriesWorkRow(
+                            item = work,
+                            isCurrent = work.id == currentItemId,
+                            onClick = { onSelect(work) },
+                            modifier = if (idx == 0) Modifier.focusRequester(requester) else Modifier,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SeriesWorkRow(
+    item: CatalogItem,
+    isCurrent: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val fg = if (focused) Color.Black else Color.White
+    val subColor = if (focused) Color.Black.copy(alpha = 0.68f) else Color.White.copy(alpha = 0.62f)
+    val meta = buildList {
+        item.year?.let { add(it.toString()) }
+        item.rating?.takeIf { it > 0f }?.let { add(String.format(Locale.US, "豆瓣 %.1f", it)) }
+        if (isCurrent) add(localizedStringResource(StringsR.string.details_series_works_current))
+    }.joinToString(" · ").ifBlank { item.overview }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused }
+            .padding(vertical = 3.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(if (focused) Color.White else Color.White.copy(alpha = 0.04f))
+            .tvClickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+    ) {
+        if (!item.posterUrl.isNullOrBlank()) {
+            AsyncImage(
+                model = item.posterUrl,
+                contentDescription = item.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .width(40.dp)
+                    .height(56.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color.White.copy(alpha = 0.08f)),
+            )
+            Spacer(Modifier.width(12.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = item.title,
+                color = fg,
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontWeight = if (focused || isCurrent) FontWeight.Bold else FontWeight.SemiBold,
+                ),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (meta.isNotBlank()) {
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = meta,
+                    color = subColor,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (isCurrent) {
+            Spacer(Modifier.width(10.dp))
+            Box(
+                Modifier
+                    .size(7.dp)
+                    .background(
+                        if (focused) Color.Black else AppColors.Accent,
+                        androidx.compose.foundation.shape.CircleShape,
+                    ),
+            )
+        }
+    }
 }

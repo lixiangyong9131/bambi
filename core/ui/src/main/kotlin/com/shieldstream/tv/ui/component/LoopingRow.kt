@@ -21,9 +21,9 @@ fun firstVirtualIndex(size: Int): Int = if (shouldLoop(size)) loopStartIndex(siz
 @Composable
 // Prefetch only the next couple of nested cards: seven causes excessive composition and image work on low-power boxes.
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-fun rememberLoopingRowState(size: Int): LazyListState =
+fun rememberLoopingRowState(size: Int, initialIndex: Int? = null): LazyListState =
     rememberLazyListState(
-        initialFirstVisibleItemIndex = firstVirtualIndex(size),
+        initialFirstVisibleItemIndex = initialIndex ?: firstVirtualIndex(size),
         prefetchStrategy = androidx.compose.foundation.lazy.LazyListPrefetchStrategy(nestedPrefetchItemCount = 2),
     )
 

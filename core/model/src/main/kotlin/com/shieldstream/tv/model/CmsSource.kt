@@ -13,17 +13,29 @@ data class CmsSource(
 
 object CmsSources {
     val DEFAULT_SOURCES: List<CmsSource> = listOf(
-        CmsSource("builtin_ffzy", "非凡影视", "https://cj.ffzyapi.com/api.php/provide/vod", enabled = true, builtIn = true),
-        CmsSource("builtin_iqiyi", "iQIYI", "https://www.iqiyizyapi.com/api.php/provide/vod", enabled = true, builtIn = true),
-        CmsSource("builtin_hongniu", "红牛资源", "https://www.hongniuzy2.com/api.php/provide/vod", enabled = true, builtIn = true),
-        CmsSource("builtin_jisu", "速播资源", "https://www.jisuzy.com/api.php/provide/vod", enabled = true, builtIn = true),
-        CmsSource("builtin_modu", "魔都资源", "https://caiji.moduapi.cc/api.php/provide/vod", enabled = true, builtIn = true),
-        CmsSource("builtin_ryi", "如意资源", "https://cj.rycjapi.com/api.php/provide/vod", enabled = true, builtIn = true),
-        CmsSource("builtin_dytt", "电影天堂", "https://caiji.dyttzyapi.com/api.php/provide/vod", enabled = true, builtIn = true),
-        CmsSource("builtin_wujin", "无尽资源", "https://api.wujinapi.com/api.php/provide/vod", enabled = true, builtIn = true),
-        CmsSource("builtin_bfzy", "暴风资源", "https://bfzyapi.com/api.php/provide/vod", enabled = true, builtIn = true),
-        CmsSource("builtin_ikun", "iKun资源", "https://ikunzyapi.com/api.php/provide/vod", enabled = true, builtIn = true),
-        CmsSource("builtin_360zy", "360资源", "https://360zy.com/api.php/provide/vod", enabled = true, builtIn = true),
+        CmsSource("builtin_dytt", "电影天堂", "https://bambi-dytt-proxy.netlify.app/dytt/api.php/provide/vod", enabled = true, builtIn = true),
+        CmsSource("builtin_bfzy", "暴风资源", "https://bambi-dytt-proxy.netlify.app/bfzy/api.php/provide/vod", enabled = true, builtIn = true),
+        CmsSource("builtin_ryi", "如意资源", "https://bambi-dytt-proxy.netlify.app/ryi/api.php/provide/vod", enabled = true, builtIn = true),
+        CmsSource("builtin_ffzy", "非凡影视", "http://ffzy5.tv/api.php/provide/vod", enabled = true, builtIn = true),
+        CmsSource("builtin_ikun", "iKun资源", "https://bambi-dytt-proxy.netlify.app/ikun/api.php/provide/vod", enabled = true, builtIn = true),
+    )
+
+    private val RETIRED_BUILTIN_IDS = setOf(
+        "builtin_iqiyi",
+        "builtin_hongniu",
+        "builtin_jisu",
+        "builtin_modu",
+        "builtin_wujin",
+        "builtin_360zy",
+    )
+
+    private val RETIRED_BUILTIN_URLS = setOf(
+        "https://www.iqiyizyapi.com/api.php/provide/vod",
+        "https://www.hongniuzy2.com/api.php/provide/vod",
+        "https://www.jisuzy.com/api.php/provide/vod",
+        "https://caiji.moduapi.cc/api.php/provide/vod",
+        "https://api.wujinapi.com/api.php/provide/vod",
+        "https://360zy.com/api.php/provide/vod",
     )
 
     private val builtInById = DEFAULT_SOURCES.associateBy { it.id }
@@ -76,7 +88,9 @@ object CmsSources {
         val out = ArrayList<CmsSource>(saved.size + DEFAULT_SOURCES.size)
         for (entry in saved) {
             val url = normalizeUrl(entry.url) ?: continue
-            val known = builtInById[entry.id] ?: builtInByUrl[url.lowercase()]
+            val lowerUrl = url.lowercase()
+            if (entry.id in RETIRED_BUILTIN_IDS || lowerUrl in RETIRED_BUILTIN_URLS) continue
+            val known = builtInById[entry.id] ?: builtInByUrl[lowerUrl]
             val dedupKey = (known?.url ?: url).lowercase()
             if (!seenUrls.add(dedupKey)) continue
             if (known != null) {

@@ -20,7 +20,7 @@ data class WatchProgress(
 
     companion object {
         const val WATCHED_FRACTION = 0.93f
-        const val MIN_RESUME_MS = 30_000L
+        const val MIN_RESUME_MS = 10_000L
 
         fun movieKey(movieId: String) = "movie:$movieId"
 

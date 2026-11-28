@@ -47,4 +47,7 @@ interface DoubanApi {
 
     @GET
     suspend fun rexxarRecommend(@Url url: String): DoubanRexxarRecommendResponseDto
+
+    @GET
+    suspend fun rexxarSearch(@Url url: String): com.shieldstream.tv.network.dto.DoubanRexxarSearchResponseDto
 }

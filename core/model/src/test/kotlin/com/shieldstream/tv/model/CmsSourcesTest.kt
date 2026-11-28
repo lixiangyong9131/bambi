@@ -52,26 +52,32 @@ class CmsSourcesTest {
     }
 
     @Test
-    fun `default sources include modu and wujin and merge upgrades legacy http urls without duplicates`() {
-        val labels = CmsSources.DEFAULT_SOURCES.map { it.name }
-        assertTrue("魔都资源" in labels)
-        assertTrue("无尽资源" in labels)
-        assertTrue("暴风资源" in labels)
-        assertTrue(CmsSources.DEFAULT_SOURCES.first { it.id == "builtin_ffzy" }.url.startsWith("https://"))
-        assertTrue(CmsSources.DEFAULT_SOURCES.first { it.id == "builtin_ryi" }.url.startsWith("https://"))
-        assertTrue(CmsSources.DEFAULT_SOURCES.first { it.id == "builtin_dytt" }.url.startsWith("https://"))
+    fun `default sources keep top five reliable providers and prune retired built-ins on merge`() {
+        assertEquals(
+            listOf("builtin_dytt", "builtin_bfzy", "builtin_ryi", "builtin_ffzy", "builtin_ikun"),
+            CmsSources.DEFAULT_SOURCES.map { it.id },
+        )
+        assertEquals("https://bambi-dytt-proxy.netlify.app/dytt/api.php/provide/vod", CmsSources.DEFAULT_SOURCES.first { it.id == "builtin_dytt" }.url)
+        assertEquals("https://bambi-dytt-proxy.netlify.app/bfzy/api.php/provide/vod", CmsSources.DEFAULT_SOURCES.first { it.id == "builtin_bfzy" }.url)
+        assertEquals("https://bambi-dytt-proxy.netlify.app/ryi/api.php/provide/vod", CmsSources.DEFAULT_SOURCES.first { it.id == "builtin_ryi" }.url)
+        assertEquals("http://ffzy5.tv/api.php/provide/vod", CmsSources.DEFAULT_SOURCES.first { it.id == "builtin_ffzy" }.url)
+        assertEquals("https://bambi-dytt-proxy.netlify.app/ikun/api.php/provide/vod", CmsSources.DEFAULT_SOURCES.first { it.id == "builtin_ikun" }.url)
 
         val legacySaved = listOf(
-            CmsSource("builtin_ffzy", "非凡影视", "http://ffzy5.tv/api.php/provide/vod", enabled = false, builtIn = true),
+            CmsSource("builtin_ffzy", "非凡影视", "https://cj.ffzyapi.com/api.php/provide/vod", enabled = false, builtIn = true),
             CmsSource("builtin_dytt", "电影天堂", "http://caiji.dyttzyapi.com/api.php/provide/vod", enabled = true, builtIn = true),
+            CmsSource("builtin_iqiyi", "iQIYI", "https://www.iqiyizyapi.com/api.php/provide/vod", enabled = false, builtIn = true),
+            CmsSource("builtin_modu", "魔都资源", "https://caiji.moduapi.cc/api.php/provide/vod", enabled = false, builtIn = true),
+            CmsSource("builtin_360zy", "360资源", "https://360zy.com/api.php/provide/vod", enabled = false, builtIn = true),
         )
         val merged = CmsSources.mergeWithDefaults(legacySaved)
 
         assertEquals(CmsSources.DEFAULT_SOURCES.size, merged.size)
         val ffzy = merged.first { it.id == "builtin_ffzy" }
         assertFalse(ffzy.enabled)
-        assertEquals("https://cj.ffzyapi.com/api.php/provide/vod", ffzy.url)
+        assertEquals("http://ffzy5.tv/api.php/provide/vod", ffzy.url)
         assertEquals(1, merged.count { it.id == "builtin_ffzy" })
-        assertEquals("https://caiji.dyttzyapi.com/api.php/provide/vod", merged.first { it.id == "builtin_dytt" }.url)
+        assertEquals("https://bambi-dytt-proxy.netlify.app/dytt/api.php/provide/vod", merged.first { it.id == "builtin_dytt" }.url)
+        assertFalse(merged.any { it.id in setOf("builtin_iqiyi", "builtin_modu", "builtin_360zy") })
     }
 }

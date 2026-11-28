@@ -40,6 +40,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,6 +52,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -63,7 +65,13 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.unit.sp
+import kotlin.math.abs
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.buildAnnotatedString
@@ -165,11 +173,18 @@ fun SearchScreen(
     val candidates by viewModel.candidates.collectAsStateWithLifecycle()
 
     val searchBoxRequester = initialFocusRequester ?: remember { FocusRequester() }
+    val topActionRequester = remember { FocusRequester() }
     val firstKeyRequester = remember { FocusRequester() }
     val layoutKeyRequester = remember { FocusRequester() }
     val firstFilterRequester = remember { FocusRequester() }
+    val firstResultRequester = remember { FocusRequester() }
+    val visibleResultRequester = remember { FocusRequester() }
     val cardRequester = remember { FocusRequester() }
     var lastCardKey by rememberSaveable { mutableStateOf<String?>(null) }
+    val gridTracker = remember { GridFocusTracker() }
+    val leftFocusTracker = remember { PaneFocusTracker() }
+    val gridState = rememberLazyGridState()
+    val focusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
@@ -252,6 +267,29 @@ fun SearchScreen(
     BackHandler(enabled = interceptBack, onBack = handleLocalBack)
 
     val leftColumnWidth = if (keyboardOpen && qwerty) 452.dp else 390.dp
+    val currentGridItems = when (val s = state) {
+        is SearchUiState.Browse -> s.items
+        is SearchUiState.Results -> s.items
+        else -> emptyList()
+    }
+    val currentLocked = (state as? SearchUiState.Results)?.locked.orEmpty()
+    val hasRightTargets = currentGridItems.isNotEmpty() || currentLocked.isNotEmpty()
+    val moveFocusToResults: () -> Boolean = {
+        if (!hasRightTargets) {
+            false
+        } else {
+            val restored = lastCardKey != null && runCatching { cardRequester.requestFocus() }.getOrDefault(false)
+            restored ||
+                runCatching { firstResultRequester.requestFocus() }.getOrDefault(false) ||
+                runCatching { visibleResultRequester.requestFocus() }.getOrDefault(false)
+        }
+    }
+    val moveFocusToLeftPane: () -> Boolean = {
+        runCatching { leftFocusTracker.lastRequester?.requestFocus() == true }.getOrDefault(false) ||
+            (keyboardOpen && runCatching { firstKeyRequester.requestFocus() }.getOrDefault(false)) ||
+            (!keyboardOpen && runCatching { firstFilterRequester.requestFocus() }.getOrDefault(false)) ||
+            runCatching { searchBoxRequester.requestFocus() }.getOrDefault(false)
+    }
 
     Row(
         Modifier
@@ -273,8 +311,34 @@ fun SearchScreen(
             Modifier
                 .width(leftColumnWidth)
                 .fillMaxHeight()
-                .padding(start = 36.dp, top = 34.dp, end = 16.dp, bottom = 20.dp),
+                .padding(start = 36.dp, top = 34.dp, end = 16.dp, bottom = 20.dp)
+                .onFocusChanged { leftFocusTracker.hasFocus = it.hasFocus }
+                .onPreviewKeyEvent { event ->
+                    if (!systemKeyboard &&
+                        event.type == KeyEventType.KeyDown &&
+                        event.key == Key.DirectionRight
+                    ) {
+                        val beforeBounds = leftFocusTracker.focusedBounds
+                        val moved = focusManager.moveFocus(FocusDirection.Right)
+                        if (!moved) {
+                            moveFocusToResults()
+                        } else if (!leftFocusTracker.hasFocus) {
+                            true
+                        } else {
+                            val afterBounds = leftFocusTracker.focusedBounds
+                            val stayedSameRow = beforeBounds != null &&
+                                afterBounds != null &&
+                                afterBounds.left >= beforeBounds.right - 2f &&
+                                abs(afterBounds.center.y - beforeBounds.center.y) <
+                                    minOf(beforeBounds.height, afterBounds.height) * 0.65f
+                            if (stayedSameRow) true else moveFocusToResults()
+                        }
+                    } else {
+                        false
+                    }
+                },
         ) {
+            val hasTopAction = keyboardOpen || query.isNotEmpty() || composing.isNotEmpty()
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -309,9 +373,23 @@ fun SearchScreen(
                                 Modifier
                             } else {
                                 Modifier
-                                    .focusRequester(searchBoxRequester)
-                                    .focusProperties {
-                                        down = if (keyboardOpen) firstKeyRequester else firstFilterRequester
+                                    .trackLeftFocus(leftFocusTracker, searchBoxRequester)
+                                    .onPreviewKeyEvent { event ->
+                                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                        when (event.key) {
+                                            Key.DirectionDown -> {
+                                                val target = if (keyboardOpen) firstKeyRequester else firstFilterRequester
+                                                runCatching { target.requestFocus() }.getOrDefault(false)
+                                            }
+                                            Key.DirectionRight -> {
+                                                if (hasTopAction) {
+                                                    runCatching { topActionRequester.requestFocus() }.getOrDefault(false)
+                                                } else {
+                                                    moveFocusToResults()
+                                                }
+                                            }
+                                            else -> false
+                                        }
                                     }
                                     .tvClickable {
                                         keyboardOpen = !keyboardOpen
@@ -367,10 +445,25 @@ fun SearchScreen(
                     }
                 }
 
+                val topActionKeyModifier = Modifier
+                    .trackLeftFocus(leftFocusTracker, topActionRequester)
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (event.key) {
+                            Key.DirectionRight -> moveFocusToResults()
+                            Key.DirectionLeft -> runCatching { searchBoxRequester.requestFocus() }.getOrDefault(false)
+                            Key.DirectionDown -> {
+                                val target = if (keyboardOpen) firstKeyRequester else firstFilterRequester
+                                runCatching { target.requestFocus() }.getOrDefault(false)
+                            }
+                            else -> false
+                        }
+                    }
                 if (keyboardOpen) {
                     CompactActionChip(
                         label = localizedStringResource(StringsR.string.home_search_close_keyboard),
                         onClick = { collapseKeyboard() },
+                        modifier = topActionKeyModifier,
                     )
                 } else if (query.isNotEmpty() || composing.isNotEmpty()) {
                     CompactActionChip(
@@ -379,6 +472,7 @@ fun SearchScreen(
                             viewModel.clearComposing()
                             viewModel.clear()
                         },
+                        modifier = topActionKeyModifier,
                     )
                 }
             }
@@ -394,7 +488,17 @@ fun SearchScreen(
                         modifier = Modifier.fillMaxWidth().height(44.dp),
                     ) {
                         itemsIndexed(candidates, key = { _, cand -> cand }) { _, cand ->
-                            CandidateChip(text = cand, onClick = { viewModel.commitCandidate(cand) })
+                            CandidateChip(
+                                text = cand,
+                                onClick = {
+                                    viewModel.commitCandidate(cand)
+                                    scope.launch {
+                                        withFrameNanos { }
+                                        runCatching { firstKeyRequester.requestFocus() }
+                                    }
+                                },
+                                modifier = Modifier.trackLeftFocus(leftFocusTracker),
+                            )
                         }
                     }
                     Spacer(Modifier.height(8.dp))
@@ -406,6 +510,7 @@ fun SearchScreen(
                     columnWidth = leftColumnWidth,
                     firstKeyRequester = firstKeyRequester,
                     layoutKeyRequester = layoutKeyRequester,
+                    leftFocusTracker = leftFocusTracker,
                     onChar = { c ->
                         if (qwerty) viewModel.type(c) else viewModel.typeLetter(c)
                     },
@@ -430,6 +535,9 @@ fun SearchScreen(
                     genresExpanded = genresExpanded,
                     firstFilterRequester = firstFilterRequester,
                     searchBoxRequester = searchBoxRequester,
+                    leftFocusTracker = leftFocusTracker,
+                    onMoveRightToResults = moveFocusToResults,
+                    onOpenRail = onOpenRail,
                     onToggleGenresExpanded = { genresExpanded = !genresExpanded },
                     onSelectMediaType = viewModel::selectMediaType,
                     onSelectSort = viewModel::selectSort,
@@ -442,7 +550,32 @@ fun SearchScreen(
             }
         }
 
-        Column(Modifier.weight(1f).fillMaxHeight().padding(top = 34.dp, end = 24.dp)) {
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxHeight()
+                .padding(top = 34.dp, end = 24.dp)
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
+                        val activeKey = gridTracker.key
+                        val focusedGridItem = if (activeKey != null) {
+                            gridState.layoutInfo.visibleItemsInfo.firstOrNull {
+                                val idx = it.index
+                                currentGridItems.getOrNull(idx)?.key == activeKey
+                            }
+                        } else {
+                            null
+                        }
+                        if (!gridTracker.hasFocus || focusedGridItem == null || focusedGridItem.column == 0) {
+                            moveFocusToLeftPane()
+                        } else {
+                            focusManager.moveFocus(FocusDirection.Left)
+                        }
+                    } else {
+                        false
+                    }
+                },
+        ) {
             val header = when (val s = state) {
                 SearchUiState.Loading -> localizedStringResource(StringsR.string.home_searching)
                 is SearchUiState.Browse -> buildBrowseHeader(s.filter)
@@ -497,23 +630,15 @@ fun SearchScreen(
                 )
             }
 
-            val gridState = rememberLazyGridState()
-            var gridHasFocus by remember { mutableStateOf(false) }
-            var activeGridIndex by remember { mutableStateOf(-1) }
-            var gridAnchorKey by remember { mutableStateOf<String?>(null) }
-            var gridAnchorIndex by remember { mutableStateOf(-1) }
+            var pendingGridRestoreKey by remember { mutableStateOf<String?>(null) }
             var lastGridSizeSeen by remember { mutableStateOf(items.size) }
-            val gridAnchorRequester = remember { FocusRequester() }
+            val gridRestoreRequester = remember { FocusRequester() }
 
             if (browseState != null && browseState.canLoadMore) {
                 LaunchedEffect(gridState, items.size, browseState.canLoadMore) {
                     snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
                         .collectLatest { lastVisible ->
                             if (items.isNotEmpty() && lastVisible >= items.lastIndex - 6) {
-                                if (gridHasFocus && lastCardKey != null) {
-                                    gridAnchorKey = lastCardKey
-                                    gridAnchorIndex = activeGridIndex
-                                }
                                 viewModel.loadMoreFiltered()
                             }
                         }
@@ -522,19 +647,21 @@ fun SearchScreen(
             if (browseState != null) {
                 LaunchedEffect(items.size, browseState.filter) {
                     val grew = items.size > lastGridSizeSeen
+                    val wasFocused = gridTracker.hasFocus
+                    val restoreTarget = gridTracker.key
                     lastGridSizeSeen = items.size
-                    val anchorKey = gridAnchorKey
-                    val anchorIdx = gridAnchorIndex
-                    if (grew && anchorKey != null) {
+                    if (grew && wasFocused && restoreTarget != null) {
                         withFrameNanos { }
-                        val driftedBack = !gridHasFocus || (lastCardKey != anchorKey && activeGridIndex in 0 until anchorIdx)
-                        if (driftedBack) {
-                            runCatching { gridAnchorRequester.requestFocus() }
+                        if (!gridTracker.hasFocus) {
+                            pendingGridRestoreKey = restoreTarget
                         }
                     }
-                    if (grew || items.isEmpty()) {
-                        gridAnchorKey = null
-                        gridAnchorIndex = -1
+                }
+                LaunchedEffect(pendingGridRestoreKey) {
+                    if (pendingGridRestoreKey != null) {
+                        withFrameNanos { }
+                        runCatching { gridRestoreRequester.requestFocus() }
+                        pendingGridRestoreKey = null
                     }
                 }
             }
@@ -584,7 +711,12 @@ fun SearchScreen(
                         verticalArrangement = Arrangement.spacedBy(18.dp),
                         modifier = Modifier
                             .fillMaxSize()
-                            .onFocusChanged { gridHasFocus = it.hasFocus },
+                            .onFocusChanged {
+                                gridTracker.hasFocus = it.hasFocus
+                                if (!it.hasFocus && gridTracker.key != null) {
+                                    lastCardKey = gridTracker.key
+                                }
+                            },
                     ) {
                         val showSkeletons = state is SearchUiState.Loading || (browseState != null && browseState.isLoading && items.isEmpty())
                         if (showSkeletons) {
@@ -597,22 +729,28 @@ fun SearchScreen(
                                 )
                             }
                         }
+                        val firstVisibleResultIdx = if (items.isNotEmpty()) {
+                            gridState.firstVisibleItemIndex.coerceIn(0, items.lastIndex)
+                        } else {
+                            -1
+                        }
                         itemsIndexed(items, key = { _, item -> item.key }) { index, item ->
-                            val mod = when {
-                                item.key == lastCardKey && item.key == gridAnchorKey ->
-                                    Modifier.focusRequester(cardRequester).focusRequester(gridAnchorRequester)
-                                item.key == lastCardKey -> Modifier.focusRequester(cardRequester)
-                                item.key == gridAnchorKey -> Modifier.focusRequester(gridAnchorRequester)
-                                else -> Modifier
-                            }
+                            var mod: Modifier = Modifier
+                            if (index == 0) mod = mod.focusRequester(firstResultRequester)
+                            if (index == firstVisibleResultIdx) mod = mod.focusRequester(visibleResultRequester)
+                            if (item.key == lastCardKey) mod = mod.focusRequester(cardRequester)
+                            if (item.key == pendingGridRestoreKey) mod = mod.focusRequester(gridRestoreRequester)
                             PosterCard(
                                 item = item,
-                                onClick = { onItemClick(item) },
-                                onLongClick = { quickMenuItem = item },
-                                onFocused = {
+                                onClick = {
                                     lastCardKey = item.key
-                                    activeGridIndex = index
+                                    onItemClick(item)
                                 },
+                                onLongClick = {
+                                    lastCardKey = item.key
+                                    quickMenuItem = item
+                                },
+                                onFocused = { gridTracker.key = item.key },
                                 width = 118.dp,
                                 showYearOnFocus = true,
                                 modifier = mod,
@@ -633,14 +771,23 @@ fun SearchScreen(
                                     )
                                 }
                             }
-                            items(locked, key = { "locked_" + it.key }) { item ->
+                            itemsIndexed(locked, key = { _, it -> "locked_" + it.key }) { index, item ->
                                 val asked = item.key in pending
+                                val lockedKey = "locked_" + item.key
+                                var mod: Modifier = Modifier
+                                if (items.isEmpty() && index == 0) {
+                                    mod = mod.focusRequester(firstResultRequester).focusRequester(visibleResultRequester)
+                                }
+                                if (lockedKey == lastCardKey) mod = mod.focusRequester(cardRequester)
                                 PosterCard(
                                     item = item,
-                                    onClick = { if (!asked) lockedPick = item },
-                                    onFocused = { lastCardKey = "locked_" + item.key },
+                                    onClick = {
+                                        lastCardKey = lockedKey
+                                        if (!asked) lockedPick = item
+                                    },
+                                    onFocused = { gridTracker.key = lockedKey },
                                     width = 118.dp,
-                                    modifier = if ("locked_" + item.key == lastCardKey) Modifier.focusRequester(cardRequester) else Modifier,
+                                    modifier = mod,
                                     overlay = { LockedOverlay(asked) },
                                 )
                             }
@@ -650,6 +797,41 @@ fun SearchScreen(
             }
         }
     }
+}
+
+private class GridFocusTracker {
+    var hasFocus: Boolean = false
+    var key: String? = null
+}
+
+private class PaneFocusTracker {
+    var hasFocus: Boolean = false
+    var focusedBounds: Rect? = null
+    var lastRequester: FocusRequester? = null
+}
+
+@Composable
+private fun Modifier.trackLeftFocus(
+    tracker: PaneFocusTracker,
+    requester: FocusRequester? = null,
+): Modifier {
+    val target = requester ?: remember { FocusRequester() }
+    val boundsRef = remember { arrayOfNulls<Rect>(1) }
+    return this
+        .focusRequester(target)
+        .onGloballyPositioned { coords ->
+            val bounds = coords.boundsInRoot()
+            boundsRef[0] = bounds
+            if (tracker.lastRequester === target) {
+                tracker.focusedBounds = bounds
+            }
+        }
+        .onFocusChanged { state ->
+            if (state.isFocused) {
+                tracker.lastRequester = target
+                tracker.focusedBounds = boundsRef[0]
+            }
+        }
 }
 
 @Composable
@@ -675,6 +857,9 @@ private fun SearchFilterPanel(
     genresExpanded: Boolean,
     firstFilterRequester: FocusRequester,
     searchBoxRequester: FocusRequester,
+    leftFocusTracker: PaneFocusTracker,
+    onMoveRightToResults: () -> Boolean,
+    onOpenRail: (() -> Unit)?,
     onToggleGenresExpanded: () -> Unit,
     onSelectMediaType: (SearchMediaType) -> Unit,
     onSelectSort: (SearchSort) -> Unit,
@@ -687,6 +872,11 @@ private fun SearchFilterPanel(
     val allGenres = remember(filterState.mediaType) { CategoryFilterCatalog.genresFor(filterState.mediaType.filter) }
     val regions = remember(filterState.mediaType) { CategoryFilterCatalog.regionsFor(filterState.mediaType.filter) }
     val eras = remember { CategoryFilterCatalog.eras }
+    val mediaSortRequesters = remember(firstFilterRequester) {
+        Array(SearchMediaType.entries.size + SearchSort.entries.size) { slot ->
+            if (slot == 0) firstFilterRequester else FocusRequester()
+        }
+    }
     val hasHiddenSelectedGenre = remember(allGenres, filterState.selection.genres) {
         filterState.selection.genres.any { tag ->
             val idx = allGenres.indexOfFirst { it.doubanTag == tag }
@@ -704,47 +894,89 @@ private fun SearchFilterPanel(
             contentPadding = PaddingValues(top = 2.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            item(key = "media_and_reset") {
+            item(key = "media_and_sort") {
+                @Composable
+                fun topChipKeyMod(slot: Int): Modifier = Modifier
+                    .trackLeftFocus(leftFocusTracker, mediaSortRequesters[slot])
+                    .onPreviewKeyEvent { event ->
+                        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        when (event.key) {
+                            Key.DirectionUp -> runCatching { searchBoxRequester.requestFocus() }.getOrDefault(false)
+                            Key.DirectionRight -> {
+                                if (slot < mediaSortRequesters.lastIndex) {
+                                    runCatching { mediaSortRequesters[slot + 1].requestFocus() }.getOrDefault(false)
+                                } else {
+                                    onMoveRightToResults()
+                                }
+                            }
+                            Key.DirectionLeft -> {
+                                if (slot > 0) {
+                                    runCatching { mediaSortRequesters[slot - 1].requestFocus() }.getOrDefault(false)
+                                } else if (onOpenRail != null) {
+                                    onOpenRail()
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                            else -> false
+                        }
+                    }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         SearchMediaType.entries.forEachIndexed { idx, type ->
                             FilterPillChip(
                                 label = localizedStringResource(type.labelRes),
                                 selected = filterState.mediaType == type,
                                 onClick = { onSelectMediaType(type) },
-                                modifier = (if (idx == 0) Modifier.focusRequester(firstFilterRequester) else Modifier)
-                                    .focusProperties { up = searchBoxRequester },
+                                compact = true,
+                                modifier = topChipKeyMod(idx),
                             )
                         }
                     }
-                    if (filterState.canReset) {
-                        CompactActionChip(
-                            label = localizedStringResource(StringsR.string.home_filter_reset),
-                            onClick = onReset,
-                            modifier = Modifier.focusProperties { up = searchBoxRequester },
-                        )
-                    }
-                }
-            }
-
-            item(key = "sort") {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    SearchSort.entries.forEach { sort ->
-                        FilterPillChip(
-                            label = localizedStringResource(sort.labelRes),
-                            selected = filterState.sort == sort,
-                            onClick = { onSelectSort(sort) },
-                        )
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        SearchSort.entries.forEachIndexed { sIdx, sort ->
+                            FilterPillChip(
+                                label = localizedStringResource(sort.labelRes),
+                                selected = filterState.sort == sort,
+                                onClick = { onSelectSort(sort) },
+                                compact = true,
+                                modifier = topChipKeyMod(SearchMediaType.entries.size + sIdx),
+                            )
+                        }
                     }
                 }
             }
 
             item(key = "genres") {
-                FilterGroupBlock(title = localizedStringResource(StringsR.string.home_filter_group_genre)) {
+                FilterGroupBlock(
+                    title = localizedStringResource(StringsR.string.home_filter_group_genre),
+                    trailing = if (filterState.canReset) {
+                        {
+                            CompactActionChip(
+                                label = localizedStringResource(StringsR.string.home_filter_reset),
+                                onClick = onReset,
+                                compact = true,
+                                modifier = Modifier
+                                    .trackLeftFocus(leftFocusTracker)
+                                    .onPreviewKeyEvent { event ->
+                                        if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
+                                            onMoveRightToResults()
+                                        } else {
+                                            false
+                                        }
+                                    },
+                            )
+                        }
+                    } else {
+                        null
+                    },
+                ) {
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(7.dp),
                         verticalArrangement = Arrangement.spacedBy(7.dp),
@@ -753,6 +985,7 @@ private fun SearchFilterPanel(
                             label = localizedStringResource(StringsR.string.home_filter_all_genres),
                             selected = filterState.selection.genres.isEmpty(),
                             onClick = onClearGenres,
+                            modifier = Modifier.trackLeftFocus(leftFocusTracker),
                         )
                         visibleGenres.forEach { opt ->
                             val selected = opt.doubanTag in filterState.selection.genres
@@ -761,6 +994,7 @@ private fun SearchFilterPanel(
                                 label = if (selected) "✓ $text" else text,
                                 selected = selected,
                                 onClick = { onToggleGenre(opt.doubanTag) },
+                                modifier = Modifier.trackLeftFocus(leftFocusTracker),
                             )
                         }
                         if (allGenres.size > COMPACT_GENRE_COUNT) {
@@ -771,6 +1005,7 @@ private fun SearchFilterPanel(
                                 selected = false,
                                 subtle = true,
                                 onClick = onToggleGenresExpanded,
+                                modifier = Modifier.trackLeftFocus(leftFocusTracker),
                             )
                         }
                     }
@@ -787,12 +1022,14 @@ private fun SearchFilterPanel(
                             label = localizedStringResource(StringsR.string.home_filter_all_regions),
                             selected = filterState.selection.region == null,
                             onClick = { onSelectRegion(null) },
+                            modifier = Modifier.trackLeftFocus(leftFocusTracker),
                         )
                         regions.forEach { opt ->
                             FilterPillChip(
                                 label = localizedStringResource(opt.labelRes),
                                 selected = filterState.selection.region == opt.doubanTag,
                                 onClick = { onSelectRegion(opt.doubanTag) },
+                                modifier = Modifier.trackLeftFocus(leftFocusTracker),
                             )
                         }
                     }
@@ -809,12 +1046,14 @@ private fun SearchFilterPanel(
                             label = localizedStringResource(StringsR.string.home_filter_all_eras),
                             selected = filterState.selection.era == null,
                             onClick = { onSelectEra(null) },
+                            modifier = Modifier.trackLeftFocus(leftFocusTracker),
                         )
                         eras.forEach { opt ->
                             FilterPillChip(
                                 label = localizedStringResource(opt.labelRes),
                                 selected = filterState.selection.era == opt.doubanTag,
                                 onClick = { onSelectEra(opt.doubanTag) },
+                                modifier = Modifier.trackLeftFocus(leftFocusTracker),
                             )
                         }
                     }
@@ -827,14 +1066,22 @@ private fun SearchFilterPanel(
 @Composable
 private fun FilterGroupBlock(
     title: String,
+    trailing: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth()) {
-        Text(
-            text = title,
-            color = Color.White.copy(alpha = 0.62f),
-            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = title,
+                color = Color.White.copy(alpha = 0.62f),
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+            )
+            trailing?.invoke()
+        }
         Spacer(Modifier.height(6.dp))
         content()
     }
@@ -847,6 +1094,7 @@ private fun FilterPillChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     subtle: Boolean = false,
+    compact: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
     val bg = when {
@@ -877,12 +1125,13 @@ private fun FilterPillChip(
             .background(bg, CircleShape)
             .border(1.dp, border, CircleShape)
             .tvClickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .padding(horizontal = if (compact) 8.dp else 12.dp, vertical = if (compact) 4.dp else 6.dp),
     ) {
         Text(
             text = label,
             color = textColor,
             style = MaterialTheme.typography.bodySmall.copy(
+                fontSize = if (compact) 11.sp else 12.sp,
                 fontWeight = if (focused || selected) FontWeight.Bold else FontWeight.Medium,
             ),
             maxLines = 1,
@@ -896,6 +1145,7 @@ private fun CompactActionChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     primary: Boolean = false,
+    compact: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
     val bg = when {
@@ -920,13 +1170,16 @@ private fun CompactActionChip(
                 shape = CircleShape,
             )
             .tvClickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = if (compact) 9.dp else 12.dp, vertical = if (compact) 4.dp else 8.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
             color = fg,
-            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontSize = if (compact) 11.sp else MaterialTheme.typography.labelMedium.fontSize,
+                fontWeight = FontWeight.Bold,
+            ),
             maxLines = 1,
         )
     }
@@ -940,6 +1193,7 @@ private fun OnScreenKeyboard(
     columnWidth: Dp,
     firstKeyRequester: FocusRequester,
     layoutKeyRequester: FocusRequester,
+    leftFocusTracker: PaneFocusTracker,
     onChar: (Char) -> Unit,
     onBackspace: () -> Unit,
     onClear: () -> Unit,
@@ -968,7 +1222,10 @@ private fun OnScreenKeyboard(
         rows.forEachIndexed { rowIndex, rowKeys ->
             Row(horizontalArrangement = Arrangement.spacedBy(keyGap)) {
                 rowKeys.forEachIndexed { colIndex, c ->
-                    val mod = if (rowIndex == 0 && colIndex == 0) Modifier.focusRequester(firstKeyRequester) else Modifier
+                    val mod = Modifier.trackLeftFocus(
+                        leftFocusTracker,
+                        if (rowIndex == 0 && colIndex == 0) firstKeyRequester else null,
+                    )
                     KeyButton(width = keyWidth, height = keyHeight, onClick = { onChar(c) }, modifier = mod) {
                         Text(c.uppercase(), style = MaterialTheme.typography.titleMedium, color = it)
                     }
@@ -978,13 +1235,28 @@ private fun OnScreenKeyboard(
         Row(horizontalArrangement = Arrangement.spacedBy(keyGap)) {
             val backWidth = keyWidth * 1.0f + keyGap
             val clearWidth = keyWidth * 1.5f + keyGap
-            KeyButton(width = fullWidth - backWidth - clearWidth - keyGap * 2, height = keyHeight, onClick = { onChar(' ') }) {
+            KeyButton(
+                width = fullWidth - backWidth - clearWidth - keyGap * 2,
+                height = keyHeight,
+                onClick = { onChar(' ') },
+                modifier = Modifier.trackLeftFocus(leftFocusTracker),
+            ) {
                 Text(localizedStringResource(StringsR.string.home_space), style = MaterialTheme.typography.bodyMedium, color = it)
             }
-            KeyButton(width = backWidth, height = keyHeight, onClick = onBackspace) {
+            KeyButton(
+                width = backWidth,
+                height = keyHeight,
+                onClick = onBackspace,
+                modifier = Modifier.trackLeftFocus(leftFocusTracker),
+            ) {
                 Icon(AppIcons.Backspace, contentDescription = localizedStringResource(StringsR.string.home_clear), tint = it, modifier = Modifier.size(20.dp))
             }
-            KeyButton(width = clearWidth, height = keyHeight, onClick = onClear) {
+            KeyButton(
+                width = clearWidth,
+                height = keyHeight,
+                onClick = onClear,
+                modifier = Modifier.trackLeftFocus(leftFocusTracker),
+            ) {
                 Text(localizedStringResource(StringsR.string.home_clear), style = MaterialTheme.typography.bodyMedium, color = it)
             }
         }
@@ -998,19 +1270,34 @@ private fun OnScreenKeyboard(
                     toggled = true
                     onToggleLayout()
                 },
-                modifier = Modifier.focusRequester(layoutKeyRequester),
+                modifier = Modifier.trackLeftFocus(leftFocusTracker, layoutKeyRequester),
             ) {
                 Text(if (qwerty) "拼音" else "英文", style = MaterialTheme.typography.bodyMedium, color = it)
             }
-            KeyButton(width = sideWidth, height = keyHeight, onClick = onSearch) {
+            KeyButton(
+                width = sideWidth,
+                height = keyHeight,
+                onClick = onSearch,
+                modifier = Modifier.trackLeftFocus(leftFocusTracker),
+            ) {
                 // 把还在拼音缓冲里的字母落成正文并立即搜索。
                 Text("搜索", style = MaterialTheme.typography.bodyMedium, color = it)
             }
-            KeyButton(width = sysWidth, height = keyHeight, onClick = onSystemKeyboard) {
+            KeyButton(
+                width = sysWidth,
+                height = keyHeight,
+                onClick = onSystemKeyboard,
+                modifier = Modifier.trackLeftFocus(leftFocusTracker),
+            ) {
                 Text(localizedStringResource(StringsR.string.home_system_keyboard), style = MaterialTheme.typography.bodySmall, color = it, maxLines = 1)
             }
         }
-        KeyButton(width = fullWidth, height = 34.dp, onClick = onCollapse) {
+        KeyButton(
+            width = fullWidth,
+            height = 34.dp,
+            onClick = onCollapse,
+            modifier = Modifier.trackLeftFocus(leftFocusTracker),
+        ) {
             Text(localizedStringResource(StringsR.string.home_search_close_keyboard), style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold), color = it)
         }
         // 当前拼音缓冲：让用户知道这些字母还没上屏。
@@ -1027,10 +1314,10 @@ private fun OnScreenKeyboard(
 
 /** 拼音候选词：一个汉字/词组一格，遥控器左右移动选择。 */
 @Composable
-private fun CandidateChip(text: String, onClick: () -> Unit) {
+private fun CandidateChip(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     var focused by remember { mutableStateOf(false) }
     Box(
-        modifier = Modifier
+        modifier = modifier
             .height(44.dp)
             .onFocusChanged { focused = it.isFocused }
             .clip(RoundedCornerShape(6.dp))

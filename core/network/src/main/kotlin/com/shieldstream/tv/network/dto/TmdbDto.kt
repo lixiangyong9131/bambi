@@ -17,6 +17,7 @@ data class TmdbMovieDto(
     val backdrop_path: String? = null,
     val release_date: String? = null,
     val vote_average: Double = 0.0,
+    val genres: List<String> = emptyList(),
 )
 
 @Serializable
@@ -28,6 +29,7 @@ data class TmdbTvDto(
     val backdrop_path: String? = null,
     val first_air_date: String? = null,
     val vote_average: Double = 0.0,
+    val genres: List<String> = emptyList(),
 )
 
 @Serializable
@@ -50,6 +52,7 @@ data class TmdbSearchResultDto(
     val vote_count: Int = 0,
     val genre_ids: List<Int> = emptyList(),
     val popularity: Double = 0.0,
+    val genres: List<String> = emptyList(),
 )
 
 @Serializable

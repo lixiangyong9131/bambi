@@ -28,6 +28,7 @@ import com.shieldstream.tv.model.StreamSource
 import com.shieldstream.tv.model.WatchProgress
 import com.shieldstream.tv.strings.Texts
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
@@ -460,6 +461,42 @@ class DetailsViewModelTest {
         assertEquals(SourcesState.Ready(emptyList()), state.sources)
         assertTrue(state.probingDone)
         assertEquals(false, state.pendingPlay)
+    }
+
+    @Test
+    fun `empty prefetched episodes on first TV entry falls back to selectSeason and loads sources`() = runTest {
+        val item = CatalogItem(
+            id = "77",
+            imdbId = null,
+            type = MediaType.TV,
+            title = "Show",
+            overview = "",
+            posterUrl = null,
+            backdropUrl = null,
+            year = 2025,
+            rating = null,
+        )
+        val ep1 = Episode(1, 1, "Ep 1", "", null, 45)
+        var episodeCalls = 0
+        val catalog = mockk<CatalogRepository>()
+        coEvery { catalog.getDetails(item) } returns CatalogDetails(
+            item = item,
+            seasons = listOf(Season(1, "Season 1", 1)),
+        )
+        coEvery { catalog.getEpisodes(item, 1) } answers {
+            episodeCalls++
+            if (episodeCalls == 1) emptyList() else listOf(ep1)
+        }
+        every { catalog.getStreams(item, ep1) } returns flowOf(StreamResults(sources = listOf(source(ep1))))
+
+        val viewModel = viewModel(catalog, SelectedContentHolder().apply { selectItem(item) })
+        testScheduler.advanceUntilIdle()
+
+        val state = viewModel.uiState.value as DetailsUiState.Content
+        assertEquals(ep1, state.selectedEpisode)
+        val ready = state.sources as SourcesState.Ready
+        assertEquals(1, ready.sources.size)
+        coVerify(exactly = 2) { catalog.getEpisodes(item, 1) }
     }
 
     private fun viewModel(

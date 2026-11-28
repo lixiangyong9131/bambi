@@ -21,7 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -133,12 +133,16 @@ internal fun SeasonsAndEpisodes(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.weight(1f),
                     ) {
-                        items(seasons, key = { it.number }) { season ->
+                        itemsIndexed(seasons, key = { _, s -> s.number }) { idx, season ->
                             SeasonChip(
                                 label = localizedStringResource(StringsR.string.details_season_number, season.number),
                                 selected = season.number == state.selectedSeason,
                                 enabled = interactive,
                                 onClick = { onSeason(season.number) },
+                                modifier = Modifier.horizontalRowBoundary(
+                                    stopLeft = idx == 0,
+                                    stopRight = idx == seasons.lastIndex,
+                                ),
                             )
                         }
                     }
@@ -170,6 +174,7 @@ internal fun SeasonsAndEpisodes(
                         selected = descending,
                         enabled = interactive,
                         onClick = { descending = !descending },
+                        modifier = Modifier.horizontalRowBoundary(stopLeft = true, stopRight = true),
                     )
                 }
             }
@@ -192,6 +197,7 @@ internal fun SeasonsAndEpisodes(
                         selected = descending,
                         enabled = interactive,
                         onClick = { descending = !descending },
+                        modifier = Modifier.horizontalRowBoundary(stopLeft = true, stopRight = true),
                     )
                 }
             }
@@ -234,6 +240,7 @@ internal fun SeasonsAndEpisodes(
                 val displayedEpisodes = remember(eps.episodes, descending) {
                     orderEpisodes(eps.episodes, descending)
                 }
+                val episodeRowBoundary = remember { FlowRowFocusBoundary() }
                 // Modified build: FlowRow folds episodes left-to-right (1 2 3 4 5 ...) with no
                 // fixed height / infinite-constraint issues from a nested LazyVerticalGrid.
                 FlowRow(
@@ -242,6 +249,7 @@ internal fun SeasonsAndEpisodes(
                     modifier = Modifier.padding(horizontal = 56.dp, vertical = 12.dp),
                 ) {
                     displayedEpisodes.forEachIndexed { idx, ep ->
+                        val itemKey = "${descending}_${idx}_${ep.season}_${ep.number}"
                         key(descending, idx, ep.season, ep.number) {
                             EpisodeCard(
                                 episode = ep,
@@ -252,6 +260,7 @@ internal fun SeasonsAndEpisodes(
                                 onClick = { onEpisode(ep) },
                                 onLongClick = { onEpisodeLongPress(ep) },
                                 onFocused = { onEpisodeFocused(ep) },
+                                modifier = Modifier.flowRowFocusItem(episodeRowBoundary, itemKey),
                             )
                         }
                     }
@@ -262,7 +271,13 @@ internal fun SeasonsAndEpisodes(
 }
 
 @Composable
-private fun SeasonChip(label: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+private fun SeasonChip(
+    label: String,
+    selected: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     var focused by remember { mutableStateOf(false) }
     // Same filled style as the other chips: faint, brighter when selected, inverted on focus.
     val bg = when {
@@ -278,7 +293,7 @@ private fun SeasonChip(label: String, selected: Boolean, enabled: Boolean, onCli
             else -> Color.White.copy(alpha = 0.75f)
         },
         style = MaterialTheme.typography.titleSmall.copy(fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium),
-        modifier = Modifier
+        modifier = modifier
             .onFocusChanged { focused = it.isFocused }
             .clip(RoundedCornerShape(20.dp))
             .background(bg)
@@ -298,13 +313,14 @@ private fun EpisodeCard(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onFocused: () -> Unit = {},
+    modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (focused) 1.06f else 1f, tween(100), label = "episodeScale")
     val shape = RoundedCornerShape(8.dp)
     val watched = progress?.isWatched == true
     Box(
-        Modifier
+        modifier
             .width(120.dp)
             .zIndex(if (focused) 1f else 0f)
             .graphicsLayer { scaleX = scale; scaleY = scale }

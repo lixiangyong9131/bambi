@@ -97,6 +97,42 @@ class DetailsViewModel @Inject constructor(
             ) else com.shieldstream.tv.domain.ManualSkipRepository.Config()
         }.stateIn(viewModelScope, SharingStarted.Eagerly, com.shieldstream.tv.domain.ManualSkipRepository.Config())
 
+    fun loadSeriesWorks(force: Boolean = false) {
+        val current = content() ?: return
+        val item = current.details.item
+        if (item.type != MediaType.TV) return
+        if (!force && (current.seriesWorks is SeriesWorksState.Loading || current.seriesWorks is SeriesWorksState.Ready)) return
+        seriesWorksJob?.cancel()
+        updateContent { it.copy(seriesWorks = SeriesWorksState.Loading) }
+        seriesWorksJob = viewModelScope.launch {
+            runCatching { catalogRepository.getSeriesWorks(item) }
+                .onSuccess { works ->
+                    updateContent { c ->
+                        c.copy(
+                            seriesWorks = SeriesWorksState.Ready(works),
+                            hasMultiSeasonSeries = works.size >= 2,
+                        )
+                    }
+                }
+                .onFailure {
+                    updateContent { c ->
+                        c.copy(
+                            seriesWorks = SeriesWorksState.Error(texts.get(StringsR.string.details_series_works_error)),
+                            hasMultiSeasonSeries = c.hasMultiSeasonSeries || looksLikeMultiSeasonTitle(item.title),
+                        )
+                    }
+                }
+        }
+    }
+
+    fun ensureSeriesWorksLoaded() {
+        val state = content() ?: return
+        loadSeriesWorks(force = state.seriesWorks is SeriesWorksState.Error)
+    }
+
+    private fun looksLikeMultiSeasonTitle(title: String): Boolean =
+        MULTI_SEASON_TITLE_REGEX.containsMatchIn(title)
+
     fun saveSkipConfig(enabled: Boolean, introSec: Int, outroSec: Int) {
         val item = (_uiState.value as? DetailsUiState.Content)?.details?.item ?: return
         manualSkip.save(
@@ -111,6 +147,7 @@ class DetailsViewModel @Inject constructor(
     private var sourcesJob: Job? = null
     private var episodesJob: Job? = null
     private var ratingsJob: Job? = null
+    private var seriesWorksJob: Job? = null
     private var pendingFromStart = false
     private var pendingNext: NextEpisode? = null
     private var requestedAtNs = 0L
@@ -339,6 +376,7 @@ class DetailsViewModel @Inject constructor(
             progress = watchProgress.progress.value,
             inMyList = myList.contains(item.type, item.id),
             following = if (item.type == MediaType.TV) tracking.isFollowing(item.id) else false,
+            hasMultiSeasonSeries = item.type == MediaType.TV && looksLikeMultiSeasonTitle(item.title),
         )
         viewModelScope.launch {
             if (prefetchAutoplay) {
@@ -393,6 +431,7 @@ class DetailsViewModel @Inject constructor(
                     progress = watchProgress.progress.value,
                     inMyList = myList.contains(details.item.type, details.item.id),
                     following = if (details.item.type == MediaType.TV) tracking.isFollowing(details.item.id) else it.following,
+                    hasMultiSeasonSeries = it.hasMultiSeasonSeries || (details.item.type == MediaType.TV && looksLikeMultiSeasonTitle(details.item.title)),
                     spanishFirst = spanishFirst,
                     spanishOnly = spanishOnly,
                     sourceExclusions = sourceExclusions,
@@ -402,6 +441,9 @@ class DetailsViewModel @Inject constructor(
             }
             detailsLoaded = true
             details.collection?.let { ref -> loadCollection(ref.id, details.item.id) }
+            if (details.item.type == MediaType.TV) {
+                loadSeriesWorks(force = false)
+            }
             if (prefetchAutoplay) {
                 if (item.type == MediaType.MOVIE) {
                     when (content()?.sources) {
@@ -424,7 +466,7 @@ class DetailsViewModel @Inject constructor(
                     ?: continueTarget(details)
                     ?: (details.seasons.firstOrNull()?.number to null)
                 if (season != null) {
-                    val prefetched = earlyEpisodes?.takeIf { season == earlySeason && !playImmediately }
+                    val prefetched = earlyEpisodes?.takeIf { season == earlySeason && !playImmediately && it.isNotEmpty() }
                     if (prefetched != null) {
                         val selected = episode?.let { n -> prefetched.firstOrNull { it.number == n } }
                             ?: prefetched.firstOrNull()
@@ -833,8 +875,8 @@ class DetailsViewModel @Inject constructor(
         updateContent { it.copy(sourceProbes = preserved, probingDone = pending.isEmpty()) }
         if (pending.isEmpty()) return
         probeJob = viewModelScope.launch {
-            val gate = Semaphore(3)
-            withTimeoutOrNull(12_000L) {
+            val gate = Semaphore(6)
+            withTimeoutOrNull(10_000L) {
                 coroutineScope {
                     pending.map { src ->
                         launch {
@@ -1035,5 +1077,9 @@ class DetailsViewModel @Inject constructor(
         const val STARTUP_TRACE_TAG = "StartupTrace"
         const val MAX_QUEUE = 30
         const val MIN_CACHED_TO_START = 3
+        val MULTI_SEASON_TITLE_REGEX = Regex(
+            "(?:第[一二三四五六七八九十百零两\\d]+[季部]|(?:Season|Series|Part)\\s*[IVX\\d]+|年番\\s*\\d*|特别篇|前传|后传|番外)",
+            RegexOption.IGNORE_CASE,
+        )
     }
 }

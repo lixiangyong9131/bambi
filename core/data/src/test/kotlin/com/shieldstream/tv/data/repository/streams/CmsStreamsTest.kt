@@ -1,8 +1,11 @@
 package com.shieldstream.tv.data.repository.streams
 
+import com.shieldstream.tv.model.CatalogItem
+import com.shieldstream.tv.model.MediaType
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import okhttp3.OkHttpClient
@@ -88,15 +91,9 @@ class CmsStreamsTest {
     }
 
     @Test
-    fun `sources include verified dyttzy, ruyi, bfzy, ikun, and 360zy`() {
+    fun `sources include top five verified dyttzy, bfzy, ruyi, ffzy, and ikun`() {
         val labels = CmsStreams.SOURCES.map { it.first }
-        assertTrue("电影天堂" in labels)
-        assertTrue("如意资源" in labels)
-        assertTrue("魔都资源" in labels)
-        assertTrue("无尽资源" in labels)
-        assertTrue("暴风资源" in labels)
-        assertTrue("iKun资源" in labels)
-        assertTrue("360资源" in labels)
+        assertEquals(listOf("电影天堂", "暴风资源", "如意资源", "非凡影视", "iKun资源"), labels)
     }
 
     @Test
@@ -128,5 +125,67 @@ class CmsStreamsTest {
         } finally {
             server.close()
         }
+    }
+
+    @Test
+    fun `pickBestMatch uses year and category hints to pick 1994 live-action drama over same-title anime`() {
+        val json = Json { ignoreUnknownKeys = true }
+        val rows = listOf(
+            json.parseToJsonElement("""{"vod_id":33299,"vod_name":"三国演义","type_name":"国产动漫","vod_year":"2025"}""").jsonObject,
+            json.parseToJsonElement("""{"vod_id":58244,"vod_name":"三国演义1994","type_name":"国产剧","vod_year":"1994"}""").jsonObject,
+            json.parseToJsonElement("""{"vod_id":338,"vod_name":"三国演义","type_name":"日韩动漫","vod_year":"2009"}""").jsonObject,
+        )
+
+        val liveActionHint = CmsStreams.MatchHint(year = 1994, isTv = true, isAnime = false)
+        val pickedDrama = cms.pickBestMatch(rows, "三国演义", liveActionHint)
+        assertEquals("58244", pickedDrama?.get("vod_id")?.toString())
+
+        val animeHint = CmsStreams.MatchHint(year = 2009, isTv = true, isAnime = true)
+        val pickedAnime = cms.pickBestMatch(rows, "三国演义", animeHint)
+        assertEquals("338", pickedAnime?.get("vod_id")?.toString())
+    }
+
+    @Test
+    fun `matchHintFor leaves isAnime null when genres are empty`() {
+        val emptyGenres = CatalogItem(
+            id = "37457082",
+            imdbId = null,
+            type = MediaType.TV,
+            title = "凡人修仙传 年番4",
+            overview = "",
+            posterUrl = null,
+            backdropUrl = null,
+            year = 2026,
+            rating = 8.9f,
+            genres = emptyList(),
+        )
+        assertNull(cms.matchHintFor(emptyGenres).isAnime)
+
+        val animeGenres = emptyGenres.copy(genres = listOf("动作", "动画", "奇幻"))
+        assertEquals(true, cms.matchHintFor(animeGenres).isAnime)
+    }
+
+    @Test
+    fun `pickBestMatch picks continuous anime over newer live-action and short dramas`() {
+        val json = Json { ignoreUnknownKeys = true }
+        val combinedDonghua = json.parseToJsonElement(
+            """{"vod_id":9145,"vod_name":"凡人修仙传","type_name":"国产动漫","vod_year":"2020"}""",
+        ).jsonObject
+        val liveActionRemake = json.parseToJsonElement(
+            """{"vod_id":112168,"vod_name":"凡人修仙传2025","type_name":"国产剧","vod_year":"2025"}""",
+        ).jsonObject
+        val liveActionMarked = json.parseToJsonElement(
+            """{"vod_id":97083,"vod_name":"凡人修仙传真人版","type_name":"国产剧","vod_year":"2025"}""",
+        ).jsonObject
+        val shortDrama = json.parseToJsonElement(
+            """{"vod_id":51623,"vod_name":"凡人修仙传","type_name":"爽文短剧","vod_year":"2026"}""",
+        ).jsonObject
+
+        val hint = CmsStreams.MatchHint(year = 2026, isTv = true, isAnime = true)
+        val picked = cms.pickBestMatch(listOf(liveActionRemake, liveActionMarked, shortDrama, combinedDonghua), "凡人修仙传 年番4", hint)
+        assertEquals("9145", picked?.get("vod_id")?.toString())
+
+        // Without any anime entry, a live-action drama must not match an anime query.
+        assertNull(cms.pickBestMatch(listOf(liveActionRemake, liveActionMarked, shortDrama), "凡人修仙传 年番4", hint))
     }
 }

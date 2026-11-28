@@ -31,15 +31,25 @@ class DoubanCatalogApi @Inject constructor(
     /** Persistent id->cover so cold-start Continue Watching has art even if suggest is rate-limited. */
     private val coverPrefs = appContext.getSharedPreferences("douban_covers", android.content.Context.MODE_PRIVATE)
     private val ratingLocks = ConcurrentHashMap<String, Mutex>()
+    private fun isLowResCover(url: String?): Boolean =
+        url.isNullOrBlank() || url.contains("imageView2/") || url.contains("s_ratio_poster")
+
     private fun rememberCover(id: Int, url: String) {
-        if (url.isBlank()) return
-        coverCache[id] = url
-        coverPrefs.edit().putString(id.toString(), url).apply()
+        if (url.isBlank() || url.contains("imageView2/")) return
+        val upgraded = TmdbImages.poster(url)
+        coverCache[id] = upgraded
+        coverPrefs.edit().putString(id.toString(), upgraded).apply()
     }
-    /** Douban id -> title, so tvSeason() can look up the CMS episodes by title. */
+    /** Douban id -> title & match hints, so tvSeason() can look up the matching CMS show. */
     private val titleOf = ConcurrentHashMap<Int, String>()
+    private val hintOf = ConcurrentHashMap<Int, com.shieldstream.tv.data.repository.streams.CmsStreams.MatchHint>()
     private data class CachedAbstract(val at: Long, val value: DoubanAbstractDto)
     private val abstractCache = ConcurrentHashMap<String, CachedAbstract>()
+    @Volatile
+    private var abstractCooldownUntil = 0L
+    private data class CachedSeries(val at: Long, val items: List<com.shieldstream.tv.model.CatalogItem>)
+    private val seriesCache = ConcurrentHashMap<String, CachedSeries>()
+    private val seriesLocks = ConcurrentHashMap<String, Mutex>()
     private data class CachedFeed(val at: Long, val items: List<DoubanRexxarCollectionItemDto>)
     private val feedCache = ConcurrentHashMap<String, CachedFeed>()
     private val feedCooldownUntil = ConcurrentHashMap<String, Long>()
@@ -209,9 +219,10 @@ class DoubanCatalogApi @Inject constructor(
     }
 
     override suspend fun tvSeason(id: Int, season: Int, key: String): TmdbSeasonDto = withContext(Dispatchers.IO) {
-        // Modified build: episodes come from the CMS (Douban has none). Use the title cached by details.
+        // Modified build: episodes come from the CMS (Douban has none). Use the title & hint cached by details.
         val title = titleOf[id] ?: return@withContext TmdbSeasonDto()
-        val eps = runCatching { cms.getEpisodes(title) }.getOrDefault(emptyList())
+        val hint = hintOf[id] ?: com.shieldstream.tv.data.repository.streams.CmsStreams.MatchHint(isTv = true)
+        val eps = runCatching { cms.getEpisodes(title, hint) }.getOrDefault(emptyList())
         TmdbSeasonDto(
             season_number = season,
             episodes = eps.map { e ->
@@ -361,13 +372,43 @@ class DoubanCatalogApi @Inject constructor(
 
     private suspend fun searchDouban(query: String): TmdbSearchResponse {
         if (query.isBlank()) return TmdbSearchResponse()
-        // Modified build: query Douban suggest and direct CMS search in parallel, then resolve any
-        // pinyin-suggested Chinese titles concurrently across CMS sources.
-        val (suggestions, initialHits) = coroutineScope {
-            val sugJob = async { runCatching { api.suggest(query) }.getOrDefault(emptyList()) }
+        // Modified build: query Douban suggest (or Rexxar search fallback when movie.douban.com 403s)
+        // and direct CMS search in parallel.
+        val (rawSuggestions, initialHits) = coroutineScope {
+            val sugJob = async {
+                if (System.currentTimeMillis() < abstractCooldownUntil) {
+                    emptyList()
+                } else {
+                    runCatching { api.suggest(query) }.getOrDefault(emptyList())
+                }
+            }
             val cmsJob = async { runCatching { cms.searchTitles(query) }.getOrDefault(emptyList()) }
             sugJob.await() to cmsJob.await()
         }
+        val rexxarSuggestions = if (rawSuggestions.isEmpty()) {
+            runCatching {
+                val enc = java.net.URLEncoder.encode(query, "UTF-8")
+                api.rexxarSearch("$REXXAR_BASE/search?q=$enc&start=0&count=15")
+                    .subjects?.items.orEmpty()
+                    .filter { (it.targetType == "tv" || it.targetType == "movie") && it.target != null }
+                    .mapNotNull { entry ->
+                        val t = entry.target ?: return@mapNotNull null
+                        val clean = cleanTitle(t.title)
+                        if (t.id.isBlank() || clean.isBlank()) return@mapNotNull null
+                        DoubanSuggestDto(
+                            title = clean,
+                            img = t.bestCoverUrl(),
+                            url = "",
+                            id = t.id,
+                            episode = if (entry.targetType == "tv") "1" else "",
+                            year = t.year,
+                        )
+                    }
+            }.getOrDefault(emptyList())
+        } else {
+            emptyList()
+        }
+        val suggestions = if (rawSuggestions.isNotEmpty()) rawSuggestions else rexxarSuggestions
         val rawHits = initialHits.toMutableList()
         if (query.matches(Regex("(?i)^[a-z\\s]+$"))) {
             val cnTitles = LinkedHashSet<String>()
@@ -408,6 +449,7 @@ class DoubanCatalogApi @Inject constructor(
             val did = sug.id.ifBlank { sug.url.extractDoubanId() }
             if (did.isBlank()) continue
             val isTv = sug.episode.isNotBlank()
+            val sugYear = sug.year.ifBlank { null }
             results += TmdbSearchResultDto(
                 id = did.toIntOrNull() ?: did.hashCode(),
                 media_type = if (isTv) "tv" else "movie",
@@ -415,13 +457,15 @@ class DoubanCatalogApi @Inject constructor(
                 name = if (isTv) sugTitle else null,
                 overview = "",
                 poster_path = sug.img,
+                release_date = if (!isTv) sugYear else null,
+                first_air_date = if (isTv) sugYear else null,
                 vote_average = 0.0,
             )
         }
         // CMS titles with no Douban suggestion: still show them (playable, no poster).
         for (hit in hits) {
             if (suggestions.any { matches(hit.title, it.title) }) continue
-            val isTv = hit.type.contains("剧")
+            val isTv = hit.type.contains("剧") || hit.type.contains("动漫") || hit.type.contains("动画")
             results += TmdbSearchResultDto(
                 id = hit.id.toIntOrNull() ?: hit.title.hashCode(),
                 media_type = if (isTv) "tv" else "movie",
@@ -430,6 +474,7 @@ class DoubanCatalogApi @Inject constructor(
                 overview = hit.remarks,
                 poster_path = null,
                 vote_average = 0.0,
+                genres = listOf(hit.type).filter { it.isNotBlank() },
             )
         }
         android.util.Log.i("DoubanHome", "search results -> ${results.size}")
@@ -437,16 +482,30 @@ class DoubanCatalogApi @Inject constructor(
     }
 
     private suspend fun movieDetail(id: Int, full: Boolean): TmdbMovieDetailDto {
-        val (abstractDto, rexxar) = coroutineScope {
+        val (abstractDto, initialRexxar) = coroutineScope {
             val absJob = async { safeAbstract(id.toString()) }
-            val rexJob = async { if (full) rexxarDetail("movie", id) else (null to null) }
+            val rexJob = async {
+                if (full || System.currentTimeMillis() < abstractCooldownUntil) rexxarDetail("movie", id) else (null to null)
+            }
             absJob.await() to rexJob.await()
+        }
+        val rexxar = if (abstractDto?.subject == null && initialRexxar.first == null) {
+            rexxarDetail("movie", id)
+        } else {
+            initialRexxar
         }
         val s = abstractDto?.subject
         val rxSubject = rexxar.first
         val rawTitle = s?.title ?: rxSubject?.title.orEmpty()
         if (rawTitle.isBlank()) return TmdbMovieDetailDto(id = id)
         val clean = cleanTitle(rawTitle)
+        val genresList = s?.types?.takeIf { it.isNotEmpty() } ?: rxSubject?.genres.orEmpty()
+        val releaseYearStr = (s?.releaseYear ?: rxSubject?.year.orEmpty()).ifBlank { null }
+        val matchHint = com.shieldstream.tv.data.repository.streams.CmsStreams.MatchHint(
+            year = releaseYearStr?.let { Regex("\\d{4}").find(it)?.value?.toIntOrNull() },
+            isTv = false,
+            isAnime = genresList.any { it.contains("动画") || it.equals("Animation", ignoreCase = true) },
+        )
         val fallbackScore = (s?.rate?.toDoubleOrNull() ?: rxSubject?.rating?.value ?: 0.0).toFloat()
         val doubanRating = if (full) buildRatingDto(rxSubject, rexxar.second, fallbackScore) else null
         val (cover, synopsis) = coroutineScope {
@@ -454,7 +513,7 @@ class DoubanCatalogApi @Inject constructor(
             val fallbackDesc = s?.shortComment?.content.orEmpty().ifBlank { rxSubject?.intro.orEmpty() }
             val descJob = async {
                 if (full) {
-                    runCatching { cms.getDescription(clean) }.getOrDefault("").ifBlank { fallbackDesc }
+                    runCatching { cms.getDescription(clean, matchHint) }.getOrDefault("").ifBlank { fallbackDesc }
                 } else {
                     fallbackDesc
                 }
@@ -472,26 +531,41 @@ class DoubanCatalogApi @Inject constructor(
             overview = synopsis,
             poster_path = cover,
             backdrop_path = cover,
-            release_date = (s?.releaseYear ?: rxSubject?.year.orEmpty()).ifBlank { null },
+            release_date = releaseYearStr,
             vote_average = (doubanRating?.score?.toDouble() ?: fallbackScore.toDouble()),
-            genres = (s?.types?.takeIf { it.isNotEmpty() } ?: rxSubject?.genres.orEmpty()).map { TmdbGenreDto(name = it) },
+            genres = genresList.map { TmdbGenreDto(name = it) },
             credits = cast,
             douban_rating = doubanRating,
         )
     }
 
     private suspend fun tvDetail(id: Int, full: Boolean): TmdbTvDetailDto {
-        val (abstractDto, rexxar) = coroutineScope {
+        val (abstractDto, initialRexxar) = coroutineScope {
             val absJob = async { safeAbstract(id.toString()) }
-            val rexJob = async { if (full) rexxarDetail("tv", id) else (null to null) }
+            val rexJob = async {
+                if (full || System.currentTimeMillis() < abstractCooldownUntil) rexxarDetail("tv", id) else (null to null)
+            }
             absJob.await() to rexJob.await()
+        }
+        val rexxar = if (abstractDto?.subject == null && initialRexxar.first == null) {
+            rexxarDetail("tv", id)
+        } else {
+            initialRexxar
         }
         val s = abstractDto?.subject
         val rxSubject = rexxar.first
         val rawTitle = s?.title ?: rxSubject?.title.orEmpty()
         if (rawTitle.isBlank()) return TmdbTvDetailDto(id = id)
         val clean = cleanTitle(rawTitle)
+        val genresList = s?.types?.takeIf { it.isNotEmpty() } ?: rxSubject?.genres.orEmpty()
+        val releaseYearStr = (s?.releaseYear ?: rxSubject?.year.orEmpty()).ifBlank { null }
+        val matchHint = com.shieldstream.tv.data.repository.streams.CmsStreams.MatchHint(
+            year = releaseYearStr?.let { Regex("\\d{4}").find(it)?.value?.toIntOrNull() },
+            isTv = true,
+            isAnime = genresList.any { it.contains("动画") || it.equals("Animation", ignoreCase = true) },
+        )
         titleOf[id] = clean
+        hintOf[id] = matchHint
         val fallbackScore = (s?.rate?.toDoubleOrNull() ?: rxSubject?.rating?.value ?: 0.0).toFloat()
         val doubanRating = if (full) buildRatingDto(rxSubject, rexxar.second, fallbackScore) else null
         // Modified build: Douban has no season data. Fetch cover + CMS bundle in parallel only when
@@ -499,12 +573,12 @@ class DoubanCatalogApi @Inject constructor(
         val (cover, epsCount, synopsis) = coroutineScope {
             val coverJob = async { coverFor(id, rawTitle, rxSubject?.pic) }
             val epsJob = async {
-                if (full) runCatching { cms.getEpisodes(clean).size }.getOrDefault(0) else 0
+                if (full) runCatching { cms.getEpisodes(clean, matchHint).size }.getOrDefault(0) else 0
             }
             val fallbackDesc = s?.shortComment?.content.orEmpty().ifBlank { rxSubject?.intro.orEmpty() }
             val descJob = async {
                 if (full) {
-                    runCatching { cms.getDescription(clean) }.getOrDefault("").ifBlank { fallbackDesc }
+                    runCatching { cms.getDescription(clean, matchHint) }.getOrDefault("").ifBlank { fallbackDesc }
                 } else {
                     fallbackDesc
                 }
@@ -626,15 +700,18 @@ class DoubanCatalogApi @Inject constructor(
         return out
     }
 
-    /** Modified build: fill the cover from Douban suggest when the list cache is empty
-     * (e.g. Continue Watching rebuilds items by id on a cold start). */
+    /** Modified build: fill the cover from Rexxar / Douban suggest, upgrading any low-res search thumbnails. */
     private suspend fun coverFor(id: Int, title: String, rexxarPic: DoubanRexxarPicDto? = null): String? {
-        coverCache[id]?.let { return it }
-        coverPrefs.getString(id.toString(), null)?.let { coverCache[id] = it; return it }
-        val picUrl = rexxarPic?.large?.takeIf { it.isNotBlank() } ?: rexxarPic?.normal?.takeIf { it.isNotBlank() }
+        val picUrl = rexxarPic?.large?.takeIf { it.isNotBlank() && !it.contains("imageView2/") }
+            ?: rexxarPic?.normal?.takeIf { it.isNotBlank() && !it.contains("imageView2/") }
         if (picUrl != null) {
             rememberCover(id, picUrl)
-            return picUrl
+            return TmdbImages.poster(picUrl)
+        }
+        coverCache[id]?.takeIf { !isLowResCover(it) }?.let { return it }
+        coverPrefs.getString(id.toString(), null)?.takeIf { !isLowResCover(it) }?.let {
+            coverCache[id] = it
+            return it
         }
         // Titles may carry an English original suffix ("肖申克的救赎 The Shawshank Redemption")
         // which Douban suggest does not index - strip it so the Chinese title matches.
@@ -642,10 +719,16 @@ class DoubanCatalogApi @Inject constructor(
         if (q.any { it.code > 0x2E80 }) {
             q = q.replace(Regex(" *[A-Za-z][A-Za-z0-9 '’.,!?-]*$"), "").trim()
         }
+        if (System.currentTimeMillis() < abstractCooldownUntil) {
+            return coverCache[id] ?: coverPrefs.getString(id.toString(), null)
+        }
         val img = runCatching { api.suggest(q).firstOrNull()?.img }
             .getOrDefault(null)
-        if (!img.isNullOrBlank()) rememberCover(id, img)
-        return img
+        if (!img.isNullOrBlank()) {
+            rememberCover(id, img)
+            return TmdbImages.poster(img)
+        }
+        return coverCache[id] ?: coverPrefs.getString(id.toString(), null)
     }
 
     private data class RexxarBundle(val at: Long, val subject: DoubanRexxarSubjectDto?, val stats: DoubanRexxarStatsDto?)
@@ -704,13 +787,226 @@ class DoubanCatalogApi @Inject constructor(
     private suspend fun safeAbstract(id: String): DoubanAbstractDto? {
         val now = System.currentTimeMillis()
         abstractCache[id]?.takeIf { now - it.at < ABSTRACT_CACHE_MS }?.let { return it.value }
+        if (now < abstractCooldownUntil) return null
         val resp = runCatching {
             api.abstract("https://movie.douban.com/j/subject_abstract?subject_id=$id")
-        }.getOrNull()
+        }.getOrElse {
+            // movie.douban.com may return HTTP 403/418 under burst load; cool down briefly so lookups fall back to m.douban.com.
+            abstractCooldownUntil = now + ABSTRACT_COOLDOWN_MS
+            null
+        }
         if (resp?.subject != null) {
+            abstractCooldownUntil = 0L
             abstractCache[id] = CachedAbstract(now, resp)
         }
         return resp
+    }
+
+    /**
+     * Queries Douban public search + suggest concurrently to collect all seasons / installments
+     * belonging to the same TV series (e.g. 绝命毒师 第一季..第五季, 凡人修仙传 年番4..).
+     */
+    suspend fun getSeriesWorks(item: com.shieldstream.tv.model.CatalogItem): List<com.shieldstream.tv.model.CatalogItem> =
+        withContext(Dispatchers.IO) {
+            if (item.type != com.shieldstream.tv.model.MediaType.TV) return@withContext emptyList()
+            val queries = seriesQueryCandidates(item.title)
+            val base = queries.lastOrNull().orEmpty()
+            if (base.length < 2) return@withContext emptyList()
+            val itemIsAnime = if (item.genres.isEmpty()) {
+                null
+            } else {
+                item.genres.any { it.contains("动画") || it.contains("动漫") || it.equals("Animation", ignoreCase = true) }
+            }
+            val cacheKey = "${base}_${itemIsAnime ?: "any"}"
+            val raw = seriesLocks.getOrPut(cacheKey) { Mutex() }.withLock {
+                val now = System.currentTimeMillis()
+                seriesCache[cacheKey]?.takeIf { now - it.at < SERIES_CACHE_MS }?.let { return@withLock it.items }
+
+                val merged = LinkedHashMap<String, com.shieldstream.tv.model.CatalogItem>()
+                for (q in queries) {
+                    val (rexxarItems, suggestItems) = coroutineScope {
+                        val rxJob = async {
+                            runCatching {
+                                val enc = java.net.URLEncoder.encode(q, "UTF-8")
+                                api.rexxarSearch("$REXXAR_BASE/search?q=$enc&type=tv&start=0&count=20")
+                                    .subjects?.items.orEmpty()
+                                    .filter { it.targetType == "tv" && it.target != null }
+                                    .mapNotNull { it.target }
+                            }.getOrDefault(emptyList())
+                        }
+                        val sgJob = async {
+                            runCatching { api.suggest(q) }.getOrDefault(emptyList())
+                                .filter { it.episode.isNotBlank() }
+                        }
+                        rxJob.await() to sgJob.await()
+                    }
+                    for (t in rexxarItems) {
+                        val candId = t.id.trim()
+                        val title = cleanTitle(t.title)
+                        if (candId.isBlank() || title.isBlank()) continue
+                        val candGenres = t.subtitleGenres()
+                        if (!matchesSeries(q, title, candGenres, itemIsAnime)) continue
+                        val cover = t.bestCoverUrl().takeIf { it.isNotBlank() }?.let { TmdbImages.poster(it) }
+                        val yr = t.year.takeIf { YEAR_4_REGEX.matches(it) }?.toIntOrNull()
+                            ?: YEAR_ANY_REGEX.find(t.cardSubtitle)?.value?.toIntOrNull()
+                        val numericId = candId.toIntOrNull() ?: candId.hashCode()
+                        t.bestCoverUrl().takeIf { it.isNotBlank() }?.let { rememberCover(numericId, it) }
+                        merged[candId] = com.shieldstream.tv.model.CatalogItem(
+                            id = candId,
+                            imdbId = null,
+                            type = com.shieldstream.tv.model.MediaType.TV,
+                            title = title,
+                            overview = t.cardSubtitle,
+                            posterUrl = cover,
+                            backdropUrl = cover,
+                            year = yr,
+                            rating = t.rating?.value?.toFloat()?.takeIf { it > 0f },
+                            genres = candGenres,
+                        )
+                    }
+                    for (sug in suggestItems) {
+                        val candId = sug.id.ifBlank { sug.url.extractDoubanId() }.trim()
+                        val title = cleanTitle(sug.title)
+                        if (candId.isBlank() || title.isBlank()) continue
+                        if (!matchesSeries(q, title, emptyList(), itemIsAnime)) continue
+                        if (merged.containsKey(candId)) continue
+                        val cover = sug.img.takeIf { it.isNotBlank() }?.let { TmdbImages.poster(it) }
+                        val yr = sug.year.takeIf { YEAR_4_REGEX.matches(it) }?.toIntOrNull()
+                        val numericId = candId.toIntOrNull() ?: candId.hashCode()
+                        sug.img.takeIf { it.isNotBlank() }?.let { rememberCover(numericId, it) }
+                        merged[candId] = com.shieldstream.tv.model.CatalogItem(
+                            id = candId,
+                            imdbId = null,
+                            type = com.shieldstream.tv.model.MediaType.TV,
+                            title = title,
+                            overview = sug.episode.takeIf { it.isNotBlank() }?.let { "全${it}集" }.orEmpty(),
+                            posterUrl = cover,
+                            backdropUrl = cover,
+                            year = yr,
+                            rating = null,
+                            genres = emptyList(),
+                        )
+                    }
+                    if (merged.size >= 2) break
+                }
+                val enriched = if (merged.size >= 2) {
+                    coroutineScope {
+                        merged.values.map { entry ->
+                            async {
+                                val numId = entry.id.toIntOrNull()
+                                if (numId != null && (isLowResCover(entry.posterUrl) || entry.rating == null)) {
+                                    val (subj, _) = rexxarDetail("tv", numId)
+                                    val hdCover = subj?.pic?.let { pic ->
+                                        pic.large.takeIf { it.isNotBlank() } ?: pic.normal.takeIf { it.isNotBlank() }
+                                    }?.let { rawUrl ->
+                                        rememberCover(numId, rawUrl)
+                                        TmdbImages.poster(rawUrl)
+                                    }
+                                    entry.copy(
+                                        posterUrl = hdCover ?: entry.posterUrl,
+                                        backdropUrl = hdCover ?: entry.backdropUrl,
+                                        rating = entry.rating ?: subj?.rating?.value?.toFloat()?.takeIf { it > 0f },
+                                        genres = entry.genres.ifEmpty { subj?.genres.orEmpty() },
+                                    )
+                                } else {
+                                    entry
+                                }
+                            }
+                        }.awaitAll()
+                    }
+                } else {
+                    merged.values.toList()
+                }
+                val list = enriched.sortedWith(
+                    compareBy<com.shieldstream.tv.model.CatalogItem>(
+                        { it.year ?: Int.MAX_VALUE },
+                        { seriesSeasonOrdinal(it.title) ?: 0 },
+                        { it.id },
+                    ),
+                )
+                if (list.isNotEmpty()) {
+                    seriesCache[cacheKey] = CachedSeries(now, list)
+                }
+                list
+            }
+            if (raw.size <= 1) return@withContext raw
+            // Ensure current item stays represented if Douban search omitted that exact ID.
+            val withCurrent = if (raw.any { it.id == item.id }) {
+                raw
+            } else {
+                (raw + item).sortedWith(
+                    compareBy<com.shieldstream.tv.model.CatalogItem>(
+                        { it.year ?: Int.MAX_VALUE },
+                        { seriesSeasonOrdinal(it.title) ?: 0 },
+                        { it.id },
+                    ),
+                )
+            }
+            withCurrent
+        }
+
+    internal fun seriesQueryCandidates(rawTitle: String): List<String> {
+        val cleaned = cleanTitle(rawTitle)
+        if (cleaned.isBlank()) return emptyList()
+        val out = LinkedHashSet<String>()
+        val stripped = stripSeasonMarkers(cleaned)
+        if (stripped.length >= 2) out += stripped
+        val beforeColon = stripped.replace(Regex("[:：].*$"), "").trim()
+        if (beforeColon.length >= 2) out += beforeColon
+        val zhiIdx = beforeColon.indexOf('之')
+        if (zhiIdx >= 3) out += beforeColon.substring(0, zhiIdx).trim()
+        return out.toList()
+    }
+
+    private fun stripSeasonMarkers(title: String): String {
+        var current = title.trim()
+        val trailingSeason = Regex(
+            "\\s*(?:第[一二三四五六七八九十百零两\\d]+[季部辑篇]|(?:Season|Series|Part|Vol\\.?|Book)\\s*[IVX\\d]+|S\\d{1,2}|年番\\s*\\d*|特别篇|番外篇?|前传|后传|终章|完结篇)$",
+            RegexOption.IGNORE_CASE,
+        )
+        repeat(2) {
+            val next = current.replace(trailingSeason, "").trim()
+            if (next.length >= 2 && next != current) current = next
+        }
+        return current
+    }
+
+    private fun matchesSeries(
+        base: String,
+        candidateTitle: String,
+        candidateGenres: List<String>,
+        itemIsAnime: Boolean?,
+    ): Boolean {
+        if (candidateTitle.contains("预告") || candidateTitle.contains("花絮")) return false
+        val normBase = base.replace(Regex("\\s+"), "")
+        val normCand = cleanTitle(candidateTitle).replace(Regex("\\s+"), "")
+        val candBase = stripSeasonMarkers(candidateTitle).replace(Regex("\\s+"), "")
+        val titleOk = candBase.equals(normBase, ignoreCase = true) || (
+            normBase.length >= 2 &&
+                normCand.startsWith(normBase, ignoreCase = true) &&
+                (normCand.length == normBase.length || normCand[normBase.length] in SERIES_BOUNDARY_CHARS)
+            )
+        if (!titleOk) return false
+        if (itemIsAnime != null && candidateGenres.isNotEmpty()) {
+            val candIsAnime = candidateGenres.any {
+                it.contains("动画") || it.contains("动漫") || it.equals("Animation", ignoreCase = true)
+            }
+            if (candIsAnime != itemIsAnime) return false
+        }
+        return true
+    }
+
+    private fun seriesSeasonOrdinal(title: String): Int? {
+        Regex("第([一二三四五六七八九十\\d]+)[季部]").find(title)?.groupValues?.getOrNull(1)?.let { token ->
+            return when (token) {
+                "一" -> 1; "二" -> 2; "三" -> 3; "四" -> 4; "五" -> 5
+                "六" -> 6; "七" -> 7; "八" -> 8; "九" -> 9; "十" -> 10
+                else -> token.toIntOrNull()
+            }
+        }
+        Regex("年番\\s*(\\d+)").find(title)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { return it }
+        Regex("(?:Season|Part)\\s*(\\d+)", RegexOption.IGNORE_CASE).find(title)?.groupValues?.getOrNull(1)?.toIntOrNull()?.let { return it }
+        return null
     }
 
     private fun info(message: String) {
@@ -723,11 +1019,14 @@ class DoubanCatalogApi @Inject constructor(
 
     private companion object {
         const val ABSTRACT_CACHE_MS = 6 * 60 * 60 * 1000L
+        const val ABSTRACT_COOLDOWN_MS = 5 * 60 * 1000L
+        const val SERIES_CACHE_MS = 30 * 60 * 1000L
         const val RATE_LIMIT_COOLDOWN_MS = 60_000L
         const val REXXAR_BASE = "https://m.douban.com/rexxar/api/v2"
         const val PAGE_SIZE = 20
         val YEAR_4_REGEX = Regex("^\\d{4}$")
         val YEAR_ANY_REGEX = Regex("(?:19|20)\\d{2}")
+        val SERIES_BOUNDARY_CHARS = setOf('第', '年', '：', ':', '之', '前', '后', '特', '番', '剧', '续', '全', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'S', 's')
     }
 
     private fun cleanTitle(t: String) = t.replace(Regex("\\s*\\((?:19|20)\\d{2}\\)\\s*"), "").trim()
@@ -749,41 +1048,48 @@ class DoubanCatalogApi @Inject constructor(
             backdrop_path = cover.ifBlank { null },
             release_date = releaseYearString(),
             vote_average = rating?.value ?: 0.0,
+            genres = subtitleGenres(),
         )
     }
 
     private fun DoubanRexxarCollectionItemDto.toTvDto(): TmdbTvDto {
         val cover = bestCoverUrl()
         val numericId = id.toIntOrNull() ?: id.hashCode()
+        val clean = cleanTitle(title)
         rememberCover(numericId, cover)
+        if (clean.isNotBlank()) titleOf.putIfAbsent(numericId, clean)
         return TmdbTvDto(
             id = numericId,
-            name = cleanTitle(title),
+            name = clean,
             overview = description.ifBlank { cardSubtitle },
             poster_path = cover.ifBlank { null },
             backdrop_path = cover.ifBlank { null },
             first_air_date = releaseYearString(),
             vote_average = rating?.value ?: 0.0,
+            genres = subtitleGenres(),
         )
     }
 
     private fun DoubanRexxarCollectionItemDto.toSearchDto(defaultType: String): TmdbSearchResultDto {
         val cover = bestCoverUrl()
         val numericId = id.toIntOrNull() ?: id.hashCode()
+        val clean = cleanTitle(title)
         rememberCover(numericId, cover)
         val kind = if (type == "movie" || type == "tv") type else defaultType
+        if (kind == "tv" && clean.isNotBlank()) titleOf.putIfAbsent(numericId, clean)
         val yearStr = releaseYearString()
         return TmdbSearchResultDto(
             id = numericId,
             media_type = kind,
-            title = if (kind == "movie") cleanTitle(title) else null,
-            name = if (kind == "tv") cleanTitle(title) else null,
+            title = if (kind == "movie") clean else null,
+            name = if (kind == "tv") clean else null,
             overview = description.ifBlank { cardSubtitle },
             poster_path = cover.ifBlank { null },
             backdrop_path = cover.ifBlank { null },
             release_date = if (kind == "movie") yearStr else null,
             first_air_date = if (kind == "tv") yearStr else null,
             vote_average = rating?.value ?: 0.0,
+            genres = subtitleGenres(),
         )
     }
 
@@ -798,7 +1104,11 @@ class DoubanCatalogApi @Inject constructor(
     )
 
     private fun DoubanSubjectDto.toTvDto() = TmdbTvDto(
-        id = (id.toIntOrNull() ?: id.hashCode()).also { rememberCover(it, cover) },
+        id = (id.toIntOrNull() ?: id.hashCode()).also {
+            rememberCover(it, cover)
+            val clean = cleanTitle(title)
+            if (clean.isNotBlank()) titleOf.putIfAbsent(it, clean)
+        },
         name = cleanTitle(title),
         overview = "",
         poster_path = cover,

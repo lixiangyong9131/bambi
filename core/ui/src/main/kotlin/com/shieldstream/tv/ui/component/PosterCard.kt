@@ -2,13 +2,8 @@ package com.shieldstream.tv.ui.component
 
 import com.shieldstream.tv.ui.theme.AppColors
 import com.shieldstream.tv.ui.theme.LocalLightweightUi
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -66,11 +61,7 @@ private fun focusScale(focused: Boolean, target: Float): Float =
     if (LocalLightweightUi.current) {
         if (focused) target else 1f
     } else {
-        animateFloatAsState(
-            if (focused) target else 1f,
-            tween(120, easing = FastOutSlowInEasing),
-            label = "posterScale",
-        ).value
+        animateFloatAsState(if (focused) target else 1f, tween(90), label = "posterScale").value
     }
 
 /**
@@ -92,7 +83,7 @@ fun PosterCard(
     overlay: @Composable BoxScope.() -> Unit = {},
 ) {
     var focused by remember { mutableStateOf(false) }
-    val scale = focusScale(focused, 1.06f)
+    val scale = focusScale(focused, 1.05f)
     val context = LocalContext.current
     val posterRequest = remember(item.posterUrl, context) {
         item.posterUrl?.let { url ->
@@ -170,26 +161,19 @@ fun PosterCard(
             }
         }
         val focusYear = remember(item.year) { item.year?.toString() }
-        if (showYearOnFocus && focusYear != null) {
-            AnimatedVisibility(
-                visible = focused,
-                enter = fadeIn(tween(120)),
-                exit = fadeOut(tween(90)),
+        if (showYearOnFocus && focused && focusYear != null) {
+            Text(
+                text = focusYear,
+                color = Color.White,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.SemiBold,
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(6.dp),
-            ) {
-                Text(
-                    text = focusYear,
-                    color = Color.White,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color.Black.copy(alpha = 0.78f))
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                )
-            }
+                    .padding(6.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color.Black.copy(alpha = 0.78f))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+            )
         }
     }
 }
@@ -282,17 +266,15 @@ fun ContinueCard(
     onFocused: () -> Unit = {},
     newEpisodeCount: Int = 0,
 ) {
-    var focused by remember { mutableStateOf(false) }
-    val barHeight by animateDpAsState(if (focused) 5.dp else 3.dp, tween(120), label = "continueBar")
     PosterCard(
         item = item,
         onClick = onClick,
-        modifier = modifier.onFocusChanged { focused = it.hasFocus },
+        modifier = modifier,
         onFocused = onFocused,
         onLongClick = onLongClick,
         newEpisodeCount = newEpisodeCount,
     ) {
-        BottomLabel(label, fraction, barHeight = barHeight)
+        BottomLabel(label, fraction)
     }
 }
 

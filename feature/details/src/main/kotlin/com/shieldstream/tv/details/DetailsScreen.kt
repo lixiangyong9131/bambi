@@ -6,7 +6,6 @@ import com.shieldstream.tv.strings.localizedStringResource
 import com.shieldstream.tv.domain.TraktRatingTarget
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -127,7 +126,7 @@ internal fun upcomingEpisodeDate(airDate: String?, today: String): String? =
 fun DetailsScreen(
     onBack: () -> Unit,
     onPlay: () -> Unit,
-    onOpenPerson: (Int) -> Unit = {},
+    @Suppress("UNUSED_PARAMETER") onOpenPerson: (Int) -> Unit = {},
     onOpenItem: (com.shieldstream.tv.model.CatalogItem) -> Unit = {},
     onOpenTrailer: (List<String>) -> Unit = {},
     viewModel: DetailsViewModel = hiltViewModel(),
@@ -158,7 +157,7 @@ fun DetailsScreen(
                 color = Color.White,
                 modifier = Modifier.align(Alignment.Center),
             )
-            is DetailsUiState.Content -> DetailsContent(s, viewModel, onBack, onOpenPerson, onOpenItem, onOpenTrailer)
+            is DetailsUiState.Content -> DetailsContent(s, viewModel, onBack, onOpenItem, onOpenTrailer)
         }
     }
 }
@@ -168,7 +167,6 @@ private fun DetailsContent(
     state: DetailsUiState.Content,
     viewModel: DetailsViewModel,
     onBack: () -> Unit,
-    onOpenPerson: (Int) -> Unit,
     onOpenItem: (com.shieldstream.tv.model.CatalogItem) -> Unit,
     onOpenTrailer: (List<String>) -> Unit,
 ) {
@@ -192,14 +190,17 @@ private fun DetailsContent(
         }
     }
     var actionsOpen by remember { mutableStateOf(false) }
+    var seriesOpen by remember { mutableStateOf(false) }
+    var restoreFocusToSeries by remember { mutableStateOf(false) }
     var skipDialogOpen by remember { mutableStateOf(false) }
     var ratingTarget by remember { mutableStateOf<TraktRatingTarget?>(null) }
     var episodeMenu by remember { mutableStateOf<Episode?>(null) }
-    BackHandler(enabled = skipDialogOpen || actionsOpen || episodeMenu != null || !panelOpen) {
+    BackHandler(enabled = skipDialogOpen || actionsOpen || seriesOpen || episodeMenu != null || !panelOpen) {
         when {
             skipDialogOpen -> skipDialogOpen = false
             ratingTarget != null -> ratingTarget = null
             episodeMenu != null -> episodeMenu = null
+            seriesOpen -> seriesOpen = false
             else -> when (detailsBackAction(actionsOpen, panelOpen)) {
                 DetailsBackAction.DISMISS_ACTIONS -> actionsOpen = false
                 DetailsBackAction.DISMISS_SOURCES -> panelOpen = false
@@ -209,20 +210,27 @@ private fun DetailsContent(
     }
 
     val playRequester = remember { FocusRequester() }
+    val seriesRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         withFrameNanos { }
         runCatching { playRequester.requestFocus() }
     }
-    LaunchedEffect(panelOpen, actionsOpen, episodeMenu, skipDialogOpen) {
-        if (!panelOpen && !actionsOpen && episodeMenu == null && !skipDialogOpen) {
+    LaunchedEffect(panelOpen, actionsOpen, seriesOpen, episodeMenu, skipDialogOpen) {
+        if (!panelOpen && !actionsOpen && !seriesOpen && episodeMenu == null && !skipDialogOpen) {
             withFrameNanos { }
-            runCatching { playRequester.requestFocus() }
+            if (restoreFocusToSeries) {
+                restoreFocusToSeries = false
+                runCatching { seriesRequester.requestFocus() }
+                    .onFailure { runCatching { playRequester.requestFocus() } }
+            } else {
+                runCatching { playRequester.requestFocus() }
+            }
         }
     }
 
     val item = state.details.item
 
-    Box(Modifier.fillMaxSize().onBackKey(enabled = panelOpen && !actionsOpen) { panelOpen = false }) {
+    Box(Modifier.fillMaxSize().onBackKey(enabled = panelOpen && !actionsOpen && !seriesOpen) { panelOpen = false }) {
         // Modified build: edge-extended ambient backdrop fills the entire Details viewport (top and
         // bottom) so lower sections share the same color wash, while the lowered right cover artwork
         // feathers cleanly into it without zooming or hard seams.
@@ -285,13 +293,23 @@ private fun DetailsContent(
                     details = state.details,
                     state = state,
                     skipConfig = skipConfig,
-                    interactive = !panelOpen && !actionsOpen && episodeMenu == null,
+                    interactive = !panelOpen && !actionsOpen && !seriesOpen && episodeMenu == null,
                     playRequester = playRequester,
+                    seriesRequester = seriesRequester,
                     onPlay = { viewModel.play() },
                     onPlaySource = { source -> viewModel.playSource(source) },
                     onPlayFromStart = { viewModel.play(fromStart = true) },
                     onToggleMyList = { viewModel.toggleMyList() },
                     onOpenActions = { actionsOpen = true },
+                    onOpenSeriesWorks = if (state.isSeries && state.hasMultiSeasonSeries) {
+                        {
+                            restoreFocusToSeries = true
+                            seriesOpen = true
+                            viewModel.ensureSeriesWorksLoaded()
+                        }
+                    } else {
+                        null
+                    },
                     onTrailer = state.details.trailerKey?.let { first -> { onOpenTrailer(state.details.trailerKeys.ifEmpty { listOf(first) }) } },
                     // Al volver a los botones desde abajo, la página sube del todo: si no, la sinopsis quedaba cortada.
                     modifier = Modifier
@@ -310,7 +328,7 @@ private fun DetailsContent(
                 Spacer(Modifier.height(28.dp))
                 SeasonsAndEpisodes(
                     state = state,
-                    interactive = !panelOpen && !actionsOpen && episodeMenu == null,
+                    interactive = !panelOpen && !actionsOpen && !seriesOpen && episodeMenu == null,
                     onSeason = { viewModel.selectSeason(it) },
                     onEpisode = { viewModel.playEpisode(it) },
                     onEpisodeLongPress = { episodeMenu = it },
@@ -318,52 +336,15 @@ private fun DetailsContent(
                 )
             }
 
-            val interactive = !panelOpen && !actionsOpen && episodeMenu == null
-            AnimatedVisibility(
-                visible = state.collection != null,
-                enter = fadeIn(tween(220)),
-            ) {
-                state.collection?.let { saga ->
-                    Column {
-                        Spacer(Modifier.height(28.dp))
-                        SectionTitle(localizedStringResource(StringsR.string.details_collection, saga.name))
-                        PosterStrip(
-                            items = saga.parts,
-                            highlightId = item.id,
-                            onItem = { if (interactive && it.id != item.id) onOpenItem(it) },
-                        )
-                    }
-                }
-            }
-            val people = if (state.showCast) state.details.directors + state.details.cast else emptyList()
-            AnimatedVisibility(
-                visible = people.isNotEmpty(),
-                enter = fadeIn(tween(220)),
-            ) {
-                if (people.isNotEmpty()) {
-                    Column {
-                        Spacer(Modifier.height(28.dp))
-                        val shown = people.distinctBy { it.id }
-                        Row(verticalAlignment = Alignment.Bottom) {
-                            SectionTitle(localizedStringResource(StringsR.string.details_cast))
-                            Text(
-                                text = shown.size.toString(),
-                                color = Grey,
-                                style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.padding(start = 10.dp, bottom = 5.dp),
-                            )
-                        }
-                        PeopleRow(
-                            people = shown,
-                            enabled = interactive,
-                            onPerson = { onOpenPerson(it.id) },
-                            crewIds = state.details.directors.map { it.id }.toSet(),
-                            crewLabel = localizedStringResource(
-                                if (state.isSeries) StringsR.string.details_crew_creator else StringsR.string.details_crew_director,
-                            ),
-                        )
-                    }
-                }
+            val interactive = !panelOpen && !actionsOpen && !seriesOpen && episodeMenu == null
+            state.collection?.let { saga ->
+                Spacer(Modifier.height(28.dp))
+                SectionTitle(localizedStringResource(StringsR.string.details_collection, saga.name))
+                PosterStrip(
+                    items = saga.parts,
+                    highlightId = item.id,
+                    onItem = { if (interactive && it.id != item.id) onOpenItem(it) },
+                )
             }
         }
         }
@@ -382,7 +363,7 @@ private fun DetailsContent(
 
         Box(Modifier.fillMaxSize().zIndex(10f)) {
             AnimatedVisibility(
-                visible = detailsSourcesVisible(panelOpen, actionsOpen),
+                visible = detailsSourcesVisible(panelOpen, actionsOpen || seriesOpen),
                 enter = fadeIn() + slideInHorizontally { it / 3 },
                 exit = fadeOut() + slideOutHorizontally { it / 3 },
             ) {
@@ -398,6 +379,23 @@ private fun DetailsContent(
                     autoPick = remember(state.sources, state.selectedEpisode, state.sourceExclusions, state.brokenSources, state.spanishOnly) {
                         viewModel.autoPlaySource()
                     },
+                )
+            }
+            AnimatedVisibility(
+                visible = seriesOpen && !actionsOpen,
+                enter = fadeIn() + slideInHorizontally { it / 3 },
+                exit = fadeOut() + slideOutHorizontally { it / 3 },
+            ) {
+                SeriesWorksPanel(
+                    currentTitle = item.title,
+                    currentItemId = item.id,
+                    seriesState = state.seriesWorks,
+                    onSelect = { selected ->
+                        seriesOpen = false
+                        if (selected.id != item.id) onOpenItem(selected)
+                    },
+                    onRetry = { viewModel.loadSeriesWorks(force = true) },
+                    onDismiss = { seriesOpen = false },
                 )
             }
             if (actionsOpen) {
@@ -519,19 +517,22 @@ private fun InfoBlock(
     skipConfig: com.shieldstream.tv.domain.ManualSkipRepository.Config,
     interactive: Boolean,
     playRequester: FocusRequester,
+    seriesRequester: FocusRequester,
     onPlay: () -> Unit,
     onPlayFromStart: () -> Unit,
     onToggleMyList: () -> Unit,
-    onOpenActions: () -> Unit,
+    @Suppress("UNUSED_PARAMETER") onOpenActions: () -> Unit,
+    onOpenSeriesWorks: (() -> Unit)?,
     onTrailer: (() -> Unit)?,
     onPlaySource: (com.shieldstream.tv.model.StreamSource) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val item = details.item
-    val skeletonPulse = rememberDetailsSkeletonPulse()
+    val sourcesLoadingForPulse = state.sources is SourcesState.Idle || state.sources is SourcesState.Loading
+    val skeletonPulse = rememberDetailsSkeletonPulse(active = state.detailsLoading || sourcesLoadingForPulse)
     val skeletonPrimary = Color.White.copy(alpha = 0.24f * skeletonPulse)
     val skeletonSecondary = Color.White.copy(alpha = 0.16f * skeletonPulse)
-    Column(modifier.widthIn(max = 580.dp).animateContentSize(tween(200))) {
+    Column(modifier.widthIn(max = 580.dp)) {
         if (details.logoUrl != null) {
             AsyncImage(
                 model = details.logoUrl,
@@ -667,6 +668,7 @@ private fun InfoBlock(
                         .clip(RoundedCornerShape(4.dp))
                         .background(if (synopsisFocused) Color.White else Color.White.copy(alpha = 0.12f))
                         .onFocusChanged { synopsisFocused = it.isFocused }
+                        .horizontalRowBoundary(stopLeft = true, stopRight = true)
                         .tvClickable(enabled = interactive) { expanded = !expanded }
                         .padding(horizontal = 10.dp, vertical = 4.dp),
                 )
@@ -711,21 +713,18 @@ private fun InfoBlock(
                 resumable -> localizedStringResource(StringsR.string.details_resume_episode, episodeCode)
                 else -> localizedStringResource(StringsR.string.details_play_episode, episodeCode)
             }
+            val hasSeriesWorks = onOpenSeriesWorks != null
+            val hasTrailer = onTrailer != null
             TvButton(
                 text = playLabel,
                 icon = AppIcons.Play,
                 loading = state.pendingPlay || sourcesLoading,
                 onClick = onPlay,
                 enabled = interactive,
-                modifier = Modifier.focusRequester(playRequester),
+                modifier = Modifier
+                    .focusRequester(playRequester)
+                    .horizontalRowBoundary(stopLeft = true, stopRight = false),
             )
-            if (resumable && !state.pendingPlay) {
-                TvButton(
-                    text = localizedStringResource(StringsR.string.details_from_the_beginning),
-                    onClick = onPlayFromStart,
-                    enabled = interactive,
-                )
-            }
             TvButton(
                 text = localizedStringResource(
                     if (state.inMyList) StringsR.string.details_in_my_list else StringsR.string.details_my_list,
@@ -733,54 +732,26 @@ private fun InfoBlock(
                 icon = if (state.inMyList) AppIcons.Check else AppIcons.Add,
                 onClick = onToggleMyList,
                 enabled = interactive,
+                modifier = Modifier.horizontalRowBoundary(stopLeft = false, stopRight = !hasSeriesWorks && !hasTrailer),
             )
+            if (onOpenSeriesWorks != null) {
+                TvButton(
+                    text = localizedStringResource(StringsR.string.details_series_works),
+                    icon = AppIcons.List,
+                    onClick = onOpenSeriesWorks,
+                    enabled = interactive,
+                    modifier = Modifier
+                        .focusRequester(seriesRequester)
+                        .horizontalRowBoundary(stopLeft = false, stopRight = !hasTrailer),
+                )
+            }
             if (onTrailer != null) {
                 TvButton(
                     text = localizedStringResource(StringsR.string.details_trailer),
                     icon = AppIcons.Movie,
                     onClick = onTrailer,
                     enabled = interactive,
-                )
-            }
-            if (detailsMoreVisible(state.pendingPlay)) {
-                TvButton(
-                    text = localizedStringResource(StringsR.string.details_more),
-                    onClick = onOpenActions,
-                    enabled = interactive,
-                )
-            }
-        }
-        val readyHint = remember(
-            state.sources,
-            state.sourceExclusions,
-            state.brokenSources,
-            state.spanishOnly,
-            state.selectedEpisode,
-            state.progress,
-            state.sourceProbes,
-        ) {
-            buildReadyStreamHint(state)
-        }
-        if (readyHint != null) {
-            Spacer(Modifier.height(8.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
-            ) {
-                Box(
-                    Modifier
-                        .size(6.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (readyHint.isReady) Color(0xFF46D369) else Color.White.copy(alpha = 0.40f),
-                        ),
-                )
-                Text(
-                    text = readyHint.text,
-                    color = if (readyHint.isReady) Color.White.copy(alpha = 0.78f) else Color.White.copy(alpha = 0.50f),
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.horizontalRowBoundary(stopLeft = false, stopRight = true),
                 )
             }
         }
@@ -809,7 +780,7 @@ private fun InfoBlock(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    items(probedSources.size) { i ->
+                    items(probedSources.size, key = { i -> probedSources[i].id }) { i ->
                         val src = probedSources[i]
                         val probe = state.sourceProbes[src.id]
                         ProbeCard(
@@ -817,6 +788,10 @@ private fun InfoBlock(
                             detail = probe?.summary.orEmpty(),
                             ok = probe?.ok == true,
                             onClick = { onPlaySource(src) },
+                            modifier = Modifier.horizontalRowBoundary(
+                                stopLeft = i == 0,
+                                stopRight = i == probedSources.lastIndex,
+                            ),
                         )
                     }
                 }
@@ -886,7 +861,7 @@ private fun DoubanRatingCard(
     val starGold = Color(0xFFFFAC2D)
     val starDim = Color.White.copy(alpha = 0.22f)
     val barGold = Color(0xFFF6C26B)
-    val pulse = rememberDetailsSkeletonPulse()
+    val pulse = rememberDetailsSkeletonPulse(active = loading && rating == null)
     val skelLight = Color.White.copy(alpha = 0.22f * pulse)
     val skelMuted = Color.White.copy(alpha = 0.14f * pulse)
 
@@ -896,7 +871,6 @@ private fun DoubanRatingCard(
             .clip(cardShape)
             .background(cardBg)
             .border(1.dp, borderCol, cardShape)
-            .animateContentSize(tween(180))
             .padding(horizontal = 16.dp, vertical = 14.dp),
     ) {
         Text(
@@ -1060,7 +1034,8 @@ private fun RatingStarIcon(
 }
 
 @Composable
-private fun rememberDetailsSkeletonPulse(): Float {
+private fun rememberDetailsSkeletonPulse(active: Boolean): Float {
+    if (!active) return 1f
     val transition = rememberInfiniteTransition(label = "detailsSkeleton")
     val pulse by transition.animateFloat(
         initialValue = 0.55f,
@@ -1143,10 +1118,11 @@ private fun ProbeCard(
     detail: String,
     ok: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
     Column(
-        modifier = Modifier
+        modifier = modifier
             .width(190.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(if (focused) Color.White.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.08f))

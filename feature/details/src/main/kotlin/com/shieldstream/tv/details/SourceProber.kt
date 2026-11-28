@@ -197,10 +197,10 @@ class SourceProber @Inject constructor() {
     }
 
     internal companion object {
-        private const val ENTRY_TIMEOUT_MS = 3_500L
-        private const val FOLLOW_TIMEOUT_MS = 1_800L
-        private const val PROBE_BUDGET_MS = 4_000L
-        private const val MIN_FOLLOW_BUDGET_MS = 350L
+        private const val ENTRY_TIMEOUT_MS = 2_800L
+        private const val FOLLOW_TIMEOUT_MS = 1_500L
+        private const val PROBE_BUDGET_MS = 3_500L
+        private const val MIN_FOLLOW_BUDGET_MS = 300L
         private const val READ_CHUNK_BYTES = 4_096L
         private const val MAX_PLAYLIST_BYTES = 128 * 1024L
         private const val MAX_SEGMENT_BYTES = 32 * 1024L

@@ -425,8 +425,9 @@ class HomeViewModel @Inject constructor(
     }
 
     private suspend fun buildContinueRow(entries: List<ContinueEntry>): CatalogRow? {
-        if (entries.isEmpty()) return null
-        val loaded = entries.mapConcurrent(concurrency = 4) { entry ->
+        val capped = entries.take(MAX_CONTINUE_ITEMS)
+        if (capped.isEmpty()) return null
+        val loaded = capped.mapConcurrent(concurrency = 4) { entry ->
             val item = withTimeoutOrNull(5_000) {
                 runCatching { catalogRepository.getItem(entry.type, entry.id) }.getOrNull()
             }
@@ -683,6 +684,7 @@ class HomeViewModel @Inject constructor(
     private companion object {
         const val TAG = "HomeRows"
         const val MAX_EXTRA_PAGES = 5
+        const val MAX_CONTINUE_ITEMS = 20
         const val CONTINUE_ROW_ID = "continue_watching"
         const val NEW_EPISODES_ROW_ID = "new_episodes"
         const val UP_NEXT_ROW_ID = "up_next"

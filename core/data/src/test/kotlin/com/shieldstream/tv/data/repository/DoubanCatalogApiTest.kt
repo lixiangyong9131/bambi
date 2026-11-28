@@ -49,8 +49,9 @@ class DoubanCatalogApiTest {
             stats = listOf(0.009f, 0.058f, 0.354f, 0.417f, 0.163f),
         )
         val cms = mockk<CmsStreams>()
-        coEvery { cms.getDescription("谷雨") } returns "简介内容"
-        coEvery { cms.getEpisodes("谷雨") } returns listOf(CmsStreams.EpisodeInfo(1, "第01集", "https://example.com/1.m3u8"))
+        val expectedHint = CmsStreams.MatchHint(year = 2026, isTv = true, isAnime = false)
+        coEvery { cms.getDescription("谷雨", any()) } returns "简介内容"
+        coEvery { cms.getEpisodes("谷雨", any()) } returns listOf(CmsStreams.EpisodeInfo(1, "第01集", "https://example.com/1.m3u8"))
         val prefsEditor = mockk<SharedPreferences.Editor>(relaxed = true) {
             every { putString(any(), any()) } returns this
         }
@@ -67,8 +68,8 @@ class DoubanCatalogApiTest {
         // Lightweight lookup used by Continue Watching / My List / Up Next
         val light = catalogApi.tvDetails(123, "douban", append = "external_ids")
         assertEquals("谷雨", light.name)
-        coVerify(exactly = 0) { cms.getDescription(any()) }
-        coVerify(exactly = 0) { cms.getEpisodes(any()) }
+        coVerify(exactly = 0) { cms.getDescription(any(), any()) }
+        coVerify(exactly = 0) { cms.getEpisodes(any(), any()) }
         coVerify(exactly = 0) { api.rexxarSubject(any()) }
 
         // Full details lookup used by DetailsScreen
@@ -78,8 +79,8 @@ class DoubanCatalogApiTest {
         assertEquals(38267, full.douban_rating?.voteCount)
         assertEquals(3.5f, full.douban_rating?.starCount)
         assertEquals(5, full.douban_rating?.starDistribution?.size)
-        coVerify(exactly = 1) { cms.getDescription("谷雨") }
-        coVerify(exactly = 1) { cms.getEpisodes("谷雨") }
+        coVerify(exactly = 1) { cms.getDescription("谷雨", expectedHint) }
+        coVerify(exactly = 1) { cms.getEpisodes("谷雨", expectedHint) }
         // Subject abstract was cached from the first call
         coVerify(exactly = 1) { api.abstract(any()) }
         coVerify(exactly = 1) { api.rexxarSubject("https://m.douban.com/rexxar/api/v2/tv/123") }
@@ -290,6 +291,116 @@ class DoubanCatalogApiTest {
 
         assertEquals(listOf("高分悬疑剧"), topRatedTv.map { it.name })
         assertEquals(listOf("最新科幻片"), latestMovies.map { it.title })
+    }
+
+    @Test
+    fun `getSeriesWorks merges rexxar and suggest for multi-season series and keeps single-season empty`() = runTest {
+        val api = mockk<DoubanApi>()
+        coEvery { api.rexxarSearch(match { it.contains("%E7%BB%9D%E5%91%BD%E6%AF%92%E5%B8%88") }) } returns
+            com.shieldstream.tv.network.dto.DoubanRexxarSearchResponseDto(
+                subjects = com.shieldstream.tv.network.dto.DoubanRexxarSearchSubjectsDto(
+                    items = listOf(
+                        com.shieldstream.tv.network.dto.DoubanRexxarSearchItemDto(
+                            targetType = "chart",
+                            target = DoubanRexxarCollectionItemDto(id = "C1", title = "绝命毒师"),
+                        ),
+                        com.shieldstream.tv.network.dto.DoubanRexxarSearchItemDto(
+                            targetType = "tv",
+                            target = DoubanRexxarCollectionItemDto(
+                                id = "6952149",
+                                title = "绝命毒师  第五季",
+                                year = "2012",
+                                rating = DoubanRexxarRatingDto(value = 9.7),
+                            ),
+                        ),
+                        com.shieldstream.tv.network.dto.DoubanRexxarSearchItemDto(
+                            targetType = "tv",
+                            target = DoubanRexxarCollectionItemDto(
+                                id = "2373195",
+                                title = "绝命毒师 第一季",
+                                year = "2008",
+                                coverUrl = "https://qnmob3-sign.doubanio.com/view/photo/large/public/p2886443948.jpg?imageView2/0/q/80/w/9999/h/120/format/jpg",
+                                rating = DoubanRexxarRatingDto(value = 9.2),
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        coEvery { api.rexxarSubject("https://m.douban.com/rexxar/api/v2/tv/2373195") } returns
+            com.shieldstream.tv.network.dto.DoubanRexxarSubjectDto(
+                title = "绝命毒师 第一季",
+                year = "2008",
+                pic = DoubanRexxarPicDto(large = "https://img3.doubanio.com/view/photo/m_ratio_poster/public/p2886443948.jpg"),
+                rating = DoubanRexxarRatingDto(value = 9.2),
+            )
+        coEvery { api.suggest("绝命毒师") } returns listOf(
+            com.shieldstream.tv.network.dto.DoubanSuggestDto(id = "4927382", title = "绝命毒师  第四季", year = "2011", episode = "13"),
+        )
+        coEvery { api.rexxarSearch(match { it.contains("%E6%BC%AB%E9%95%BF%E7%9A%84%E5%AD%A3%E8%8A%82") }) } returns
+            com.shieldstream.tv.network.dto.DoubanRexxarSearchResponseDto(
+                subjects = com.shieldstream.tv.network.dto.DoubanRexxarSearchSubjectsDto(
+                    items = listOf(
+                        com.shieldstream.tv.network.dto.DoubanRexxarSearchItemDto(
+                            targetType = "tv",
+                            target = DoubanRexxarCollectionItemDto(id = "35588177", title = "漫长的季节", year = "2023"),
+                        ),
+                    ),
+                ),
+            )
+        coEvery { api.suggest("漫长的季节") } returns emptyList()
+
+        val catalogApi = newCatalogApi(api)
+        val bb5 = com.shieldstream.tv.model.CatalogItem(
+            id = "6952149",
+            imdbId = null,
+            type = com.shieldstream.tv.model.MediaType.TV,
+            title = "绝命毒师  第五季",
+            overview = "",
+            posterUrl = null,
+            backdropUrl = null,
+            year = 2012,
+            rating = 9.7f,
+        )
+        val series = catalogApi.getSeriesWorks(bb5)
+        assertEquals(listOf("2373195", "4927382", "6952149"), series.map { it.id })
+        assertEquals(
+            "https://img3.doubanio.com/view/photo/l_ratio_poster/public/p2886443948.jpg",
+            series.first().posterUrl,
+        )
+
+        val singleShow = com.shieldstream.tv.model.CatalogItem(
+            id = "35588177",
+            imdbId = null,
+            type = com.shieldstream.tv.model.MediaType.TV,
+            title = "漫长的季节",
+            overview = "",
+            posterUrl = null,
+            backdropUrl = null,
+            year = 2023,
+            rating = 9.4f,
+        )
+        assertEquals(1, catalogApi.getSeriesWorks(singleShow).size)
+    }
+
+    @Test
+    fun `lightweight tvDetails falls back to rexxar when abstract returns 403`() = runTest {
+        val api = mockk<DoubanApi>()
+        coEvery { api.abstract(any()) } throws IllegalStateException("HTTP 403")
+        coEvery { api.rexxarSubject("https://m.douban.com/rexxar/api/v2/tv/2373195") } returns
+            com.shieldstream.tv.network.dto.DoubanRexxarSubjectDto(
+                title = "绝命毒师 第一季",
+                year = "2008",
+                genres = listOf("剧情", "犯罪"),
+                pic = DoubanRexxarPicDto(large = "https://img3.doubanio.com/bb1.jpg"),
+                rating = DoubanRexxarRatingDto(count = 1000, value = 9.2),
+            )
+        coEvery { api.rexxarRatingStats(any()) } returns com.shieldstream.tv.network.dto.DoubanRexxarStatsDto()
+
+        val catalogApi = newCatalogApi(api)
+        val detail = catalogApi.tvDetails(2373195, "douban", append = "external_ids")
+
+        assertEquals("绝命毒师 第一季", detail.name)
+        assertEquals("https://img3.doubanio.com/bb1.jpg", detail.poster_path)
     }
 
     private fun newCatalogApi(api: DoubanApi): DoubanCatalogApi {

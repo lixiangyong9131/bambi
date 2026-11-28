@@ -283,8 +283,8 @@ class CatalogRepositoryImpl @Inject constructor(
     override suspend fun getHome(filter: HomeFilter, maxItems: Int): List<CatalogRow> {
         // Modified build: always one page per row for a fast first load (extra pages are fetched on scroll).
         val pages = 1
-        return if (kids) cachedRows("home_kids_v2_${filter.name}_p$pages", filter) { loadHome(kidsRowsFor(filter, pages), pages) }
-        else cachedRows("home_v2_${filter.name}_p$pages", filter) { loadHome(rowsFor(filter), pages) }
+        return if (kids) cachedRows("home_kids_v3_${filter.name}_p$pages", filter) { loadHome(kidsRowsFor(filter, pages), pages) }
+        else cachedRows("home_v3_${filter.name}_p$pages", filter) { loadHome(rowsFor(filter), pages) }
     }
 
     private suspend fun loadHome(specs: List<RowSpec>, pages: Int): List<CatalogRow> = coroutineScope {
@@ -326,8 +326,7 @@ class CatalogRepositoryImpl @Inject constructor(
             RowSpec("m_top10", texts.get(StringsR.string.data_top_10_movies_week), RowStyle.TOP10) { page -> tmdb.trendingMovies(key, page = page).results.map { it.toCatalogItem() } },
             RowSpec("m_now", texts.get(StringsR.string.data_now_in_theaters)) { page -> tmdb.nowPlayingMovies(key, page = page).results.map { it.toCatalogItem() } },
             RowSpec("m_top", texts.get(StringsR.string.data_douban_top250)) { page -> tmdb.topRatedMovies(key, page = page).results.map { it.toCatalogItem() } },
-            RowSpec("m_action", texts.get(StringsR.string.data_action)) { page -> tmdb.discoverMovies(key, "28", page = page).results.map { it.toCatalogItem() } },
-            RowSpec("m_scifi", texts.get(StringsR.string.data_sci_fi)) { page -> tmdb.discoverMovies(key, "878", page = page).results.map { it.toCatalogItem() } },
+            RowSpec("m_hidden_gems", texts.get(StringsR.string.data_movie_hidden_gems)) { page -> tmdb.discoverMovieQuery(key, mapOf("douban_tags" to "冷门佳片", "page" to page.toString())).results.map { it.toCatalogItem() } },
         )
         HomeFilter.TV -> listOf(
             RowSpec("t_top10", texts.get(StringsR.string.data_top_10_tv_shows_week), RowStyle.TOP10) { page -> tmdb.trendingTv(key, page = page).results.map { it.toCatalogItem() } },
@@ -426,16 +425,26 @@ class CatalogRepositoryImpl @Inject constructor(
             detailsCache[cacheKey]?.takeIf { now - it.at < DETAILS_CACHE_MS }?.let { return@withLock it.value }
             val result = if (item.type == MediaType.TV) {
                 val d = tmdb.tvDetails(id, key, append = "images,external_ids,translations,aggregate_credits,videos")
+                val resolvedGenres = d.genres.map { it.name }.ifEmpty { item.genres }
+                val resolvedYear = item.year ?: d.first_air_date?.take(4)?.toIntOrNull()
+                val resolvedPoster = d.poster_path?.let { poster(it) } ?: item.posterUrl
+                val resolvedBackdrop = d.backdrop_path?.let { backdrop(it) } ?: resolvedPoster ?: item.backdropUrl
+                val resolvedRating = item.rating?.takeIf { it > 0f } ?: d.vote_average.toFloat().takeIf { it > 0f }
                 CatalogDetails(
                     item = item.copy(
                         imdbId = d.external_ids?.imdb_id ?: item.imdbId,
+                        title = item.title.ifBlank { d.name },
                         overview = d.overview.ifBlank { item.overview },
-                        backdropUrl = d.backdrop_path?.let { backdrop(it) } ?: item.backdropUrl,
+                        posterUrl = resolvedPoster,
+                        backdropUrl = resolvedBackdrop,
+                        year = resolvedYear,
+                        rating = resolvedRating,
+                        genres = resolvedGenres,
                     ),
                     logoUrl = pickLogo(d.images),
                     originalTitle = englishTitle(d.translations) ?: d.original_name,
                     runtimeMinutes = d.episode_run_time.firstOrNull(),
-                    genres = d.genres.map { it.name },
+                    genres = resolvedGenres,
                     tagline = d.tagline?.takeIf { it.isNotBlank() },
                     seasons = d.seasons
                         .filter { it.season_number > 0 && it.episode_count > 0 }
@@ -450,16 +459,26 @@ class CatalogRepositoryImpl @Inject constructor(
                 )
             } else {
                 val d = tmdb.movieDetails(id, key, append = "images,translations,credits,videos")
+                val resolvedGenres = d.genres.map { it.name }.ifEmpty { item.genres }
+                val resolvedYear = item.year ?: d.release_date?.take(4)?.toIntOrNull()
+                val resolvedPoster = d.poster_path?.let { poster(it) } ?: item.posterUrl
+                val resolvedBackdrop = d.backdrop_path?.let { backdrop(it) } ?: resolvedPoster ?: item.backdropUrl
+                val resolvedRating = item.rating?.takeIf { it > 0f } ?: d.vote_average.toFloat().takeIf { it > 0f }
                 CatalogDetails(
                     item = item.copy(
                         imdbId = d.imdb_id ?: item.imdbId,
+                        title = item.title.ifBlank { d.title },
                         overview = d.overview.ifBlank { item.overview },
-                        backdropUrl = d.backdrop_path?.let { backdrop(it) } ?: item.backdropUrl,
+                        posterUrl = resolvedPoster,
+                        backdropUrl = resolvedBackdrop,
+                        year = resolvedYear,
+                        rating = resolvedRating,
+                        genres = resolvedGenres,
                     ),
                     logoUrl = pickLogo(d.images),
                     originalTitle = englishTitle(d.translations) ?: d.original_title,
                     runtimeMinutes = d.runtime?.takeIf { it > 0 },
-                    genres = d.genres.map { it.name },
+                    genres = resolvedGenres,
                     tagline = d.tagline?.takeIf { it.isNotBlank() },
                     cast = d.credits?.cast.orEmpty().toPeople(),
                     directors = d.credits?.crew.orEmpty().filter { it.job == "Director" }.distinctBy { it.id }
@@ -547,6 +566,7 @@ class CatalogRepositoryImpl @Inject constructor(
         val tmdbId = id.toIntOrNull() ?: return null
         val item = if (type == MediaType.TV) {
             val d = tmdb.tvDetails(tmdbId, key, append = "external_ids")
+            if (d.name.isBlank() && d.poster_path.isNullOrBlank()) return null
             CatalogItem(
                 id = id,
                 imdbId = d.external_ids?.imdb_id,
@@ -561,6 +581,7 @@ class CatalogRepositoryImpl @Inject constructor(
             )
         } else {
             val d = tmdb.movieDetails(tmdbId, key, append = "")
+            if (d.title.isBlank() && d.poster_path.isNullOrBlank()) return null
             CatalogItem(
                 id = id,
                 imdbId = d.imdb_id,
@@ -653,6 +674,9 @@ class CatalogRepositoryImpl @Inject constructor(
 
     /** Las fuentes de un título: cada buscador está en `streams/` ([StreamSearch]). */
     override fun getStreams(item: CatalogItem, episode: Episode?): Flow<StreamResults> = streamSearch.streams(item, episode)
+
+    override suspend fun getSeriesWorks(item: CatalogItem): List<CatalogItem> =
+        (tmdb as? DoubanCatalogApi)?.getSeriesWorks(item).orEmpty()
 
     private fun pickLogo(images: TmdbImagesDto?): String? = TmdbImages.logo(images, Lang.current.code)
 

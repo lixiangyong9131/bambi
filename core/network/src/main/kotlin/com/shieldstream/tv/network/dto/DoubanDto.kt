@@ -58,6 +58,7 @@ data class DoubanSuggestDto(
     val url: String = "",
     val id: String = "",
     val episode: String = "",
+    val year: String = "",
 )
 
 @Serializable
@@ -111,6 +112,13 @@ data class DoubanRexxarCollectionItemDto(
             else -> ""
         }
     }
+
+    /** Douban Rexxar card_subtitle follows "YYYY / 地区 / 类型1 类型2 ... / 主创". */
+    fun subtitleGenres(): List<String> {
+        val segment = cardSubtitle.split('/').getOrNull(2)?.trim().orEmpty()
+        if (segment.isBlank()) return emptyList()
+        return segment.split(Regex("\\s+")).filter { it.isNotBlank() }
+    }
 }
 
 @Serializable
@@ -119,6 +127,22 @@ data class DoubanRexxarCollectionResponseDto(
     val count: Int = 0,
     val total: Int = 0,
     @SerialName("subject_collection_items") val subjectCollectionItems: List<DoubanRexxarCollectionItemDto> = emptyList(),
+)
+
+@Serializable
+data class DoubanRexxarSearchResponseDto(
+    val subjects: DoubanRexxarSearchSubjectsDto? = null,
+)
+
+@Serializable
+data class DoubanRexxarSearchSubjectsDto(
+    val items: List<DoubanRexxarSearchItemDto> = emptyList(),
+)
+
+@Serializable
+data class DoubanRexxarSearchItemDto(
+    @SerialName("target_type") val targetType: String = "",
+    val target: DoubanRexxarCollectionItemDto? = null,
 )
 
 @Serializable

@@ -42,7 +42,7 @@ class ContinueWatchingTest {
                 put(WatchProgress.movieKey(index.toString()), progress(updatedAt = index.toLong()))
             }
             put(WatchProgress.movieKey("watched"), progress(positionMs = 3_500_000, updatedAt = 1_000))
-            put(WatchProgress.movieKey("short"), progress(positionMs = 10_000, updatedAt = 1_001))
+            put(WatchProgress.movieKey("short"), progress(positionMs = 5_000, updatedAt = 1_001))
             put("tv:invalid", progress(updatedAt = 1_002))
             put("tv:show:not-a-season:1", progress(updatedAt = 1_003))
         }
@@ -66,7 +66,7 @@ class ContinueWatchingTest {
             resumableFirst to progress(updatedAt = 100),
             resumableSecond to progress(updatedAt = 200),
             watched to progress(positionMs = 3_500_000),
-            short to progress(positionMs = 10_000),
+            short to progress(positionMs = 5_000),
             otherShow to progress(updatedAt = 300),
         )
 

@@ -176,4 +176,14 @@
     <string name="subtitle_sample">Subtítulo de ejemplo
 Así se verán los subtítulos</string>
     <string name="subtitle_reset">Restablecer</string>
+    <string name="details_series_works">Misma serie</string>
+    <string name="details_series_works_title">Obras de la serie en Douban</string>
+    <string name="details_series_works_subtitle">%1$s · %2$d títulos</string>
+    <string name="details_series_works_loading">Buscando obras relacionadas en Douban…</string>
+    <string name="details_series_works_empty">No se encontraron otras temporadas en Douban</string>
+    <string name="details_series_works_current">Viendo ahora</string>
+    <string name="details_series_works_retry">Reintentar</string>
+    <string name="details_series_works_error">No se pudo consultar la serie</string>
+    <string name="data_movie_hidden_gems">Joyas ocultas</string>
+    <string name="home_filter_cat_hidden_gems">Joyas ocultas</string>
 </resources>

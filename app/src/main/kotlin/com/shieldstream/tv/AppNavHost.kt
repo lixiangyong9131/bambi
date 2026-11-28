@@ -250,7 +250,9 @@ fun AppNavHost(
                 onOpenItem = { item ->
                     if (entry.isVisible()) {
                         holder.selectItem(item)
-                        navController.navigate("details")
+                        navController.navigate("details") {
+                            popUpTo("details") { inclusive = true }
+                        }
                     }
                 },
             )
