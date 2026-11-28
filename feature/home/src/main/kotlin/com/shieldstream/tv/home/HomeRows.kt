@@ -1115,7 +1115,7 @@ private fun CatalogRowView(
                     LazyRow(
                         state = rowState,
                         contentPadding = PaddingValues(horizontal = startPadding, vertical = 14.dp),
-                        horizontalArrangement = Arrangement.spacedBy(if (row.style == RowStyle.TOP10) 6.dp else 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
                     if (loops) {
                         loopingItems(row.items) { virtual, index, item ->

@@ -356,16 +356,14 @@ fun Top10Card(
     onLongClick: (() -> Unit)? = null,
     newEpisodeCount: Int = 0,
 ) {
-    // Modified build: no big rank number - just the poster at normal size.
-    Box(modifier = modifier.width(PosterWidth).height(PosterWidth * 1.5f)) {
-        PosterCard(
-            item = item,
-            onClick = onClick,
-            onFocused = onFocused,
-            onLongClick = onLongClick,
-            newEpisodeCount = newEpisodeCount,
-            showYearOnFocus = true,
-            modifier = Modifier.align(Alignment.BottomEnd),
-        )
-    }
+    // Modified build: same size as regular poster cards.
+    PosterCard(
+        item = item,
+        onClick = onClick,
+        onFocused = onFocused,
+        onLongClick = onLongClick,
+        newEpisodeCount = newEpisodeCount,
+        showYearOnFocus = true,
+        modifier = modifier,
+    )
 }

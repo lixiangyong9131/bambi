@@ -1,5 +1,6 @@
 package com.shieldstream.tv.home
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -156,6 +157,8 @@ fun MainScreen(
             .background(Color.Black)
             .onBackKey(enabled = true) { handleRootBack() },
     ) {
+        // Handle system Back gesture on tablets / phones (gesture nav doesn't fire Key.Back).
+        BackHandler(enabled = true) { handleRootBack() }
         Box(
             Modifier
                 .fillMaxSize()
